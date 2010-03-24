@@ -366,7 +366,7 @@ def ADDE8   : XOForm_1<31, 138, 0, (outs G8RC:$rT), (ins G8RC:$rA, G8RC:$rB),
                        [(set G8RC:$rT, (adde G8RC:$rA, G8RC:$rB))]>;
 def ADDME8  : XOForm_3<31, 234, 0, (outs G8RC:$rT), (ins G8RC:$rA),
                        "addme $rT, $rA", IntGeneral,
-                       [(set G8RC:$rT, (adde G8RC:$rA, immAllOnes))]>;
+                       [(set G8RC:$rT, (adde G8RC:$rA, -1))]>;
 def ADDZE8  : XOForm_3<31, 202, 0, (outs G8RC:$rT), (ins G8RC:$rA),
                        "addze $rT, $rA", IntGeneral,
                        [(set G8RC:$rT, (adde G8RC:$rA, 0))]>;
@@ -375,7 +375,7 @@ def SUBFE8  : XOForm_1<31, 136, 0, (outs G8RC:$rT), (ins G8RC:$rA, G8RC:$rB),
                        [(set G8RC:$rT, (sube G8RC:$rB, G8RC:$rA))]>;
 def SUBFME8 : XOForm_3<31, 232, 0, (outs G8RC:$rT), (ins G8RC:$rA),
                        "subfme $rT, $rA", IntGeneral,
-                       [(set G8RC:$rT, (sube immAllOnes, G8RC:$rA))]>;
+                       [(set G8RC:$rT, (sube -1, G8RC:$rA))]>;
 def SUBFZE8 : XOForm_3<31, 200, 0, (outs G8RC:$rT), (ins G8RC:$rA),
                        "subfze $rT, $rA", IntGeneral,
                        [(set G8RC:$rT, (sube 0, G8RC:$rA))]>;
@@ -559,6 +559,14 @@ def LDtoc: DSForm_1<58, 0, (outs G8RC:$rD), (ins tocentry:$disp, G8RC:$reg),
                     "ld $rD, $disp($reg)", LdStLD,
                     [(set G8RC:$rD,
                      (PPCtoc_entry tglobaladdr:$disp, G8RC:$reg))]>, isPPC64;
+let RST = 2, DS = 8 in
+def LDinto_toc: DSForm_1<58, 0, (outs), (ins G8RC:$reg),
+                    "ld 2, 8($reg)", LdStLD,
+                    [(PPCload_toc G8RC:$reg)]>, isPPC64;
+let RST = 2, DS = 40, RA = 1 in
+def LDtoc_restore : DSForm_1<58, 0, (outs), (ins),
+                    "ld 2, 40(1)", LdStLD,
+                    []>, isPPC64;
 def LDX  : XForm_1<31,  21, (outs G8RC:$rD), (ins memrr:$src),
                    "ldx $rD, $src", LdStLD,
                    [(set G8RC:$rD, (load xaddr:$src))]>, isPPC64;
@@ -570,6 +578,13 @@ def LDU  : DSForm_1<58, 1, (outs G8RC:$rD, ptr_rc:$ea_result), (ins memrix:$addr
                     NoEncode<"$ea_result">;
 
 }
+
+def : Pat<(PPCtoc_restore),
+          (LDtoc_restore)>;
+def : Pat<(PPCload ixaddr:$src),
+          (LD ixaddr:$src)>;
+def : Pat<(PPCload xaddr:$src),
+          (LDX xaddr:$src)>;
 
 let PPC970_Unit = 2 in {
 // Truncating stores.                       
@@ -620,13 +635,6 @@ def STHU8 : DForm_1<45, (outs ptr_rc:$ea_res), (ins G8RC:$rS,
                         (pre_truncsti16 G8RC:$rS, ptr_rc:$ptrreg, 
                                         iaddroff:$ptroff))]>,
                     RegConstraint<"$ptrreg = $ea_res">, NoEncode<"$ea_res">;
-def STWU8 : DForm_1<37, (outs ptr_rc:$ea_res), (ins G8RC:$rS,
-                             symbolLo:$ptroff, ptr_rc:$ptrreg),
-                    "stwu $rS, $ptroff($ptrreg)", LdStGeneral,
-                    [(set ptr_rc:$ea_res, (pre_store G8RC:$rS, ptr_rc:$ptrreg, 
-                                                     iaddroff:$ptroff))]>,
-                    RegConstraint<"$ptrreg = $ea_res">, NoEncode<"$ea_res">;
-
 
 def STDU : DSForm_1<62, 1, (outs ptr_rc:$ea_res), (ins G8RC:$rS,
                                 s16immX4:$ptroff, ptr_rc:$ptrreg),

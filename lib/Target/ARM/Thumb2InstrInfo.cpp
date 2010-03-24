@@ -36,30 +36,6 @@ unsigned Thumb2InstrInfo::getUnindexedOpcode(unsigned Opc) const {
 }
 
 bool
-Thumb2InstrInfo::BlockHasNoFallThrough(const MachineBasicBlock &MBB) const {
-  if (MBB.empty()) return false;
-
-  switch (MBB.back().getOpcode()) {
-  case ARM::t2LDM_RET:
-  case ARM::t2B:        // Uncond branch.
-  case ARM::t2BR_JT:    // Jumptable branch.
-  case ARM::t2TBB:      // Table branch byte.
-  case ARM::t2TBH:      // Table branch halfword.
-  case ARM::tBR_JTr:    // Jumptable branch (16-bit version).
-  case ARM::tBX_RET:
-  case ARM::tBX_RET_vararg:
-  case ARM::tPOP_RET:
-  case ARM::tB:
-  case ARM::tBRIND:
-    return true;
-  default:
-    break;
-  }
-
-  return false;
-}
-
-bool
 Thumb2InstrInfo::copyRegToReg(MachineBasicBlock &MBB,
                               MachineBasicBlock::iterator I,
                               unsigned DestReg, unsigned SrcReg,
@@ -188,6 +164,7 @@ void llvm::emitT2RegPlusImmediate(MachineBasicBlock &MBB,
       continue;
     }
 
+    bool HasCCOut = true;
     if (BaseReg == ARM::SP) {
       // sub sp, sp, #imm7
       if (DestReg == ARM::SP && (ThisVal < ((1 << 7)-1) * 4)) {
@@ -219,6 +196,7 @@ void llvm::emitT2RegPlusImmediate(MachineBasicBlock &MBB,
         NumBytes = 0;
       } else if (ThisVal < 4096) {
         Opc = isSub ? ARM::t2SUBri12 : ARM::t2ADDri12;
+        HasCCOut = false;
         NumBytes = 0;
       } else {
         // FIXME: Move this to ARMAddressingModes.h?
@@ -231,9 +209,12 @@ void llvm::emitT2RegPlusImmediate(MachineBasicBlock &MBB,
     }
 
     // Build the new ADD / SUB.
-    AddDefaultCC(AddDefaultPred(BuildMI(MBB, MBBI, dl, TII.get(Opc), DestReg)
-                                .addReg(BaseReg, RegState::Kill)
-                                .addImm(ThisVal)));
+    MachineInstrBuilder MIB =
+      AddDefaultPred(BuildMI(MBB, MBBI, dl, TII.get(Opc), DestReg)
+                     .addReg(BaseReg, RegState::Kill)
+                     .addImm(ThisVal));
+    if (HasCCOut)
+      AddDefaultCC(MIB);
 
     BaseReg = DestReg;
   }
@@ -352,15 +333,21 @@ bool llvm::rewriteT2FrameIndex(MachineInstr &MI, unsigned FrameRegIdx,
   if (Opcode == ARM::t2ADDri || Opcode == ARM::t2ADDri12) {
     Offset += MI.getOperand(FrameRegIdx+1).getImm();
 
-    bool isSP = FrameReg == ARM::SP;
-    if (Offset == 0) {
+    unsigned PredReg;
+    if (Offset == 0 && getInstrPredicate(&MI, PredReg) == ARMCC::AL) {
       // Turn it into a move.
       MI.setDesc(TII.get(ARM::tMOVgpr2gpr));
       MI.getOperand(FrameRegIdx).ChangeToRegister(FrameReg, false);
-      MI.RemoveOperand(FrameRegIdx+1);
-      Offset = 0;
+      // Remove offset and remaining explicit predicate operands.
+      do MI.RemoveOperand(FrameRegIdx+1);
+      while (MI.getNumOperands() > FrameRegIdx+1 &&
+             (!MI.getOperand(FrameRegIdx+1).isReg() ||
+              !MI.getOperand(FrameRegIdx+1).isImm()));
       return true;
     }
+
+    bool isSP = FrameReg == ARM::SP;
+    bool HasCCOut = Opcode != ARM::t2ADDri12;
 
     if (Offset < 0) {
       Offset = -Offset;
@@ -374,17 +361,24 @@ bool llvm::rewriteT2FrameIndex(MachineInstr &MI, unsigned FrameRegIdx,
     if (ARM_AM::getT2SOImmVal(Offset) != -1) {
       MI.getOperand(FrameRegIdx).ChangeToRegister(FrameReg, false);
       MI.getOperand(FrameRegIdx+1).ChangeToImmediate(Offset);
+      // Add cc_out operand if the original instruction did not have one.
+      if (!HasCCOut)
+        MI.addOperand(MachineOperand::CreateReg(0, false));
       Offset = 0;
       return true;
     }
     // Another common case: imm12.
-    if (Offset < 4096) {
+    if (Offset < 4096 &&
+        (!HasCCOut || MI.getOperand(MI.getNumOperands()-1).getReg() == 0)) {
       unsigned NewOpc = isSP
         ? (isSub ? ARM::t2SUBrSPi12 : ARM::t2ADDrSPi12)
         : (isSub ? ARM::t2SUBri12   : ARM::t2ADDri12);
       MI.setDesc(TII.get(NewOpc));
       MI.getOperand(FrameRegIdx).ChangeToRegister(FrameReg, false);
       MI.getOperand(FrameRegIdx+1).ChangeToImmediate(Offset);
+      // Remove the cc_out operand.
+      if (HasCCOut)
+        MI.RemoveOperand(MI.getNumOperands()-1);
       Offset = 0;
       return true;
     }
@@ -400,10 +394,14 @@ bool llvm::rewriteT2FrameIndex(MachineInstr &MI, unsigned FrameRegIdx,
     assert(ARM_AM::getT2SOImmVal(ThisImmVal) != -1 &&
            "Bit extraction didn't work?");
     MI.getOperand(FrameRegIdx+1).ChangeToImmediate(ThisImmVal);
+    // Add cc_out operand if the original instruction did not have one.
+    if (!HasCCOut)
+      MI.addOperand(MachineOperand::CreateReg(0, false));
+
   } else {
 
-    // AddrMode4 cannot handle any offset.
-    if (AddrMode == ARMII::AddrMode4)
+    // AddrMode4 and AddrMode6 cannot handle any offset.
+    if (AddrMode == ARMII::AddrMode4 || AddrMode == ARMII::AddrMode6)
       return false;
 
     // AddrModeT2_so cannot handle any offset. If there is no offset
@@ -438,15 +436,12 @@ bool llvm::rewriteT2FrameIndex(MachineInstr &MI, unsigned FrameRegIdx,
         NewOpc = positiveOffsetOpcode(Opcode);
         NumBits = 12;
       }
-    } else {
-      // VFP and NEON address modes.
-      int InstrOffs = 0;
-      if (AddrMode == ARMII::AddrMode5) {
-        const MachineOperand &OffOp = MI.getOperand(FrameRegIdx+1);
-        InstrOffs = ARM_AM::getAM5Offset(OffOp.getImm());
-        if (ARM_AM::getAM5Op(OffOp.getImm()) == ARM_AM::sub)
-          InstrOffs *= -1;
-      }
+    } else if (AddrMode == ARMII::AddrMode5) {
+      // VFP address mode.
+      const MachineOperand &OffOp = MI.getOperand(FrameRegIdx+1);
+      int InstrOffs = ARM_AM::getAM5Offset(OffOp.getImm());
+      if (ARM_AM::getAM5Op(OffOp.getImm()) == ARM_AM::sub)
+        InstrOffs *= -1;
       NumBits = 8;
       Scale = 4;
       Offset += InstrOffs * 4;
@@ -455,6 +450,8 @@ bool llvm::rewriteT2FrameIndex(MachineInstr &MI, unsigned FrameRegIdx,
         Offset = -Offset;
         isSub = true;
       }
+    } else {
+      llvm_unreachable("Unsupported addressing mode!");
     }
 
     if (NewOpc != Opcode)

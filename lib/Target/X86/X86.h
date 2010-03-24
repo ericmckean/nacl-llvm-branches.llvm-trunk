@@ -19,12 +19,14 @@
 
 namespace llvm {
 
-class X86TargetMachine;
 class FunctionPass;
-class MachineCodeEmitter;
-class MCCodeEmitter;
 class JITCodeEmitter;
+class MCCodeEmitter;
+class MCContext;
+class MachineCodeEmitter;
 class Target;
+class TargetAsmBackend;
+class X86TargetMachine;
 class formatted_raw_ostream;
 
 /// createX86ISelDag - This pass converts a legalized DAG into a 
@@ -46,26 +48,22 @@ FunctionPass *createX87FPRegKillInserterPass();
 
 /// createX86CodeEmitterPass - Return a pass that emits the collected X86 code
 /// to the specified MCE object.
-
-FunctionPass *createX86CodeEmitterPass(X86TargetMachine &TM, 
-                                       MachineCodeEmitter &MCE);
 FunctionPass *createX86JITCodeEmitterPass(X86TargetMachine &TM,
                                           JITCodeEmitter &JCE);
-FunctionPass *createX86ObjectCodeEmitterPass(X86TargetMachine &TM,
-                                             ObjectCodeEmitter &OCE);
 
-MCCodeEmitter *createX86MCCodeEmitter(const Target &, TargetMachine &TM);
+MCCodeEmitter *createX86_32MCCodeEmitter(const Target &, TargetMachine &TM,
+                                         MCContext &Ctx);
+MCCodeEmitter *createX86_64MCCodeEmitter(const Target &, TargetMachine &TM,
+                                         MCContext &Ctx);
+
+TargetAsmBackend *createX86_32AsmBackend(const Target &, const std::string &);
+TargetAsmBackend *createX86_64AsmBackend(const Target &, const std::string &);
 
 /// createX86EmitCodeToMemory - Returns a pass that converts a register
 /// allocated function into raw machine code in a dynamically
 /// allocated chunk of memory.
 ///
 FunctionPass *createEmitX86CodeToMemory();
-
-/// createX86MaxStackAlignmentCalculatorPass - This function returns a pass
-/// which calculates maximal stack alignment required for function
-///
-FunctionPass *createX86MaxStackAlignmentCalculatorPass();
 
 extern Target TheX86_32Target, TheX86_64Target;
 

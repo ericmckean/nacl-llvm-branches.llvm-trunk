@@ -41,8 +41,10 @@ using namespace llvm;
 STATISTIC(NumDeadBlocks, "Number of dead blocks removed");
 STATISTIC(NumBranchOpts, "Number of branches optimized");
 STATISTIC(NumTailMerge , "Number of block tails merged");
+
 static cl::opt<cl::boolOrDefault> FlagEnableTailMerge("enable-tail-merge",
                               cl::init(cl::BOU_UNSET), cl::Hidden);
+
 // Throttle for huge numbers of predecessors (compile speed problems)
 static cl::opt<unsigned>
 TailMergeThreshold("tail-merge-threshold",
@@ -52,7 +54,7 @@ TailMergeThreshold("tail-merge-threshold",
 // Heuristic for tail merging (and, inversely, tail duplication).
 // TODO: This should be replaced with a target query.
 static cl::opt<unsigned>
-TailMergeSize("tail-merge-size", 
+TailMergeSize("tail-merge-size",
           cl::desc("Min number of instructions to consider tail merging"),
                               cl::init(3), cl::Hidden);
 
@@ -96,23 +98,12 @@ BranchFolder::BranchFolder(bool defaultEnableTailMerge) {
 /// function, updating the CFG.
 void BranchFolder::RemoveDeadBlock(MachineBasicBlock *MBB) {
   assert(MBB->pred_empty() && "MBB must be dead!");
-  DEBUG(errs() << "\nRemoving MBB: " << *MBB);
+  DEBUG(dbgs() << "\nRemoving MBB: " << *MBB);
 
   MachineFunction *MF = MBB->getParent();
   // drop all successors.
   while (!MBB->succ_empty())
     MBB->removeSuccessor(MBB->succ_end()-1);
-
-  // If there are any labels in the basic block, unregister them from
-  // MachineModuleInfo.
-  if (MMI && !MBB->empty()) {
-    for (MachineBasicBlock::iterator I = MBB->begin(), E = MBB->end();
-         I != E; ++I) {
-      if (I->isLabel())
-        // The label ID # is always operand #0, an immediate.
-        MMI->InvalidateLabel(I->getOperand(0).getImm());
-    }
-  }
 
   // Remove the block.
   MF->erase(MBB);
@@ -131,7 +122,7 @@ bool BranchFolder::OptimizeImpDefsBlock(MachineBasicBlock *MBB) {
   SmallSet<unsigned, 4> ImpDefRegs;
   MachineBasicBlock::iterator I = MBB->begin();
   while (I != MBB->end()) {
-    if (I->getOpcode() != TargetInstrInfo::IMPLICIT_DEF)
+    if (!I->isImplicitDef())
       break;
     unsigned Reg = I->getOperand(0).getReg();
     ImpDefRegs.insert(Reg);
@@ -193,7 +184,6 @@ bool BranchFolder::OptimizeFunction(MachineFunction &MF,
     MadeChange |= OptimizeImpDefsBlock(MBB);
   }
 
-
   bool MadeChangeThisIteration = true;
   while (MadeChangeThisIteration) {
     MadeChangeThisIteration = false;
@@ -205,52 +195,55 @@ bool BranchFolder::OptimizeFunction(MachineFunction &MF,
   // See if any jump tables have become mergable or dead as the code generator
   // did its thing.
   MachineJumpTableInfo *JTI = MF.getJumpTableInfo();
+  if (JTI == 0) {
+    delete RS;
+    return MadeChange;
+  }
+  
   const std::vector<MachineJumpTableEntry> &JTs = JTI->getJumpTables();
-  if (!JTs.empty()) {
-    // Figure out how these jump tables should be merged.
-    std::vector<unsigned> JTMapping;
-    JTMapping.reserve(JTs.size());
+  // Figure out how these jump tables should be merged.
+  std::vector<unsigned> JTMapping;
+  JTMapping.reserve(JTs.size());
 
-    // We always keep the 0th jump table.
-    JTMapping.push_back(0);
+  // We always keep the 0th jump table.
+  JTMapping.push_back(0);
 
-    // Scan the jump tables, seeing if there are any duplicates.  Note that this
-    // is N^2, which should be fixed someday.
-    for (unsigned i = 1, e = JTs.size(); i != e; ++i) {
-      if (JTs[i].MBBs.empty())
-        JTMapping.push_back(i);
-      else
-        JTMapping.push_back(JTI->getJumpTableIndex(JTs[i].MBBs));
-    }
+  // Scan the jump tables, seeing if there are any duplicates.  Note that this
+  // is N^2, which should be fixed someday.
+  for (unsigned i = 1, e = JTs.size(); i != e; ++i) {
+    if (JTs[i].MBBs.empty())
+      JTMapping.push_back(i);
+    else
+      JTMapping.push_back(JTI->getJumpTableIndex(JTs[i].MBBs));
+  }
 
-    // If a jump table was merge with another one, walk the function rewriting
-    // references to jump tables to reference the new JT ID's.  Keep track of
-    // whether we see a jump table idx, if not, we can delete the JT.
-    BitVector JTIsLive(JTs.size());
-    for (MachineFunction::iterator BB = MF.begin(), E = MF.end();
-         BB != E; ++BB) {
-      for (MachineBasicBlock::iterator I = BB->begin(), E = BB->end();
-           I != E; ++I)
-        for (unsigned op = 0, e = I->getNumOperands(); op != e; ++op) {
-          MachineOperand &Op = I->getOperand(op);
-          if (!Op.isJTI()) continue;
-          unsigned NewIdx = JTMapping[Op.getIndex()];
-          Op.setIndex(NewIdx);
+  // If a jump table was merge with another one, walk the function rewriting
+  // references to jump tables to reference the new JT ID's.  Keep track of
+  // whether we see a jump table idx, if not, we can delete the JT.
+  BitVector JTIsLive(JTs.size());
+  for (MachineFunction::iterator BB = MF.begin(), E = MF.end();
+       BB != E; ++BB) {
+    for (MachineBasicBlock::iterator I = BB->begin(), E = BB->end();
+         I != E; ++I)
+      for (unsigned op = 0, e = I->getNumOperands(); op != e; ++op) {
+        MachineOperand &Op = I->getOperand(op);
+        if (!Op.isJTI()) continue;
+        unsigned NewIdx = JTMapping[Op.getIndex()];
+        Op.setIndex(NewIdx);
 
-          // Remember that this JT is live.
-          JTIsLive.set(NewIdx);
-        }
-    }
-
-    // Finally, remove dead jump tables.  This happens either because the
-    // indirect jump was unreachable (and thus deleted) or because the jump
-    // table was merged with some other one.
-    for (unsigned i = 0, e = JTIsLive.size(); i != e; ++i)
-      if (!JTIsLive.test(i)) {
-        JTI->RemoveJumpTable(i);
-        MadeChange = true;
+        // Remember that this JT is live.
+        JTIsLive.set(NewIdx);
       }
   }
+
+  // Finally, remove dead jump tables.  This happens either because the
+  // indirect jump was unreachable (and thus deleted) or because the jump
+  // table was merged with some other one.
+  for (unsigned i = 0, e = JTIsLive.size(); i != e; ++i)
+    if (!JTIsLive.test(i)) {
+      JTI->RemoveJumpTable(i);
+      MadeChange = true;
+    }
 
   delete RS;
   return MadeChange;
@@ -306,12 +299,23 @@ static unsigned HashEndOfMBB(const MachineBasicBlock *MBB,
     return 0;   // Empty MBB.
 
   --I;
+  // Skip debug info so it will not affect codegen.
+  while (I->isDebugValue()) {
+    if (I==MBB->begin())
+      return 0;      // MBB empty except for debug info.
+    --I;
+  }
   unsigned Hash = HashMachineInstr(I);
 
   if (I == MBB->begin() || minCommonTailLength == 1)
     return Hash;   // Single instr MBB.
 
   --I;
+  while (I->isDebugValue()) {
+    if (I==MBB->begin())
+      return Hash;      // MBB with single non-debug instr.
+    --I;
+  }
   // Hash in the second-to-last instruction.
   Hash ^= HashMachineInstr(I) << 2;
   return Hash;
@@ -330,17 +334,65 @@ static unsigned ComputeCommonTailLength(MachineBasicBlock *MBB1,
   unsigned TailLen = 0;
   while (I1 != MBB1->begin() && I2 != MBB2->begin()) {
     --I1; --I2;
+    // Skip debugging pseudos; necessary to avoid changing the code.
+    while (I1->isDebugValue()) {
+      if (I1==MBB1->begin()) {
+        while (I2->isDebugValue()) {
+          if (I2==MBB2->begin())
+            // I1==DBG at begin; I2==DBG at begin
+            return TailLen;
+          --I2;
+        }
+        ++I2;
+        // I1==DBG at begin; I2==non-DBG, or first of DBGs not at begin
+        return TailLen;
+      }
+      --I1;
+    }
+    // I1==first (untested) non-DBG preceding known match
+    while (I2->isDebugValue()) {
+      if (I2==MBB2->begin()) {
+        ++I1;
+        // I1==non-DBG, or first of DBGs not at begin; I2==DBG at begin
+        return TailLen;
+      }
+      --I2;
+    }
+    // I1, I2==first (untested) non-DBGs preceding known match
     if (!I1->isIdenticalTo(I2) ||
         // FIXME: This check is dubious. It's used to get around a problem where
         // people incorrectly expect inline asm directives to remain in the same
         // relative order. This is untenable because normal compiler
         // optimizations (like this one) may reorder and/or merge these
         // directives.
-        I1->getOpcode() == TargetInstrInfo::INLINEASM) {
+        I1->isInlineAsm()) {
       ++I1; ++I2;
       break;
     }
     ++TailLen;
+  }
+  // Back past possible debugging pseudos at beginning of block.  This matters
+  // when one block differs from the other only by whether debugging pseudos
+  // are present at the beginning.  (This way, the various checks later for
+  // I1==MBB1->begin() work as expected.)
+  if (I1 == MBB1->begin() && I2 != MBB2->begin()) {
+    --I2;
+    while (I2->isDebugValue()) {
+      if (I2 == MBB2->begin()) {
+        return TailLen;
+        }
+      --I2;
+    }
+    ++I2;
+  }
+  if (I2 == MBB2->begin() && I1 != MBB1->begin()) {
+    --I1;
+    while (I1->isDebugValue()) {
+      if (I1 == MBB1->begin())
+        return TailLen;
+      --I1;
+    }
+    ++I1;
   }
   return TailLen;
 }
@@ -408,6 +460,8 @@ static unsigned EstimateRuntime(MachineBasicBlock::iterator I,
                                 MachineBasicBlock::iterator E) {
   unsigned Time = 0;
   for (; I != E; ++I) {
+    if (I->isDebugValue())
+      continue;
     const TargetInstrDesc &TID = I->getDesc();
     if (TID.isCall())
       Time += 10;
@@ -423,10 +477,10 @@ static unsigned EstimateRuntime(MachineBasicBlock::iterator I,
 // branches temporarily for tail merging).  In the case where CurMBB ends
 // with a conditional branch to the next block, optimize by reversing the
 // test and conditionally branching to SuccMBB instead.
-static void FixTail(MachineBasicBlock* CurMBB, MachineBasicBlock *SuccBB,
+static void FixTail(MachineBasicBlock *CurMBB, MachineBasicBlock *SuccBB,
                     const TargetInstrInfo *TII) {
   MachineFunction *MF = CurMBB->getParent();
-  MachineFunction::iterator I = next(MachineFunction::iterator(CurMBB));
+  MachineFunction::iterator I = llvm::next(MachineFunction::iterator(CurMBB));
   MachineBasicBlock *TBB = 0, *FBB = 0;
   SmallVector<MachineOperand, 4> Cond;
   if (I != MF->end() &&
@@ -519,21 +573,24 @@ static bool ProfitableToMerge(MachineBasicBlock *MBB1,
     return true;
 
   // If both blocks have an unconditional branch temporarily stripped out,
-  // treat that as an additional common instruction.
-  if (MBB1 != PredBB && MBB2 != PredBB && 
+  // count that as an additional common instruction for the following
+  // heuristics.
+  unsigned EffectiveTailLen = CommonTailLen;
+  if (SuccBB && MBB1 != PredBB && MBB2 != PredBB &&
       !MBB1->back().getDesc().isBarrier() &&
       !MBB2->back().getDesc().isBarrier())
-    --minCommonTailLength;
+    ++EffectiveTailLen;
 
   // Check if the common tail is long enough to be worthwhile.
-  if (CommonTailLen >= minCommonTailLength)
+  if (EffectiveTailLen >= minCommonTailLength)
     return true;
 
-  // If we are optimizing for code size, 1 instruction in common is enough if
-  // we don't have to split a block.  At worst we will be replacing a
-  // fallthrough into the common tail with a branch, which at worst breaks
-  // even with falling through into the duplicated common tail.
-  if (MF->getFunction()->hasFnAttr(Attribute::OptimizeForSize) &&
+  // If we are optimizing for code size, 2 instructions in common is enough if
+  // we don't have to split a block.  At worst we will be introducing 1 new
+  // branch instruction, which is likely to be smaller than the 2
+  // instructions that would be deleted in the merge.
+  if (EffectiveTailLen >= 2 &&
+      MF->getFunction()->hasFnAttr(Attribute::OptimizeForSize) &&
       (I1 == MBB1->begin() || I2 == MBB2->begin()))
     return true;
 
@@ -588,8 +645,8 @@ unsigned BranchFolder::ComputeSameTails(unsigned CurHash,
 /// RemoveBlocksWithHash - Remove all blocks with hash CurHash from
 /// MergePotentials, restoring branches at ends of blocks as appropriate.
 void BranchFolder::RemoveBlocksWithHash(unsigned CurHash,
-                                        MachineBasicBlock* SuccBB,
-                                        MachineBasicBlock* PredBB) {
+                                        MachineBasicBlock *SuccBB,
+                                        MachineBasicBlock *PredBB) {
   MPIterator CurMPIter, B;
   for (CurMPIter = prior(MergePotentials.end()), B = MergePotentials.begin();
        CurMPIter->getHash() == CurHash;
@@ -632,7 +689,9 @@ unsigned BranchFolder::CreateCommonTailOnlyBlock(MachineBasicBlock *&PredBB,
     SameTails[commonTailIndex].getTailStartPos();
   MachineBasicBlock *MBB = SameTails[commonTailIndex].getBlock();
 
-  DEBUG(errs() << "\nSplitting BB#" << MBB->getNumber() << ", size "
+  // If the common tail includes any debug info we will take it pretty
+  // randomly from one of the inputs.  Might be better to remove it?
+  DEBUG(dbgs() << "\nSplitting BB#" << MBB->getNumber() << ", size "
                << maxCommonTailLength);
 
   MachineBasicBlock *newMBB = SplitMBBAt(*MBB, BBI);
@@ -655,58 +714,25 @@ unsigned BranchFolder::CreateCommonTailOnlyBlock(MachineBasicBlock *&PredBB,
 // if any, is given in PredBB.
 
 bool BranchFolder::TryTailMergeBlocks(MachineBasicBlock *SuccBB,
-                                      MachineBasicBlock* PredBB) {
+                                      MachineBasicBlock *PredBB) {
   bool MadeChange = false;
 
   // Except for the special cases below, tail-merge if there are at least
   // this many instructions in common.
   unsigned minCommonTailLength = TailMergeSize;
 
-  // If there's a successor block, there are some cases which don't require
-  // new branching and as such are very likely to be profitable.
-  if (SuccBB) {
-    if (SuccBB->pred_size() == MergePotentials.size() &&
-        !MergePotentials[0].getBlock()->empty()) {
-      // If all the predecessors have at least one tail instruction in common,
-      // merging is very likely to be a win since it won't require an increase
-      // in static branches, and it will decrease the static instruction count.
-      bool AllPredsMatch = true;
-      MachineBasicBlock::iterator FirstNonTerm;
-      unsigned MinNumTerms = CountTerminators(MergePotentials[0].getBlock(),
-                                              FirstNonTerm);
-      if (FirstNonTerm != MergePotentials[0].getBlock()->end()) {
-        for (unsigned i = 1, e = MergePotentials.size(); i != e; ++i) {
-          MachineBasicBlock::iterator OtherFirstNonTerm;
-          unsigned NumTerms = CountTerminators(MergePotentials[0].getBlock(),
-                                               OtherFirstNonTerm);
-          if (NumTerms < MinNumTerms)
-            MinNumTerms = NumTerms;
-          if (OtherFirstNonTerm == MergePotentials[i].getBlock()->end() ||
-              OtherFirstNonTerm->isIdenticalTo(FirstNonTerm)) {
-            AllPredsMatch = false;
-            break;
-          }
-        }
-
-        // If they all have an instruction in common, do any amount of merging.
-        if (AllPredsMatch)
-          minCommonTailLength = MinNumTerms + 1;
-      }
-    }
-  }
-
-  DEBUG(errs() << "\nTryTailMergeBlocks: ";
+  DEBUG(dbgs() << "\nTryTailMergeBlocks: ";
         for (unsigned i = 0, e = MergePotentials.size(); i != e; ++i)
-          errs() << "BB#" << MergePotentials[i].getBlock()->getNumber()
+          dbgs() << "BB#" << MergePotentials[i].getBlock()->getNumber()
                  << (i == e-1 ? "" : ", ");
-        errs() << "\n";
+        dbgs() << "\n";
         if (SuccBB) {
-          errs() << "  with successor BB#" << SuccBB->getNumber() << '\n';
+          dbgs() << "  with successor BB#" << SuccBB->getNumber() << '\n';
           if (PredBB)
-            errs() << "  which has fall-through from BB#"
+            dbgs() << "  which has fall-through from BB#"
                    << PredBB->getNumber() << "\n";
         }
-        errs() << "Looking for common tails of at least "
+        dbgs() << "Looking for common tails of at least "
                << minCommonTailLength << " instruction"
                << (minCommonTailLength == 1 ? "" : "s") << '\n';
        );
@@ -777,19 +803,19 @@ bool BranchFolder::TryTailMergeBlocks(MachineBasicBlock *SuccBB,
     MachineBasicBlock *MBB = SameTails[commonTailIndex].getBlock();
     // MBB is common tail.  Adjust all other BB's to jump to this one.
     // Traversal must be forwards so erases work.
-    DEBUG(errs() << "\nUsing common tail in BB#" << MBB->getNumber()
+    DEBUG(dbgs() << "\nUsing common tail in BB#" << MBB->getNumber()
                  << " for ");
     for (unsigned int i=0, e = SameTails.size(); i != e; ++i) {
       if (commonTailIndex == i)
         continue;
-      DEBUG(errs() << "BB#" << SameTails[i].getBlock()->getNumber()
+      DEBUG(dbgs() << "BB#" << SameTails[i].getBlock()->getNumber()
                    << (i == e-1 ? "" : ", "));
       // Hack the end off BB i, making it jump to BB commonTailIndex instead.
       ReplaceTailWithBranchTo(SameTails[i].getTailStartPos(), MBB);
       // BB i is no longer a predecessor of SuccBB; remove it from the worklist.
       MergePotentials.erase(SameTails[i].getMPIter());
     }
-    DEBUG(errs() << "\n");
+    DEBUG(dbgs() << "\n");
     // We leave commonTailIndex in the worklist in case there are other blocks
     // that match it with a smaller number of instructions.
     MadeChange = true;
@@ -834,7 +860,7 @@ bool BranchFolder::TailMergeBlocks(MachineFunction &MF) {
   // a compile-time infinite loop repeatedly doing and undoing the same
   // transformations.)
 
-  for (MachineFunction::iterator I = next(MF.begin()), E = MF.end();
+  for (MachineFunction::iterator I = llvm::next(MF.begin()), E = MF.end();
        I != E; ++I) {
     if (I->pred_size() >= 2 && I->pred_size() < TailMergeThreshold) {
       SmallPtrSet<MachineBasicBlock *, 8> UniquePreds;
@@ -844,7 +870,7 @@ bool BranchFolder::TailMergeBlocks(MachineFunction &MF) {
       for (MachineBasicBlock::pred_iterator P = I->pred_begin(),
                                             E2 = I->pred_end();
            P != E2; ++P) {
-        MachineBasicBlock* PBB = *P;
+        MachineBasicBlock *PBB = *P;
         // Skip blocks that loop to themselves, can't tail merge these.
         if (PBB == IBB)
           continue;
@@ -862,14 +888,14 @@ bool BranchFolder::TailMergeBlocks(MachineFunction &MF) {
               continue;
             // This is the QBB case described above
             if (!FBB)
-              FBB = next(MachineFunction::iterator(PBB));
+              FBB = llvm::next(MachineFunction::iterator(PBB));
           }
           // Failing case:  the only way IBB can be reached from PBB is via
           // exception handling.  Happens for landing pads.  Would be nice
           // to have a bit in the edge so we didn't have to do all this.
           if (IBB->isLandingPad()) {
             MachineFunction::iterator IP = PBB;  IP++;
-            MachineBasicBlock* PredNextBB = NULL;
+            MachineBasicBlock *PredNextBB = NULL;
             if (IP != MF.end())
               PredNextBB = IP;
             if (TBB == NULL) {
@@ -934,70 +960,28 @@ bool BranchFolder::OptimizeBranches(MachineFunction &MF) {
   return MadeChange;
 }
 
-
-/// CanFallThrough - Return true if the specified block (with the specified
-/// branch condition) can implicitly transfer control to the block after it by
-/// falling off the end of it.  This should return false if it can reach the
-/// block after it, but it uses an explicit branch to do so (e.g. a table jump).
-///
-/// True is a conservative answer.
-///
-bool BranchFolder::CanFallThrough(MachineBasicBlock *CurBB,
-                                  bool BranchUnAnalyzable,
-                                  MachineBasicBlock *TBB,
-                                  MachineBasicBlock *FBB,
-                                  const SmallVectorImpl<MachineOperand> &Cond) {
-  MachineFunction::iterator Fallthrough = CurBB;
-  ++Fallthrough;
-  // If FallthroughBlock is off the end of the function, it can't fall through.
-  if (Fallthrough == CurBB->getParent()->end())
-    return false;
-
-  // If FallthroughBlock isn't a successor of CurBB, no fallthrough is possible.
-  if (!CurBB->isSuccessor(Fallthrough))
-    return false;
-
-  // If we couldn't analyze the branch, examine the last instruction.
-  // If the block doesn't end in a known control barrier, assume fallthrough
-  // is possible. The isPredicable check is needed because this code can be
-  // called during IfConversion, where an instruction which is normally a
-  // Barrier is predicated and thus no longer an actual control barrier. This
-  // is over-conservative though, because if an instruction isn't actually
-  // predicated we could still treat it like a barrier.
-  if (BranchUnAnalyzable)
-    return CurBB->empty() || !CurBB->back().getDesc().isBarrier() ||
-           CurBB->back().getDesc().isPredicable();
-  
-  // If there is no branch, control always falls through.
-  if (TBB == 0) return true;
-
-  // If there is some explicit branch to the fallthrough block, it can obviously
-  // reach, even though the branch should get folded to fall through implicitly.
-  if (MachineFunction::iterator(TBB) == Fallthrough ||
-      MachineFunction::iterator(FBB) == Fallthrough)
+// Blocks should be considered empty if they contain only debug info;
+// else the debug info would affect codegen.
+static bool IsEmptyBlock(MachineBasicBlock *MBB) {
+  if (MBB->empty())
     return true;
-
-  // If it's an unconditional branch to some block not the fall through, it
-  // doesn't fall through.
-  if (Cond.empty()) return false;
-
-  // Otherwise, if it is conditional and has no explicit false block, it falls
-  // through.
-  return FBB == 0;
+  for (MachineBasicBlock::iterator MBBI = MBB->begin(), MBBE = MBB->end();
+       MBBI!=MBBE; ++MBBI) {
+    if (!MBBI->isDebugValue())
+      return false;
+  }
+  return true;
 }
 
-/// CanFallThrough - Return true if the specified can implicitly transfer
-/// control to the block after it by falling off the end of it.  This should
-/// return false if it can reach the block after it, but it uses an explicit
-/// branch to do so (e.g. a table jump).
-///
-/// True is a conservative answer.
-///
-bool BranchFolder::CanFallThrough(MachineBasicBlock *CurBB) {
-  MachineBasicBlock *TBB = 0, *FBB = 0;
-  SmallVector<MachineOperand, 4> Cond;
-  bool CurUnAnalyzable = TII->AnalyzeBranch(*CurBB, TBB, FBB, Cond, true);
-  return CanFallThrough(CurBB, CurUnAnalyzable, TBB, FBB, Cond);
+// Blocks with only debug info and branches should be considered the same
+// as blocks with only branches.
+static bool IsBranchOnlyBlock(MachineBasicBlock *MBB) {
+  MachineBasicBlock::iterator MBBI, MBBE;
+  for (MBBI = MBB->begin(), MBBE = MBB->end(); MBBI!=MBBE; ++MBBI) {
+    if (!MBBI->isDebugValue())
+      break;
+  }
+  return (MBBI->getDesc().isBranch());
 }
 
 /// IsBetterFallthrough - Return true if it would be clearly better to
@@ -1022,102 +1006,6 @@ static bool IsBetterFallthrough(MachineBasicBlock *MBB1,
   return MBB2I->getDesc().isCall() && !MBB1I->getDesc().isCall();
 }
 
-/// TailDuplicate - MBB unconditionally branches to SuccBB. If it is profitable,
-/// duplicate SuccBB's contents in MBB to eliminate the branch.
-bool BranchFolder::TailDuplicate(MachineBasicBlock *TailBB,
-                                 bool PrevFallsThrough,
-                                 MachineFunction &MF) {
-  // Don't try to tail-duplicate single-block loops.
-  if (TailBB->isSuccessor(TailBB))
-    return false;
-
-  // Don't tail-duplicate a block which will soon be folded into its successor.
-  if (TailBB->succ_size() == 1 &&
-      TailBB->succ_begin()[0]->pred_size() == 1)
-    return false;
-
-  // Duplicate up to one less that the tail-merge threshold, so that we don't
-  // get into an infinite loop between duplicating and merging. When optimizing
-  // for size, duplicate only one, because one branch instruction can be
-  // eliminated to compensate for the duplication.
-  unsigned MaxDuplicateCount = 
-    MF.getFunction()->hasFnAttr(Attribute::OptimizeForSize) ?
-      1 : (TailMergeSize - 1);
-
-  // Check the instructions in the block to determine whether tail-duplication
-  // is invalid or unlikely to be unprofitable.
-  unsigned i = 0;
-  bool HasCall = false;
-  for (MachineBasicBlock::iterator I = TailBB->begin();
-       I != TailBB->end(); ++I, ++i) {
-    // Non-duplicable things shouldn't be tail-duplicated.
-    if (I->getDesc().isNotDuplicable()) return false;
-    // Don't duplicate more than the threshold.
-    if (i == MaxDuplicateCount) return false;
-    // Remember if we saw a call.
-    if (I->getDesc().isCall()) HasCall = true;
-  }
-  // Heuristically, don't tail-duplicate calls if it would expand code size,
-  // as it's less likely to be worth the extra cost.
-  if (i > 1 && HasCall)
-    return false;
-
-  // Iterate through all the unique predecessors and tail-duplicate this
-  // block into them, if possible. Copying the list ahead of time also
-  // avoids trouble with the predecessor list reallocating.
-  bool Changed = false;
-  SmallSetVector<MachineBasicBlock *, 8> Preds(TailBB->pred_begin(),
-                                               TailBB->pred_end());
-  for (SmallSetVector<MachineBasicBlock *, 8>::iterator PI = Preds.begin(),
-       PE = Preds.end(); PI != PE; ++PI) {
-    MachineBasicBlock *PredBB = *PI;
-
-    assert(TailBB != PredBB &&
-           "Single-block loop should have been rejected earlier!");
-    if (PredBB->succ_size() > 1) continue;
-
-    MachineBasicBlock *PredTBB, *PredFBB;
-    SmallVector<MachineOperand, 4> PredCond;
-    if (TII->AnalyzeBranch(*PredBB, PredTBB, PredFBB, PredCond, true))
-      continue;
-    if (!PredCond.empty())
-      continue;
-    // EH edges are ignored by AnalyzeBranch.
-    if (PredBB->succ_size() != 1)
-      continue;
-    // Don't duplicate into a fall-through predecessor unless its the
-    // only predecessor.
-    if (PredBB->isLayoutSuccessor(TailBB) &&
-        PrevFallsThrough &&
-        TailBB->pred_size() != 1)
-      continue;
-
-    DEBUG(errs() << "\nTail-duplicating into PredBB: " << *PredBB
-                 << "From Succ: " << *TailBB);
-
-    // Remove PredBB's unconditional branch.
-    TII->RemoveBranch(*PredBB);
-    // Clone the contents of TailBB into PredBB.
-    for (MachineBasicBlock::iterator I = TailBB->begin(), E = TailBB->end();
-         I != E; ++I) {
-      MachineInstr *NewMI = MF.CloneMachineInstr(I);
-      PredBB->insert(PredBB->end(), NewMI);
-    }
-
-    // Update the CFG.
-    PredBB->removeSuccessor(PredBB->succ_begin());
-    assert(PredBB->succ_empty() &&
-           "TailDuplicate called on block with multiple successors!");
-    for (MachineBasicBlock::succ_iterator I = TailBB->succ_begin(),
-         E = TailBB->succ_end(); I != E; ++I)
-       PredBB->addSuccessor(*I);
-
-    Changed = true;
-  }
-
-  return Changed;
-}
-
 /// OptimizeBlock - Analyze and optimize control flow related to the specified
 /// block.  This is never called on the entry block.
 bool BranchFolder::OptimizeBlock(MachineBasicBlock *MBB) {
@@ -1132,7 +1020,7 @@ ReoptimizeBlock:
   // explicitly.  Landing pads should not do this since the landing-pad table
   // points to this block.  Blocks with their addresses taken shouldn't be
   // optimized away.
-  if (MBB->empty() && !MBB->isLandingPad() && !MBB->hasAddressTaken()) {
+  if (IsEmptyBlock(MBB) && !MBB->isLandingPad() && !MBB->hasAddressTaken()) {
     // Dead block?  Leave for cleanup later.
     if (MBB->pred_empty()) return MadeChange;
 
@@ -1147,7 +1035,8 @@ ReoptimizeBlock:
       }
       // If MBB was the target of a jump table, update jump tables to go to the
       // fallthrough instead.
-      MF.getJumpTableInfo()->ReplaceMBBInJumpTables(MBB, FallThrough);
+      if (MachineJumpTableInfo *MJTI = MF.getJumpTableInfo())
+        MJTI->ReplaceMBBInJumpTables(MBB, FallThrough);
       MadeChange = true;
     }
     return MadeChange;
@@ -1182,14 +1071,14 @@ ReoptimizeBlock:
     // If the previous block unconditionally falls through to this block and
     // this block has no other predecessors, move the contents of this block
     // into the prior block. This doesn't usually happen when SimplifyCFG
-    // has been used, but it can happen tail duplication eliminates all the
-    // non-branch predecessors of a block leaving only the fall-through edge.
+    // has been used, but it can happen if tail merging splits a fall-through
+    // predecessor of a block.
     // This has to check PrevBB->succ_size() because EH edges are ignored by
     // AnalyzeBranch.
     if (PriorCond.empty() && !PriorTBB && MBB->pred_size() == 1 &&
         PrevBB.succ_size() == 1 &&
         !MBB->hasAddressTaken()) {
-      DEBUG(errs() << "\nMerging into block: " << PrevBB
+      DEBUG(dbgs() << "\nMerging into block: " << PrevBB
                    << "From MBB: " << *MBB);
       PrevBB.splice(PrevBB.end(), MBB, MBB->begin(), MBB->end());
       PrevBB.removeSuccessor(PrevBB.succ_begin());;
@@ -1198,7 +1087,7 @@ ReoptimizeBlock:
       MadeChange = true;
       return MadeChange;
     }
-    
+
     // If the previous branch *only* branches to *this* block (conditional or
     // not) remove the branch.
     if (PriorTBB == MBB && PriorFBB == 0) {
@@ -1242,7 +1131,7 @@ ReoptimizeBlock:
     // the assert condition out of the loop body.
     if (MBB->succ_empty() && !PriorCond.empty() && PriorFBB == 0 &&
         MachineFunction::iterator(PriorTBB) == FallThrough &&
-        !CanFallThrough(MBB)) {
+        !MBB->canFallThrough()) {
       bool DoTransform = true;
 
       // We have to be careful that the succs of PredBB aren't both no-successor
@@ -1266,7 +1155,7 @@ ReoptimizeBlock:
       // In this case, we could actually be moving the return block *into* a
       // loop!
       if (DoTransform && !MBB->succ_empty() &&
-          (!CanFallThrough(PriorTBB) || PriorTBB->empty()))
+          (!PriorTBB->canFallThrough() || PriorTBB->empty()))
         DoTransform = false;
 
 
@@ -1274,7 +1163,7 @@ ReoptimizeBlock:
         // Reverse the branch so we will fall through on the previous true cond.
         SmallVector<MachineOperand, 4> NewPriorCond(PriorCond);
         if (!TII->ReverseBranchCondition(NewPriorCond)) {
-          DEBUG(errs() << "\nMoving MBB: " << *MBB
+          DEBUG(dbgs() << "\nMoving MBB: " << *MBB
                        << "To make fallthrough to: " << *PriorTBB << "\n");
 
           TII->RemoveBranch(PrevBB);
@@ -1314,24 +1203,39 @@ ReoptimizeBlock:
       }
     }
 
-
     // If this branch is the only thing in its block, see if we can forward
     // other blocks across it.
     if (CurTBB && CurCond.empty() && CurFBB == 0 &&
-        MBB->begin()->getDesc().isBranch() && CurTBB != MBB &&
+        IsBranchOnlyBlock(MBB) && CurTBB != MBB &&
         !MBB->hasAddressTaken()) {
       // This block may contain just an unconditional branch.  Because there can
       // be 'non-branch terminators' in the block, try removing the branch and
       // then seeing if the block is empty.
       TII->RemoveBranch(*MBB);
-
+      // If the only things remaining in the block are debug info, remove these
+      // as well, so this will behave the same as an empty block in non-debug
+      // mode.
+      if (!MBB->empty()) {
+        bool NonDebugInfoFound = false;
+        for (MachineBasicBlock::iterator I = MBB->begin(), E = MBB->end();
+             I != E; ++I) {
+          if (!I->isDebugValue()) {
+            NonDebugInfoFound = true;
+            break;
+          }
+        }
+        if (!NonDebugInfoFound)
+          // Make the block empty, losing the debug info (we could probably
+          // improve this in some cases.)
+          MBB->erase(MBB->begin(), MBB->end());
+      }
       // If this block is just an unconditional branch to CurTBB, we can
       // usually completely eliminate the block.  The only case we cannot
       // completely eliminate the block is when the block before this one
       // falls through into MBB and we can't understand the prior block's branch
       // condition.
       if (MBB->empty()) {
-        bool PredHasNoFallThrough = TII->BlockHasNoFallThrough(PrevBB);
+        bool PredHasNoFallThrough = !PrevBB.canFallThrough();
         if (PredHasNoFallThrough || !PriorUnAnalyzable ||
             !PrevBB.isSuccessor(MBB)) {
           // If the prior block falls through into us, turn it into an
@@ -1382,7 +1286,8 @@ ReoptimizeBlock:
           }
 
           // Change any jumptables to go to the new MBB.
-          MF.getJumpTableInfo()->ReplaceMBBInJumpTables(MBB, CurTBB);
+          if (MachineJumpTableInfo *MJTI = MF.getJumpTableInfo())
+            MJTI->ReplaceMBBInJumpTables(MBB, CurTBB);
           if (DidChange) {
             ++NumBranchOpts;
             MadeChange = true;
@@ -1396,26 +1301,15 @@ ReoptimizeBlock:
     }
   }
 
-  // Now we know that there was no fall-through into this block, check to
-  // see if it has a fall-through into its successor.
-  bool CurFallsThru = CanFallThrough(MBB, CurUnAnalyzable, CurTBB, CurFBB, 
-                                     CurCond);
-  bool PrevFallsThru = CanFallThrough(&PrevBB, PriorUnAnalyzable,
-                                      PriorTBB, PriorFBB, PriorCond);
-
-  // If this block is small, unconditionally branched to, and does not
-  // fall through, tail-duplicate its instructions into its predecessors
-  // to eliminate a (dynamic) branch.
-  if (!CurFallsThru)
-    if (TailDuplicate(MBB, PrevFallsThru, MF)) {
-      MadeChange = true;
-      return MadeChange;
-    }
-
   // If the prior block doesn't fall through into this block, and if this
   // block doesn't fall through into some other block, see if we can find a
   // place to move this block where a fall-through will happen.
-  if (!PrevFallsThru) {
+  if (!PrevBB.canFallThrough()) {
+
+    // Now we know that there was no fall-through into this block, check to
+    // see if it has a fall-through into its successor.
+    bool CurFallsThru = MBB->canFallThrough();
+
     if (!MBB->isLandingPad()) {
       // Check all the predecessors of this block.  If one of them has no fall
       // throughs, move this block right after it.
@@ -1424,9 +1318,9 @@ ReoptimizeBlock:
         // Analyze the branch at the end of the pred.
         MachineBasicBlock *PredBB = *PI;
         MachineFunction::iterator PredFallthrough = PredBB; ++PredFallthrough;
-        MachineBasicBlock *PredTBB, *PredFBB;
+        MachineBasicBlock *PredTBB = 0, *PredFBB = 0;
         SmallVector<MachineOperand, 4> PredCond;
-        if (PredBB != MBB && !CanFallThrough(PredBB) &&
+        if (PredBB != MBB && !PredBB->canFallThrough() &&
             !TII->AnalyzeBranch(*PredBB, PredTBB, PredFBB, PredCond, true)
             && (!CurFallsThru || !CurTBB || !CurFBB)
             && (!CurFallsThru || MBB->getNumber() >= PredBB->getNumber())) {
@@ -1441,7 +1335,7 @@ ReoptimizeBlock:
           // B elsewhere
           // next:
           if (CurFallsThru) {
-            MachineBasicBlock *NextBB = next(MachineFunction::iterator(MBB));
+            MachineBasicBlock *NextBB = llvm::next(MachineFunction::iterator(MBB));
             CurCond.clear();
             TII->InsertBranch(*MBB, NextBB, 0, CurCond);
           }
@@ -1465,7 +1359,7 @@ ReoptimizeBlock:
         // and if the successor isn't an EH destination, we can arrange for the
         // fallthrough to happen.
         if (SuccBB != MBB && &*SuccPrev != MBB &&
-            !CanFallThrough(SuccPrev) && !CurUnAnalyzable &&
+            !SuccPrev->canFallThrough() && !CurUnAnalyzable &&
             !SuccBB->isLandingPad()) {
           MBB->moveBefore(SuccBB);
           MadeChange = true;
@@ -1476,7 +1370,7 @@ ReoptimizeBlock:
       // Okay, there is no really great place to put this block.  If, however,
       // the block before this one would be a fall-through if this block were
       // removed, move this block to the end of the function.
-      MachineBasicBlock *PrevTBB, *PrevFBB;
+      MachineBasicBlock *PrevTBB = 0, *PrevFBB = 0;
       SmallVector<MachineOperand, 4> PrevCond;
       if (FallThrough != MF.end() &&
           !TII->AnalyzeBranch(PrevBB, PrevTBB, PrevFBB, PrevCond, true) &&

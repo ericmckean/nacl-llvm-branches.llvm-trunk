@@ -21,7 +21,9 @@ namespace llvm {
 /// MCSectionELF - This represents a section on linux, lots of unix variants
 /// and some bare metal systems.
 class MCSectionELF : public MCSection {
-  std::string SectionName;
+  /// SectionName - This is the name of the section.  The referenced memory is
+  /// owned by TargetLoweringObjectFileELF's ELFUniqueMap.
+  StringRef SectionName;
   
   /// Type - This is the sh_type field of a section, drawn from the enums below.
   unsigned Type;
@@ -31,13 +33,13 @@ class MCSectionELF : public MCSection {
   unsigned Flags;
 
   /// IsExplicit - Indicates that this section comes from globals with an
-  /// explicit section specfied.
+  /// explicit section specified.
   bool IsExplicit;
   
 protected:
   MCSectionELF(StringRef Section, unsigned type, unsigned flags,
                SectionKind K, bool isExplicit)
-    : MCSection(K), SectionName(Section.str()), Type(type), Flags(flags), 
+    : MCSection(K), SectionName(Section), Type(type), Flags(flags), 
       IsExplicit(isExplicit) {}
 public:
   
@@ -47,8 +49,7 @@ public:
 
   /// ShouldOmitSectionDirective - Decides whether a '.section' directive
   /// should be printed before the section name
-  bool ShouldOmitSectionDirective(const char *Name, 
-                                  const MCAsmInfo &MAI) const;
+  bool ShouldOmitSectionDirective(StringRef Name, const MCAsmInfo &MAI) const;
 
   /// ShouldPrintSectionType - Only prints the section type if supported
   bool ShouldPrintSectionType(unsigned Ty) const;
@@ -164,10 +165,7 @@ public:
     TARGET_INDEP_SHF     = FIRST_TARGET_DEP_FLAG-1U
   };
 
-  StringRef getSectionName() const {
-    return StringRef(SectionName);
-  }
-  
+  StringRef getSectionName() const { return SectionName; }
   unsigned getType() const { return Type; }
   unsigned getFlags() const { return Flags; }
   

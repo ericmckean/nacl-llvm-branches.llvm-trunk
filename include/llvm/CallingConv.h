@@ -44,6 +44,9 @@ namespace CallingConv {
     // call does not break any live ranges in the caller side.
     Cold = 9,
 
+    // GHC - Calling convention used by the Glasgow Haskell Compiler (GHC).
+    GHC = 10,
+
     // Target - This is the start of the target-specific calling conventions,
     // e.g. fastcall and thiscall on X86.
     FirstTargetCC = 64,
@@ -68,7 +71,10 @@ namespace CallingConv {
     ARM_AAPCS = 67,
 
     /// ARM_AAPCS_VFP - Same as ARM_AAPCS, but uses hard floating point ABI.
-    ARM_AAPCS_VFP = 68
+    ARM_AAPCS_VFP = 68,
+
+    /// MSP430_INTR - Calling convention used for MSP430 interrupt routines.
+    MSP430_INTR = 69
   };
 } // End CallingConv namespace
 

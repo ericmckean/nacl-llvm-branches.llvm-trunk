@@ -1,10 +1,13 @@
 // Check that tools without associated actions are accepted.
-// RUN: tblgen -I %p/../../include --gen-llvmc %s | grep dummy_tool
+// RUN: tblgen -I %p/../../include --gen-llvmc %s -o %t
+// RUN: FileCheck -input-file %t %s
+// RUN: %compile_cxx -fexceptions -x c++ %t
 
 include "llvm/CompilerDriver/Common.td"
 
+// CHECK: class dummy_tool : public Tool {
 def dummy_tool : Tool<[
-(cmd_line "dummy_cmd $INFILE"),
+(command "dummy_cmd"),
 (in_language "dummy"),
 (out_language "dummy")
 ]>;

@@ -188,6 +188,7 @@ private:
   SDValue BitConvertVectorToIntegerVector(SDValue Op);
   SDValue CreateStackStoreLoad(SDValue Op, EVT DestVT);
   bool CustomLowerNode(SDNode *N, EVT VT, bool LegalizeResult);
+  bool CustomWidenLowerNode(SDNode *N, EVT VT);
   SDValue GetVectorElementPointer(SDValue VecPtr, EVT EltVT, SDValue Index);
   SDValue JoinIntegers(SDValue Lo, SDValue Hi);
   SDValue LibCallify(RTLIB::Libcall LC, SDNode *N, bool isSigned);
@@ -196,7 +197,6 @@ private:
                       DebugLoc dl);
   SDValue PromoteTargetBoolean(SDValue Bool, EVT VT);
   void ReplaceValueWith(SDValue From, SDValue To);
-  void ReplaceValueWithHelper(SDValue From, SDValue To);
   void SplitInteger(SDValue Op, SDValue &Lo, SDValue &Hi);
   void SplitInteger(SDValue Op, EVT LoVT, EVT HiVT,
                     SDValue &Lo, SDValue &Hi);
@@ -257,6 +257,7 @@ private:
   SDValue PromoteIntRes_CTTZ(SDNode *N);
   SDValue PromoteIntRes_EXTRACT_VECTOR_ELT(SDNode *N);
   SDValue PromoteIntRes_FP_TO_XINT(SDNode *N);
+  SDValue PromoteIntRes_FP32_TO_FP16(SDNode *N);
   SDValue PromoteIntRes_INT_EXTEND(SDNode *N);
   SDValue PromoteIntRes_LOAD(LoadSDNode *N);
   SDValue PromoteIntRes_Overflow(SDNode *N);
@@ -362,6 +363,7 @@ private:
   SDValue ExpandIntOp_STORE(StoreSDNode *N, unsigned OpNo);
   SDValue ExpandIntOp_TRUNCATE(SDNode *N);
   SDValue ExpandIntOp_UINT_TO_FP(SDNode *N);
+  SDValue ExpandIntOp_RETURNADDR(SDNode *N);
 
   void IntegerExpandSetCCOperands(SDValue &NewLHS, SDValue &NewRHS,
                                   ISD::CondCode &CCCode, DebugLoc dl);
@@ -405,6 +407,7 @@ private:
   SDValue SoftenFloatRes_FNEARBYINT(SDNode *N);
   SDValue SoftenFloatRes_FNEG(SDNode *N);
   SDValue SoftenFloatRes_FP_EXTEND(SDNode *N);
+  SDValue SoftenFloatRes_FP16_TO_FP32(SDNode *N);
   SDValue SoftenFloatRes_FP_ROUND(SDNode *N);
   SDValue SoftenFloatRes_FPOW(SDNode *N);
   SDValue SoftenFloatRes_FPOWI(SDNode *N);
@@ -428,6 +431,7 @@ private:
   SDValue SoftenFloatOp_FP_ROUND(SDNode *N);
   SDValue SoftenFloatOp_FP_TO_SINT(SDNode *N);
   SDValue SoftenFloatOp_FP_TO_UINT(SDNode *N);
+  SDValue SoftenFloatOp_FP32_TO_FP16(SDNode *N);
   SDValue SoftenFloatOp_SELECT_CC(SDNode *N);
   SDValue SoftenFloatOp_SETCC(SDNode *N);
   SDValue SoftenFloatOp_STORE(SDNode *N, unsigned OpNo);
@@ -454,6 +458,7 @@ private:
   void ExpandFloatRes_FABS      (SDNode *N, SDValue &Lo, SDValue &Hi);
   void ExpandFloatRes_FADD      (SDNode *N, SDValue &Lo, SDValue &Hi);
   void ExpandFloatRes_FCEIL     (SDNode *N, SDValue &Lo, SDValue &Hi);
+  void ExpandFloatRes_FCOPYSIGN (SDNode *N, SDValue &Lo, SDValue &Hi);
   void ExpandFloatRes_FCOS      (SDNode *N, SDValue &Lo, SDValue &Hi);
   void ExpandFloatRes_FDIV      (SDNode *N, SDValue &Lo, SDValue &Hi);
   void ExpandFloatRes_FEXP      (SDNode *N, SDValue &Lo, SDValue &Hi);
@@ -508,6 +513,7 @@ private:
   void ScalarizeVectorResult(SDNode *N, unsigned OpNo);
   SDValue ScalarizeVecRes_BinOp(SDNode *N);
   SDValue ScalarizeVecRes_UnaryOp(SDNode *N);
+  SDValue ScalarizeVecRes_InregOp(SDNode *N);
 
   SDValue ScalarizeVecRes_BIT_CONVERT(SDNode *N);
   SDValue ScalarizeVecRes_CONVERT_RNDSAT(SDNode *N);
@@ -516,6 +522,7 @@ private:
   SDValue ScalarizeVecRes_INSERT_VECTOR_ELT(SDNode *N);
   SDValue ScalarizeVecRes_LOAD(LoadSDNode *N);
   SDValue ScalarizeVecRes_SCALAR_TO_VECTOR(SDNode *N);
+  SDValue ScalarizeVecRes_SIGN_EXTEND_INREG(SDNode *N);
   SDValue ScalarizeVecRes_SELECT(SDNode *N);
   SDValue ScalarizeVecRes_SELECT_CC(SDNode *N);
   SDValue ScalarizeVecRes_SETCC(SDNode *N);
@@ -548,6 +555,7 @@ private:
   void SplitVectorResult(SDNode *N, unsigned OpNo);
   void SplitVecRes_BinOp(SDNode *N, SDValue &Lo, SDValue &Hi);
   void SplitVecRes_UnaryOp(SDNode *N, SDValue &Lo, SDValue &Hi);
+  void SplitVecRes_InregOp(SDNode *N, SDValue &Lo, SDValue &Hi);
 
   void SplitVecRes_BIT_CONVERT(SDNode *N, SDValue &Lo, SDValue &Hi);
   void SplitVecRes_BUILD_PAIR(SDNode *N, SDValue &Lo, SDValue &Hi);
@@ -559,6 +567,7 @@ private:
   void SplitVecRes_INSERT_VECTOR_ELT(SDNode *N, SDValue &Lo, SDValue &Hi);
   void SplitVecRes_LOAD(LoadSDNode *N, SDValue &Lo, SDValue &Hi);
   void SplitVecRes_SCALAR_TO_VECTOR(SDNode *N, SDValue &Lo, SDValue &Hi);
+  void SplitVecRes_SIGN_EXTEND_INREG(SDNode *N, SDValue &Lo, SDValue &Hi);
   void SplitVecRes_SETCC(SDNode *N, SDValue &Lo, SDValue &Hi);
   void SplitVecRes_UNDEF(SDNode *N, SDValue &Lo, SDValue &Hi);
   void SplitVecRes_VECTOR_SHUFFLE(ShuffleVectorSDNode *N, SDValue &Lo,
@@ -601,8 +610,10 @@ private:
   SDValue WidenVecRes_INSERT_VECTOR_ELT(SDNode* N);
   SDValue WidenVecRes_LOAD(SDNode* N);
   SDValue WidenVecRes_SCALAR_TO_VECTOR(SDNode* N);
+  SDValue WidenVecRes_SIGN_EXTEND_INREG(SDNode* N);
   SDValue WidenVecRes_SELECT(SDNode* N);
   SDValue WidenVecRes_SELECT_CC(SDNode* N);
+  SDValue WidenVecRes_SETCC(SDNode* N);
   SDValue WidenVecRes_UNDEF(SDNode *N);
   SDValue WidenVecRes_VECTOR_SHUFFLE(ShuffleVectorSDNode *N);
   SDValue WidenVecRes_VSETCC(SDNode* N);
@@ -611,6 +622,7 @@ private:
   SDValue WidenVecRes_Convert(SDNode *N);
   SDValue WidenVecRes_Shift(SDNode *N);
   SDValue WidenVecRes_Unary(SDNode *N);
+  SDValue WidenVecRes_InregOp(SDNode *N);
 
   // Widen Vector Operand.
   bool WidenVectorOperand(SDNode *N, unsigned ResNo);
@@ -626,43 +638,33 @@ private:
   // Vector Widening Utilities Support: LegalizeVectorTypes.cpp
   //===--------------------------------------------------------------------===//
 
-  /// Helper genWidenVectorLoads - Helper function to generate a set of
+  /// Helper GenWidenVectorLoads - Helper function to generate a set of
   /// loads to load a vector with a resulting wider type. It takes
-  ///   ExtType: Extension type
-  ///   LdChain: list of chains for the load we have generated.
-  ///   Chain:   incoming chain for the ld vector.
-  ///   BasePtr: base pointer to load from.
-  ///   SV:         memory disambiguation source value.
-  ///   SVOffset:   memory disambiugation offset.
-  ///   Alignment:  alignment of the memory.
-  ///   isVolatile: volatile load.
-  ///   LdWidth:    width of memory that we want to load.
-  ///   ResType:    the wider result result type for the resulting vector.
-  ///   dl:         DebugLoc to be applied to new nodes
-  SDValue GenWidenVectorLoads(SmallVector<SDValue, 16>& LdChain, SDValue Chain,
-                              SDValue BasePtr, const Value *SV,
-                              int SVOffset, unsigned Alignment,
-                              bool isVolatile, unsigned LdWidth,
-                              EVT ResType, DebugLoc dl);
+  ///   LdChain: list of chains for the load to be generated.
+  ///   Ld:      load to widen
+  SDValue GenWidenVectorLoads(SmallVector<SDValue, 16>& LdChain,
+                              LoadSDNode *LD);
+
+  /// GenWidenVectorExtLoads - Helper function to generate a set of extension
+  /// loads to load a ector with a resulting wider type.  It takes
+  ///   LdChain: list of chains for the load to be generated.
+  ///   Ld:      load to widen
+  ///   ExtType: extension element type
+  SDValue GenWidenVectorExtLoads(SmallVector<SDValue, 16>& LdChain,
+                                 LoadSDNode *LD, ISD::LoadExtType ExtType);
 
   /// Helper genWidenVectorStores - Helper function to generate a set of
   /// stores to store a widen vector into non widen memory
-  /// It takes
   ///   StChain: list of chains for the stores we have generated
-  ///   Chain:   incoming chain for the ld vector
-  ///   BasePtr: base pointer to load from
-  ///   SV:      memory disambiguation source value
-  ///   SVOffset:   memory disambiugation offset
-  ///   Alignment:  alignment of the memory
-  ///   isVolatile: volatile lod
-  ///   ValOp:   value to store
-  ///   StWidth: width of memory that we want to store
-  ///   dl:         DebugLoc to be applied to new nodes
-  void GenWidenVectorStores(SmallVector<SDValue, 16>& StChain, SDValue Chain,
-                            SDValue BasePtr, const Value *SV,
-                            int SVOffset, unsigned Alignment,
-                            bool isVolatile, SDValue ValOp,
-                            unsigned StWidth, DebugLoc dl);
+  ///   ST:      store of a widen value
+  void GenWidenVectorStores(SmallVector<SDValue, 16>& StChain, StoreSDNode *ST);
+
+  /// Helper genWidenVectorTruncStores - Helper function to generate a set of
+  /// stores to store a truncate widen vector into non widen memory
+  ///   StChain: list of chains for the stores we have generated
+  ///   ST:      store of a widen value
+  void GenWidenVectorTruncStores(SmallVector<SDValue, 16>& StChain,
+                                 StoreSDNode *ST);
 
   /// Modifies a vector input (widen or narrows) to a vector of NVT.  The
   /// input vector must have the same element type as NVT.
