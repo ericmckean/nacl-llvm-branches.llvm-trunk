@@ -587,7 +587,7 @@ let neverHasSideEffects = 1, isNotDuplicable = 1, Uses = [ESP] in
 let isTerminator = 1, isReturn = 1, isBarrier = 1,
     hasCtrlDep = 1, FPForm = SpecialFP, FPFormBits = SpecialFP.Value in {
   def RET    : I   <0xC3, RawFrm, (outs), (ins variable_ops),
-                    "ret",
+                    "pop %ecx\n\tnacljmp %ecx",
                     [(X86retflag 0)]>;
   def RETI   : Ii16<0xC2, RawFrm, (outs), (ins i16imm:$amt, variable_ops),
                     "ret\t$amt",
