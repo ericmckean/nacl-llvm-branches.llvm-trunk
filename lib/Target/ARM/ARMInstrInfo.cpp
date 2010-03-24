@@ -22,7 +22,22 @@
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineJumpTableInfo.h"
 #include "llvm/MC/MCAsmInfo.h"
+#include "llvm/Support/CommandLine.h" // @LOCALMOD
 using namespace llvm;
+
+
+// @LOCALMOD-START
+cl::opt<bool> FlagSfiStore("sfi-store",
+                       cl::desc("SFI store"));
+
+cl::opt<bool> FlagSfiStack("sfi-stack",
+                       cl::desc("SFI stack"));
+
+cl::opt<bool> FlagSfiBranch("sfi-branch",
+                        cl::desc("SFI branch"));
+
+// @LOCALMOD-END
+
 
 ARMInstrInfo::ARMInstrInfo(const ARMSubtarget &STI)
   : ARMBaseInstrInfo(STI), RI(*this, STI) {
@@ -102,4 +117,3 @@ reMaterialize(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
 
   return ARMBaseInstrInfo::reMaterialize(MBB, I, DestReg, SubIdx, Orig);
 }
-

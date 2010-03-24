@@ -321,6 +321,11 @@ def am3offset : Operand<i32>,
   let MIOperandInfo = (ops GPR, i32imm);
 }
 
+
+// ======================================================================
+
+
+
 // addrmode4 := reg, <mode|W>
 //
 def addrmode4 : Operand<i32>,
@@ -645,8 +650,12 @@ def LEApcrelJT : AXI1<0x0, (outs GPR:$dst),
 //
 
 let isReturn = 1, isTerminator = 1, isBarrier = 1 in
+// @LOCALMOD-START
   def BX_RET : AI<(outs), (ins), BrMiscFrm, IIC_Br, 
-                  "bx", "\tlr", [(ARMretflag)]> {
+//                  "bx", "\tlr", [(ARMretflag)]> {
+                  "sfi_bx", "\tlr", [(ARMretflag)]> {
+
+// @LOCALMOD-END
   let Inst{7-4}   = 0b0001;
   let Inst{19-8}  = 0b111111111111;
   let Inst{27-20} = 0b00010010;
@@ -654,7 +663,11 @@ let isReturn = 1, isTerminator = 1, isBarrier = 1 in
 
 // Indirect branches
 let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
-  def BRIND : AXI<(outs), (ins GPR:$dst), BrMiscFrm, IIC_Br, "bx\t$dst",
+    // @LOCALMOD-START
+    //  def BRIND : AXI<(outs), (ins GPR:$dst), BrMiscFrm, IIC_Br, "bx\t$dst",
+    def BRIND : AXI<(outs), (ins GPR:$dst), BrMiscFrm, IIC_Br,
+    "sfi_indirect_jump_preamble $dst\n\tbx\t$dst",
+    // @LOCALMOD-END
                   [(brind GPR:$dst)]> {
     let Inst{7-4}   = 0b0001;
     let Inst{19-8}  = 0b111111111111;
@@ -678,20 +691,29 @@ let isCall = 1,
           D16, D17, D18, D19, D20, D21, D22, D23,
           D24, D25, D26, D27, D28, D29, D30, D31, CPSR, FPSCR] in {
   def BL  : ABXI<0b1011, (outs), (ins i32imm:$func, variable_ops),
-                IIC_Br, "bl\t${func:call}",
+// @LOCALMOD-START
+//                IIC_Br, "bl\t${func:call}",
+                IIC_Br, "sfi_call_preamble\n\tbl\t${func:call}",
+// @LOCALMOD-END
                 [(ARMcall tglobaladdr:$func)]>,
             Requires<[IsARM, IsNotDarwin]> {
     let Inst{31-28} = 0b1110;
   }
 
   def BL_pred : ABI<0b1011, (outs), (ins i32imm:$func, variable_ops),
-                   IIC_Br, "bl", "\t${func:call}",
+// @LOCALMOD-START
+//                   IIC_Br, "bl", "\t${func:call}",
+                   IIC_Br, "sfi_call_preamble\n\tbl", "\t${func:call}",
+// @LOCALMOD-END
                    [(ARMcall_pred tglobaladdr:$func)]>,
                 Requires<[IsARM, IsNotDarwin]>;
 
   // ARMv5T and above
   def BLX : AXI<(outs), (ins GPR:$func, variable_ops), BrMiscFrm,
-                IIC_Br, "blx\t$func",
+// @LOCALMOD-START
+//                IIC_Br, "blx\t$func",
+                IIC_Br, "sfi_indirect_call_preamble $func\n\tblx\t$func",
+// @LOCALMOD-END
                 [(ARMcall GPR:$func)]>,
             Requires<[IsARM, HasV5T, IsNotDarwin]> {
     let Inst{7-4}   = 0b0011;
@@ -701,7 +723,11 @@ let isCall = 1,
 
   // ARMv4T
   def BX : ABXIx2<(outs), (ins GPR:$func, variable_ops),
-                  IIC_Br, "mov\tlr, pc\n\tbx\t$func",
+// @LOCALMOD-START
+//                  IIC_Br, "mov\tlr, pc\n\tbx\t$func",
+// TODO(robertm): this does not quite work
+                  IIC_Br, "sfi_call_preamble\n\tmov\tlr, pc\n\tbx\t$func",
+// @LOCALMOD-END
                   [(ARMcall_nolink GPR:$func)]>,
            Requires<[IsARM, IsNotDarwin]> {
     let Inst{7-4}   = 0b0001;
@@ -717,19 +743,28 @@ let isCall = 1,
           D16, D17, D18, D19, D20, D21, D22, D23,
           D24, D25, D26, D27, D28, D29, D30, D31, CPSR, FPSCR] in {
   def BLr9  : ABXI<0b1011, (outs), (ins i32imm:$func, variable_ops),
-                IIC_Br, "bl\t${func:call}",
+// @LOCALMOD-START
+//                IIC_Br, "bl\t${func:call}",
+                IIC_Br, "sfi_call_preamble\n\tbl\t${func:call}",
+// @LOCALMOD-END
                 [(ARMcall tglobaladdr:$func)]>, Requires<[IsARM, IsDarwin]> {
     let Inst{31-28} = 0b1110;
   }
 
   def BLr9_pred : ABI<0b1011, (outs), (ins i32imm:$func, variable_ops),
-                   IIC_Br, "bl", "\t${func:call}",
+// @LOCALMOD-START
+//                   IIC_Br, "bl", "\t${func:call}",
+                   IIC_Br, "sfi_call_preamble\n\tbl", "\t${func:call}",
+// @LOCALMOD-END
                    [(ARMcall_pred tglobaladdr:$func)]>,
                   Requires<[IsARM, IsDarwin]>;
 
   // ARMv5T and above
   def BLXr9 : AXI<(outs), (ins GPR:$func, variable_ops), BrMiscFrm,
-                IIC_Br, "blx\t$func",
+// @LOCALMOD-START
+//                IIC_Br, "blx\t$func",
+                IIC_Br, "sfi_indirect_call_preamble $func\n\tblx\t$func",
+// @LOCALMOD-END
                 [(ARMcall GPR:$func)]>, Requires<[IsARM, HasV5T, IsDarwin]> {
     let Inst{7-4}   = 0b0011;
     let Inst{19-8}  = 0b111111111111;
@@ -738,7 +773,11 @@ let isCall = 1,
 
   // ARMv4T
   def BXr9 : ABXIx2<(outs), (ins GPR:$func, variable_ops),
-                  IIC_Br, "mov\tlr, pc\n\tbx\t$func",
+// @LOCALMOD-START
+//                  IIC_Br, "mov\tlr, pc\n\tbx\t$func",
+// TODO(robertm): this does not quite work
+                  IIC_Br, "sfi_call_preamble\n\tmov\tlr, pc\n\tbx\t$func",
+// @LOCALMOD-END
                   [(ARMcall_nolink GPR:$func)]>, Requires<[IsARM, IsDarwin]> {
     let Inst{7-4}   = 0b0001;
     let Inst{19-8}  = 0b111111111111;
@@ -874,64 +913,95 @@ def LDRSB_POST: AI3ldsbpo<(outs GPR:$dst, GPR:$base_wb),
 
 // Store
 def STR  : AI2stw<(outs), (ins GPR:$src, addrmode2:$addr), StFrm, IIC_iStorer,
-               "str", "\t$src, $addr",
+// @LOCALMOD-START
+// c.f.:  ARMAsmPrinter::printAddrMode2Operand
+//               "str", "\t$src, $addr",
+               "${addr:sfi}str", "\t$src, $addr",
+// @LOCALMOD-END
                [(store GPR:$src, addrmode2:$addr)]>;
 
 // Stores with truncate
 def STRH : AI3sth<(outs), (ins GPR:$src, addrmode3:$addr), StMiscFrm, IIC_iStorer,
-               "strh", "\t$src, $addr",
+// @LOCALMOD-START
+//               "strh", "\t$src, $addr",
+               "${addr:sfi}strh", "\t$src, $addr",
+// @LOCALMOD-END
                [(truncstorei16 GPR:$src, addrmode3:$addr)]>;
 
 def STRB : AI2stb<(outs), (ins GPR:$src, addrmode2:$addr), StFrm, IIC_iStorer,
-               "strb", "\t$src, $addr",
+// @LOCALMOD-START
+//               "strb", "\t$src, $addr",
+               "${addr:sfi}strb", "\t$src, $addr",
+// @LOCALMOD-END
                [(truncstorei8 GPR:$src, addrmode2:$addr)]>;
 
 // Store doubleword
 let mayStore = 1, hasExtraSrcRegAllocReq = 1 in
 def STRD : AI3std<(outs), (ins GPR:$src1, GPR:$src2, addrmode3:$addr),
                StMiscFrm, IIC_iStorer,
-               "strd", "\t$src1, $addr", []>, Requires<[IsARM, HasV5TE]>;
+// @LOCALMOD-START
+//               "strd", "\t$src1, $addr", []>, Requires<[IsARM, HasV5TE]>;
+               "${addr:sfi}strd", "\t$src1, $addr", []>, Requires<[IsARM, HasV5TE]>;
+// @LOCALMOD-END
 
 // Indexed stores
 def STR_PRE  : AI2stwpr<(outs GPR:$base_wb),
                      (ins GPR:$src, GPR:$base, am2offset:$offset), 
                      StFrm, IIC_iStoreru,
-                    "str", "\t$src, [$base, $offset]!", "$base = $base_wb",
+// @LOCALMOD-START
+//                    "str", "\t$src, [$base, $offset]!", "$base = $base_wb",
+                    "${offset:sfi}str", "\t$src, [$base, $offset]!", "$base = $base_wb",
+// @LOCALMOD-END
                     [(set GPR:$base_wb,
                       (pre_store GPR:$src, GPR:$base, am2offset:$offset))]>;
 
 def STR_POST : AI2stwpo<(outs GPR:$base_wb),
                      (ins GPR:$src, GPR:$base,am2offset:$offset), 
                      StFrm, IIC_iStoreru,
-                    "str", "\t$src, [$base], $offset", "$base = $base_wb",
+// @LOCALMOD-START
+//                    "str", "\t$src, [$base], $offset", "$base = $base_wb",
+                    "${offset:sfi}str", "\t$src, [$base], $offset", "$base = $base_wb",
+// @LOCALMOD-END
                     [(set GPR:$base_wb,
                       (post_store GPR:$src, GPR:$base, am2offset:$offset))]>;
 
 def STRH_PRE : AI3sthpr<(outs GPR:$base_wb),
                      (ins GPR:$src, GPR:$base,am3offset:$offset), 
                      StMiscFrm, IIC_iStoreru,
-                     "strh", "\t$src, [$base, $offset]!", "$base = $base_wb",
+// @LOCALMOD-START
+//                     "strh", "\t$src, [$base, $offset]!", "$base = $base_wb",
+                     "${offset:sfi}strh", "\t$src, [$base, $offset]!", "$base = $base_wb",
+// @LOCALMOD-END
                     [(set GPR:$base_wb,
                       (pre_truncsti16 GPR:$src, GPR:$base,am3offset:$offset))]>;
 
 def STRH_POST: AI3sthpo<(outs GPR:$base_wb),
                      (ins GPR:$src, GPR:$base,am3offset:$offset), 
                      StMiscFrm, IIC_iStoreru,
-                     "strh", "\t$src, [$base], $offset", "$base = $base_wb",
+// @LOCALMOD-START
+//                     "strh", "\t$src, [$base], $offset", "$base = $base_wb",
+                     "${offset:sfi}strh", "\t$src, [$base], $offset", "$base = $base_wb",
+// @LOCALMOD-END
                     [(set GPR:$base_wb, (post_truncsti16 GPR:$src,
                                          GPR:$base, am3offset:$offset))]>;
 
 def STRB_PRE : AI2stbpr<(outs GPR:$base_wb),
                      (ins GPR:$src, GPR:$base,am2offset:$offset), 
                      StFrm, IIC_iStoreru,
-                     "strb", "\t$src, [$base, $offset]!", "$base = $base_wb",
+// @LOCALMOD-START
+//                     "strb", "\t$src, [$base, $offset]!", "$base = $base_wb",
+                     "${offset:sfi}strb", "\t$src, [$base, $offset]!", "$base = $base_wb",
+// @LOCALMOD-END
                     [(set GPR:$base_wb, (pre_truncsti8 GPR:$src,
                                          GPR:$base, am2offset:$offset))]>;
 
 def STRB_POST: AI2stbpo<(outs GPR:$base_wb),
                      (ins GPR:$src, GPR:$base,am2offset:$offset), 
                      StFrm, IIC_iStoreru,
-                     "strb", "\t$src, [$base], $offset", "$base = $base_wb",
+// @LOCALMOD-START
+//                     "strb", "\t$src, [$base], $offset", "$base = $base_wb",
+                     "${offset:sfi}strb", "\t$src, [$base], $offset", "$base = $base_wb",
+// @LOCALMOD-END
                     [(set GPR:$base_wb, (post_truncsti8 GPR:$src,
                                          GPR:$base, am2offset:$offset))]>;
 
@@ -948,7 +1018,11 @@ def LDM : AXI4ld<(outs),
 let mayStore = 1, hasExtraSrcRegAllocReq = 1 in
 def STM : AXI4st<(outs),
                (ins addrmode4:$addr, pred:$p, reglist:$wb, variable_ops),
-               LdStMulFrm, IIC_iStorem, "stm${addr:submode}${p}\t$addr, $wb",
+// @LOCALMOD-START
+// c.f. ARMAsmPrinter::printAddrMode4Operand()
+//               LdStMulFrm, IIC_iStorem, "stm${addr:submode}${p}\t$addr, $wb",
+               LdStMulFrm, IIC_iStorem, "sfi_store_preamble ${addr:base}, ${p}\n\tstm${addr:submode}${p}\t$addr, $wb",
+// @LOCALMOD-END
                []>;
 
 //===----------------------------------------------------------------------===//
@@ -1086,6 +1160,17 @@ defm ADD  : AsI1_bin_irs<0b0100, "add",
                          BinOpFrag<(add  node:$LHS, node:$RHS)>, 1>;
 defm SUB  : AsI1_bin_irs<0b0010, "sub",
                          BinOpFrag<(sub  node:$LHS, node:$RHS)>>;
+
+
+// @LOCALMOD-START
+defm STACK_ADD  : AsI1_bin_irs<0b0100, "sfi_add",
+                         BinOpFrag<(add  node:$LHS, node:$RHS)>, 1>;
+defm STACK_SUB  : AsI1_bin_irs<0b0010, "sfi_sub",
+                         BinOpFrag<(sub  node:$LHS, node:$RHS)>>;
+let neverHasSideEffects = 1 in
+def STACK_MOVr : AsI1<0b1101, (outs GPR:$dst), (ins GPR:$src), DPFrm, IIC_iMOVr,
+                 "sfi_mov", " $dst, $src", []>, UnaryDP;
+// @LOCALMOD-END
 
 // ADD and SUB with 's' bit set.
 defm ADDS : AI1_bin_s_irs<0b0100, "adds",
@@ -1551,7 +1636,10 @@ def MOVCCi : AI1<0b1101, (outs GPR:$dst),
 let isCall = 1,
   Defs = [R0, R12, LR, CPSR] in {
   def TPsoft : ABXI<0b1011, (outs), (ins), IIC_Br,
-               "bl\t__aeabi_read_tp",
+// @LOCALMOD-START
+//               "bl\t__aeabi_read_tp",
+               "sfi_call_preamble\n\tbl\t__aeabi_read_tp",
+// @LOCALMOD-END
                [(set R0, ARMthread_pointer)]>;
 }
 

@@ -62,6 +62,11 @@ protected:
   /// IsR9Reserved - True if R9 is a not available as general purpose register.
   bool IsR9Reserved;
 
+  // @LOCALMOD-START
+  /// UseInlineJumpTables - True if jump tables should be in-line in the code.
+  bool UseInlineJumpTables;
+  // @LOCALMOD-END
+
   /// stackAlignment - The minimum alignment known to hold of the stack frame on
   /// entry to the function and which must be maintained by every function.
   unsigned stackAlignment;
@@ -144,6 +149,9 @@ protected:
   /// GVIsIndirectSymbol - true if the GV will be accessed via an indirect
   /// symbol.
   bool GVIsIndirectSymbol(GlobalValue *GV, Reloc::Model RelocM) const;
+
+  // @LOCALMOD
+  bool useInlineJumpTables() const {return UseInlineJumpTables;}
 };
 } // End llvm namespace
 

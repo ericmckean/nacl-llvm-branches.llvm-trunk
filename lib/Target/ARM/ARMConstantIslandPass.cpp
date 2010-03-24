@@ -35,6 +35,15 @@
 #include <algorithm>
 using namespace llvm;
 
+// @LOCALMOD-START
+#include "llvm/Support/CommandLine.h"
+
+cl::opt<bool> FlagSfiCpFudge("sfi-cp-fudge");
+cl::opt<int> FlagSfiCpFudgePercent("sfi-cp-fudge-percent", cl::init(85));
+extern cl::opt<bool> FlagSfiBranch;
+// @LOCALMOD-END
+
+
 STATISTIC(NumCPEs,       "Number of constpool entries");
 STATISTIC(NumSplit,      "Number of uncond branches inserted");
 STATISTIC(NumCBrFixed,   "Number of cond branches fixed");
@@ -52,6 +61,7 @@ AdjustJumpTableBlocks("arm-adjust-jump-tables", cl::Hidden, cl::init(false),
           cl::desc("Adjust basic block layout to better use TB[BH]"));
 
 namespace {
+
   /// ARMConstantIslands - Due to limited PC-relative displacements, ARM
   /// requires constant pool entries to be scattered among the instructions
   /// inside a function.  To do this, it completely ignores the normal LLVM
@@ -179,6 +189,13 @@ namespace {
     }
 
   private:
+    // @LOCALMOD-BEGIN
+    unsigned GetFudge(const MachineInstr* I,
+                      unsigned  offset,
+                      bool is_start,
+                      bool is_end,
+                      bool is_jump_target) const;
+    // @LOCALMOD-END
     void DoInitialPlacement(MachineFunction &MF,
                             std::vector<MachineInstr*> &CPEMIs);
     CPEntry *findConstPoolEntry(unsigned CPI, const MachineInstr *CPEMI);
@@ -259,7 +276,6 @@ FunctionPass *llvm::createARMConstantIslandPass() {
 
 bool ARMConstantIslands::runOnMachineFunction(MachineFunction &MF) {
   MachineConstantPool &MCP = *MF.getConstantPool();
-
   TII = MF.getTarget().getInstrInfo();
   AFI = MF.getInfo<ARMFunctionInfo>();
   STI = &MF.getTarget().getSubtarget<ARMSubtarget>();
@@ -467,11 +483,132 @@ void ARMConstantIslands::JumpTableFunctionScan(MachineFunction &MF) {
   }
 }
 
+
+//@LOCALMOD-START
+// We try to account for extra sfi space overhead here
+// NOTE: This function needs to be updatd whenever changes
+//       to the sfi scheme are made
+// NOTE: this is very likely missing a few cases
+//       we will add those as neeeded and otherwise
+//       rely on artificially reducing the ldr offset range.
+// NOTE: one missing case: jump table targets are 16 bytes aligned
+unsigned ARMConstantIslands::GetFudge(const MachineInstr* I,
+                                      unsigned  offset,
+                                      bool is_start,
+                                      bool is_end,
+                                      bool is_jump_target) const {
+  if (!FlagSfiCpFudge) return 0;
+  const int kBundleSize = 16;
+  unsigned fudge = 0;
+  const int Opc = I->getOpcode();
+
+  if (is_jump_target && is_start) {
+    while ( (offset + fudge) % kBundleSize != 0) fudge += 4;
+  }
+
+  switch(Opc) {
+   case ARM::BL:
+   case ARM::BLX:
+   case ARM::BL_pred:
+   case ARM::BLr9:
+   case ARM::BLXr9:
+   case ARM::BLr9_pred:
+   case ARM::TPsoft:
+    // branches must be in the last slot
+    while ( (offset + fudge) % kBundleSize != 0xc) fudge += 4;
+    break;
+
+   case ARM::CONSTPOOL_ENTRY:
+    if (is_start) {
+      while ( (offset + fudge) % kBundleSize != 0) fudge += 4;
+    }
+
+    if (is_end) {
+      while ( (offset + fudge) % kBundleSize != 0xc) fudge += 4;
+    }
+
+    {
+      const int size = TII->GetInstSizeInBytes(I);
+      assert (size == 4 || size == 8);
+      // we do not want the data to cross bundle boundaries
+      if (size == 8) {
+        if((offset + fudge) % kBundleSize == 0xc) fudge += 4;
+      }
+    }
+    // illegal if at data bundle beginning
+    if ((offset + fudge) % kBundleSize == 0) fudge += 4;
+    break;
+
+   case ARM::STACK_ADDri:
+   case ARM::STACK_SUBri:
+   case ARM::STACK_MOVr:
+    // stack adjusts must not be in the last slot
+    if ( (offset + fudge) % kBundleSize == 0xc) fudge += 4;
+    // add masking
+    fudge += 4;
+    break;
+
+   case ARM::STR:
+   case ARM::STRB:
+   case ARM::STRH:
+   case ARM::STRD:
+    // TODO: there are vfp stores missing
+   case ARM::VSTRS:
+   case ARM::VSTRD:
+
+    // case ARM::STM:// TODO: make this work
+    {
+    const MachineOperand &MO1 = I->getOperand(1);
+    if (MO1.getReg() != ARM::SP) {
+      // cannot be in the last slot
+      if ( (offset + fudge) % kBundleSize == 0xc) fudge += 4;
+      // one mask
+      fudge += 4;
+    }
+    break;
+    }
+  case ARM::BX:
+  case ARM::BXr9:
+  case ARM::BX_RET:
+  case ARM::BRIND:
+    // cannot be in the last slot
+    if ( (offset + fudge) % kBundleSize == 0xc) fudge += 4;
+    // one mask
+    fudge += 4;
+    break;
+  }
+
+  return fudge;
+}
+
+static void UpdateJumpTargetAlignment(MachineFunction &MF) {
+  if (!FlagSfiBranch) return;
+
+  // JUMP TABLE TARGETS
+  MachineJumpTableInfo *jt_info = MF.getJumpTableInfo();
+  const std::vector<MachineJumpTableEntry> &JT = jt_info->getJumpTables();
+  for (unsigned i=0; i < JT.size(); ++i) {
+    std::vector<MachineBasicBlock*> MBBs = JT[i].MBBs;
+
+    //cout << "JUMPTABLE "<< i << " " << MBBs.size() << "\n";
+    for (unsigned j=0; j < MBBs.size(); ++j) {
+      if (MBBs[j]->begin()->getOpcode() == ARM::CONSTPOOL_ENTRY) {
+        continue;
+      }
+      MBBs[j]->setAlignment(16);
+    }
+  }
+}
+
+//@LOCALMOD-END
+
 /// InitialFunctionScan - Do the initial scan of the function, building up
 /// information about the sizes of each block, the location of all the water,
 /// and finding all of the constant pool users.
 void ARMConstantIslands::InitialFunctionScan(MachineFunction &MF,
                                  const std::vector<MachineInstr*> &CPEMIs) {
+  UpdateJumpTargetAlignment(MF); // @LOCALMOD
+
   unsigned Offset = 0;
   for (MachineFunction::iterator MBBI = MF.begin(), E = MF.end();
        MBBI != E; ++MBBI) {
@@ -483,12 +620,24 @@ void ARMConstantIslands::InitialFunctionScan(MachineFunction &MF,
       WaterList.push_back(&MBB);
 
     unsigned MBBSize = 0;
+
     for (MachineBasicBlock::iterator I = MBB.begin(), E = MBB.end();
          I != E; ++I) {
+      //@LOCALMOD-START
+      // TODO: also account for jump_targets more
+      MBBSize += GetFudge(I,
+                          Offset,
+                          I == MBB.begin(),
+                          I == E,
+                          MF.begin() == MBBI || MBBI->getAlignment() == 16);
+      //@LOCALMOD-END
+
       // Add instruction size to MBBSize.
       MBBSize += TII->GetInstSizeInBytes(I);
 
       int Opc = I->getOpcode();
+
+
       if (I->getDesc().isBranch()) {
         bool isCond = false;
         unsigned Bits = 0;
@@ -545,6 +694,7 @@ void ARMConstantIslands::InitialFunctionScan(MachineFunction &MF,
 
       if (Opc == ARM::tPUSH || Opc == ARM::tPOP_RET)
         PushPopMIs.push_back(I);
+
 
       if (Opc == ARM::CONSTPOOL_ENTRY)
         continue;
@@ -611,6 +761,13 @@ void ARMConstantIslands::InitialFunctionScan(MachineFunction &MF,
           unsigned CPI = I->getOperand(op).getIndex();
           MachineInstr *CPEMI = CPEMIs[CPI];
           unsigned MaxOffs = ((1 << Bits)-1) * Scale;
+
+          // @LOCALMOD-BEGIN
+          if (FlagSfiCpFudge) {
+            MaxOffs *= FlagSfiCpFudgePercent;
+            MaxOffs /= 100;
+          }
+          // @LOCALMOD-END
           CPUsers.push_back(CPUser(I, CPEMI, MaxOffs, NegOk, IsSoImm));
 
           // Increment corresponding CPEntry reference count.
@@ -661,6 +818,11 @@ unsigned ARMConstantIslands::GetOffsetOf(MachineInstr *MI) const {
     assert(I != MBB->end() && "Didn't find MI in its own basic block?");
     if (&*I == MI) return Offset;
     Offset += TII->GetInstSizeInBytes(I);
+
+    // @LOCALMOD-START
+    // TODO: take jump targets into account
+    Offset += GetFudge(I, Offset, I ==  MBB->begin(), I == MBB->end(), 0);
+    // @LOCALMOD-END
   }
 }
 
@@ -698,6 +860,10 @@ void ARMConstantIslands::UpdateForInsertedWaterBlock(MachineBasicBlock *NewBB) {
 /// an unconditional branch.  Update data structures and renumber blocks to
 /// account for this change and returns the newly created block.
 MachineBasicBlock *ARMConstantIslands::SplitBlockBeforeInstr(MachineInstr *MI) {
+  // @LOCALMOD-start
+  printf("@@@@ ERROR: splitting not yet supported\n");
+  abort();
+  // @LOCALMOD-end
   MachineBasicBlock *OrigBB = MI->getParent();
   MachineFunction &MF = *OrigBB->getParent();
 
@@ -882,9 +1048,19 @@ static bool BBIsJumpedOver(MachineBasicBlock *MBB) {
 void ARMConstantIslands::AdjustBBOffsetsAfter(MachineBasicBlock *BB,
                                               int delta) {
   MachineFunction::iterator MBBI = BB; MBBI = next(MBBI);
+  // @LOCALMOD-START
+#if 1
+  if (delta > 0) {
+    BBSizes[BB->getNumber()] += 4;  // @LOCALMOD
+    delta += 4;
+  }
+#endif
+  // @LOCALMOD-END
+
   for(unsigned i = BB->getNumber()+1, e = BB->getParent()->getNumBlockIDs();
       i < e; ++i) {
     BBOffsets[i] += delta;
+
     // If some existing blocks have padding, adjust the padding as needed, a
     // bit tricky.  delta can be negative so don't use % on that.
     if (!isThumb)
@@ -1106,6 +1282,11 @@ void ARMConstantIslands::CreateNewWater(unsigned CPUserIndex,
     BBSizes[UserMBB->getNumber()] += delta;
     AdjustBBOffsetsAfter(UserMBB, delta);
   } else {
+    // @LOCALMOD-START
+    printf("@@@@ ERROR: fix up split bbl not  implemented\n");
+    abort();
+    // @LOCALMOD-END
+
     // What a big block.  Find a place within the block to split it.
     // This is a little tricky on Thumb1 since instructions are 2 bytes
     // and constant pool entries are 4 bytes: if instruction I references
@@ -1354,6 +1535,10 @@ bool ARMConstantIslands::FixUpImmediateBr(MachineFunction &MF, ImmBranch &Br) {
 /// Otherwise, add an intermediate branch instruction to a branch.
 bool
 ARMConstantIslands::FixUpUnconditionalBr(MachineFunction &MF, ImmBranch &Br) {
+  // @LOCALMOD-start
+  printf("@@@@ ERROR: fix up uncond br not implemented\n");
+  abort();
+  // @LOCALMOD-end
   MachineInstr *MI = Br.MI;
   MachineBasicBlock *MBB = MI->getParent();
   if (!isThumb1)
@@ -1377,6 +1562,10 @@ ARMConstantIslands::FixUpUnconditionalBr(MachineFunction &MF, ImmBranch &Br) {
 /// conditional branch + an unconditional branch to the destination.
 bool
 ARMConstantIslands::FixUpConditionalBr(MachineFunction &MF, ImmBranch &Br) {
+  // @LOCALMOD-start
+  printf("@@@@ ERROR: fix up cond br not implemented\n");
+  abort();
+  // @LOCALMOD-end
   MachineInstr *MI = Br.MI;
   MachineBasicBlock *DestBB = MI->getOperand(0).getMBB();
 

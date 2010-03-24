@@ -18,8 +18,15 @@
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCExpr.h"
+#include "llvm/Support/CommandLine.h"  // @LOCALMOD
 #include "llvm/Support/raw_ostream.h"
+
 using namespace llvm;
+
+// @LOCALMOD
+extern cl::opt<bool> FlagSfiStore;
+// @LOCALMOD
+
 
 // Include the auto-generated portion of the assembly writer.
 #define MachineInstr MCInst
@@ -161,6 +168,69 @@ void ARMInstPrinter::printAddrMode2Operand(const MCInst *MI, unsigned Op) {
     << " #" << ShImm;
   O << "]";
 }  
+
+// @LOCALMOD-START
+// NOTE: THIS IS UNTESTED CODE
+// This hack prepends a line of the form:
+// sfi_store <basereg>, <pr>
+// before sandboxed store instructions
+void ARMInstPrinter::printAddrModeHelper(const MCInst *MI,
+                                         int base,
+                                         int pred,
+                                         const char* Modifier) {
+  assert(0 == strcmp("sfi", Modifier));
+
+  const char *base_reg = getRegisterName(MI->getOperand(base).getReg());
+  // NOTE: sfi_store_preamble is aware of sp
+  O << "sfi_store_preamble " << base_reg << ", ";
+  printPredicateOperand(MI, pred);
+  O << "\n\t";
+}
+
+void ARMInstPrinter::printAddrMode2Operand(const MCInst *MI,
+                                           unsigned Op,
+                                           const char *Modifier) {
+  if (!FlagSfiStore) return;
+
+  printAddrModeHelper(MI, Op, Op + 3, Modifier);
+
+  const MCOperand &MO2 = MI->getOperand(Op+1);
+  if (MO2.getReg()) {
+    O << "BAD BAD BAD FORBIDDEN ADDR MODE\n";
+    assert(0);
+  }
+}
+
+void ARMInstPrinter::printAddrMode3Operand(const MCInst *MI,
+                                           unsigned Op,
+                                          const char *Modifier) {
+  if (!FlagSfiStore) return;
+
+  printAddrModeHelper(MI, Op, Op + 3, Modifier);
+
+  const MCOperand &MO2 = MI->getOperand(Op+1);
+  if (MO2.getReg()) {
+    O << "BAD BAD BAD FORBIDDEN ADDR MODE\n";
+    assert(0);
+  }
+}
+
+void ARMInstPrinter::printAddrMode2OffsetOperand(const MCInst *MI,
+                                                unsigned Op,
+                                                const char *Modifier) {
+  if (!FlagSfiStore) return;
+  printAddrModeHelper(MI, Op, Op + 3, Modifier);
+}
+
+void ARMInstPrinter::printAddrMode3OffsetOperand(const MCInst *MI,
+                                                unsigned Op,
+                                                const char *Modifier) {
+  if (!FlagSfiStore) return;
+  printAddrModeHelper(MI, Op, Op + 3, Modifier);
+
+}
+// @LOCALMOD-END
+
 
 void ARMInstPrinter::printAddrMode2OffsetOperand(const MCInst *MI,
                                                  unsigned OpNum) {

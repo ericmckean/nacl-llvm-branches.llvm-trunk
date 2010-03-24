@@ -27,6 +27,17 @@ UseNEONFP("arm-use-neon-fp",
           cl::desc("Use NEON for single-precision FP"),
           cl::init(false), cl::Hidden);
 
+// @LOCALMOD-START
+// TODO: * This does not currently work as expected for PIC mode:
+//         It does work, but the table still ends up in the .text section.
+//       * JITing has not been tested at all
+//       * Thumb mode operation is also not clear: it seems jump tables
+//         for thumb are broken independent of this option
+static cl::opt<bool>
+NoInlineJumpTables("no-inline-jumptables",
+		  cl::desc("Do not place jump tables inline in the code"));
+// @LOCALMOD-END
+
 ARMSubtarget::ARMSubtarget(const std::string &TT, const std::string &FS,
                            bool isT)
   : ARMArchVersion(V4T)
@@ -36,6 +47,7 @@ ARMSubtarget::ARMSubtarget(const std::string &TT, const std::string &FS,
   , ThumbMode(Thumb1)
   , PostRAScheduler(false)
   , IsR9Reserved(ReserveR9)
+  , UseInlineJumpTables(!NoInlineJumpTables) // @LOCAMOD
   , stackAlignment(4)
   , CPUString("generic")
   , TargetType(isELF) // Default to ELF unless otherwise specified.

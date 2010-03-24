@@ -35,6 +35,10 @@
 
 using namespace llvm;
 
+#include "llvm/Support/CommandLine.h" // @LOCALMOD
+extern cl::opt<bool> FlagSfiStore; // @LOCALMOD
+
+
 //===--------------------------------------------------------------------===//
 /// ARMDAGToDAGISel - ARM specific code to select ARM machine
 /// instructions for SelectionDAG operations.
@@ -218,6 +222,11 @@ bool ARMDAGToDAGISel::SelectShifterOperandReg(SDValue Op,
 bool ARMDAGToDAGISel::SelectAddrMode2(SDValue Op, SDValue N,
                                       SDValue &Base, SDValue &Offset,
                                       SDValue &Opc) {
+
+
+  const bool is_store = (Op.getOpcode() == ISD::STORE); // @LOCALMOD
+  if (!FlagSfiStore || !is_store ) { // @LOCALMOD
+
   if (N.getOpcode() == ISD::MUL) {
     if (ConstantSDNode *RHS = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
       // X * [3,5,9] -> X + X * [2,4,8] etc.
@@ -240,6 +249,7 @@ bool ARMDAGToDAGISel::SelectAddrMode2(SDValue Op, SDValue N,
       }
     }
   }
+  } // @LOCALMOD
 
   if (N.getOpcode() != ISD::ADD && N.getOpcode() != ISD::SUB) {
     Base = N;
@@ -257,7 +267,7 @@ bool ARMDAGToDAGISel::SelectAddrMode2(SDValue Op, SDValue N,
   }
 
   // Match simple R +/- imm12 operands.
-  if (N.getOpcode() == ISD::ADD)
+  if (N.getOpcode() == ISD::ADD) {
     if (ConstantSDNode *RHS = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
       int RHSC = (int)RHS->getZExtValue();
       if ((RHSC >= 0 && RHSC < 0x1000) ||
@@ -280,6 +290,24 @@ bool ARMDAGToDAGISel::SelectAddrMode2(SDValue Op, SDValue N,
         return true;
       }
     }
+  }
+
+  // @LOCALMOD-START
+  if (FlagSfiStore && is_store) {
+    Base = N;
+    if (N.getOpcode() == ISD::FrameIndex) {
+      int FI = cast<FrameIndexSDNode>(N)->getIndex();
+      Base = CurDAG->getTargetFrameIndex(FI, TLI.getPointerTy());
+    } else if (N.getOpcode() == ARMISD::Wrapper) {
+      Base = N.getOperand(0);
+    }
+    Offset = CurDAG->getRegister(0, MVT::i32);
+    Opc = CurDAG->getTargetConstant(ARM_AM::getAM2Opc(ARM_AM::add, 0,
+                                                      ARM_AM::no_shift),
+                                    MVT::i32);
+    return true;
+  }
+  // @LOCALMOD-END
 
   // Otherwise this is R +/- [possibly shifted] R.
   ARM_AM::AddrOpc AddSub = N.getOpcode() == ISD::ADD ? ARM_AM::add:ARM_AM::sub;
@@ -320,9 +348,13 @@ bool ARMDAGToDAGISel::SelectAddrMode2(SDValue Op, SDValue N,
 
   Opc = CurDAG->getTargetConstant(ARM_AM::getAM2Opc(AddSub, ShAmt, ShOpcVal),
                                   MVT::i32);
+
   return true;
 }
 
+// @@ For a load/store operation op
+// @@ and and address node n
+// @@ come up with a an Offset and Opc????
 bool ARMDAGToDAGISel::SelectAddrMode2Offset(SDValue Op, SDValue N,
                                             SDValue &Offset, SDValue &Opc) {
   unsigned Opcode = Op.getOpcode();
@@ -334,6 +366,7 @@ bool ARMDAGToDAGISel::SelectAddrMode2Offset(SDValue Op, SDValue N,
   if (ConstantSDNode *C = dyn_cast<ConstantSDNode>(N)) {
     int Val = (int)C->getZExtValue();
     if (Val >= 0 && Val < 0x1000) { // 12 bits.
+      // Register 0 means no offset
       Offset = CurDAG->getRegister(0, MVT::i32);
       Opc = CurDAG->getTargetConstant(ARM_AM::getAM2Opc(AddSub, Val,
                                                         ARM_AM::no_shift),
@@ -342,13 +375,19 @@ bool ARMDAGToDAGISel::SelectAddrMode2Offset(SDValue Op, SDValue N,
     }
   }
 
+
+  const bool is_store = (Opcode == ISD::STORE); // @LOCALMOD
+
   Offset = N;
   ARM_AM::ShiftOpc ShOpcVal = ARM_AM::getShiftOpcForNode(N);
   unsigned ShAmt = 0;
+  // @@ CONVOLUTED LOGIC BELOW: REWRITE
   if (ShOpcVal != ARM_AM::no_shift) {
     // Check to see if the RHS of the shift is a constant, if not, we can't fold
     // it.
-    if (ConstantSDNode *Sh = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
+    //if (ConstantSDNode *Sh = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
+    ConstantSDNode *Sh = dyn_cast<ConstantSDNode>(N.getOperand(1));
+    if ((!FlagSfiStore || !is_store) && Sh ) { // @LOCALMOD
       ShAmt = Sh->getZExtValue();
       Offset = N.getOperand(0);
     } else {
@@ -361,11 +400,17 @@ bool ARMDAGToDAGISel::SelectAddrMode2Offset(SDValue Op, SDValue N,
   return true;
 }
 
-
+// @@ Op: load store
+// @@N: node for computing the address
+//
+// @@ BASE, offset, Opc represent the new addreessing mode
 bool ARMDAGToDAGISel::SelectAddrMode3(SDValue Op, SDValue N,
                                       SDValue &Base, SDValue &Offset,
                                       SDValue &Opc) {
-  if (N.getOpcode() == ISD::SUB) {
+
+  const bool is_store = (Op.getOpcode() == ISD::STORE); // @LOCALMOD
+
+  if ((!FlagSfiStore ||!is_store) && N.getOpcode() == ISD::SUB) {  // @LOCALMOD
     // X - C  is canonicalize to X + -C, no need to handle it here.
     Base = N.getOperand(0);
     Offset = N.getOperand(1);
@@ -405,6 +450,17 @@ bool ARMDAGToDAGISel::SelectAddrMode3(SDValue Op, SDValue N,
       return true;
     }
   }
+
+
+  // @LOCALMOD-START
+  if (FlagSfiStore && is_store) {
+    Base = N;
+    Offset = CurDAG->getRegister(0, MVT::i32);
+    Opc = CurDAG->getTargetConstant(ARM_AM::getAM3Opc(ARM_AM::add, 0),MVT::i32);
+    return true;
+  }
+  // @LOCALMOD-END
+
 
   Base = N.getOperand(0);
   Offset = N.getOperand(1);

@@ -65,11 +65,11 @@ def VLDRS : ASI5<0b1101, 0b01, (outs SPR:$dst), (ins addrmode5:$addr),
 } // canFoldAsLoad
 
 def VSTRD  : ADI5<0b1101, 0b00, (outs), (ins DPR:$src, addrmode5:$addr),
-                 IIC_fpStore64, "vstr", ".64\t$src, $addr",
+                 IIC_fpStore64, "${addr:sfi}vstr", ".64\t$src, $addr",
                  [(store DPR:$src, addrmode5:$addr)]>;
 
 def VSTRS  : ASI5<0b1101, 0b00, (outs), (ins SPR:$src, addrmode5:$addr),
-                 IIC_fpStore32, "vstr", ".32\t$src, $addr",
+                 IIC_fpStore32, "${addr:sfi}vstr", ".32\t$src, $addr",
                  [(store SPR:$src, addrmode5:$addr)]>;
 
 //===----------------------------------------------------------------------===//
@@ -92,21 +92,27 @@ def VLDMS : AXSI5<(outs), (ins addrmode5:$addr, pred:$p, reglist:$wb,
 }
 } // mayLoad, hasExtraDefRegAllocReq
 
+
+// @LOCALMOD-START
 let mayStore = 1, hasExtraSrcRegAllocReq = 1 in {
 def VSTMD : AXDI5<(outs), (ins addrmode5:$addr, pred:$p, reglist:$wb,
                            variable_ops), IIC_fpStorem,
-                 "vstm${addr:submode}${p}\t${addr:base}, $wb",
+//                 "vstm${addr:submode}${p}\t${addr:base}, $wb",
+                 "sfi_store_preamble ${addr:basereg}, ${p}\n\tvstm${addr:submode}${p}\t${addr:base}, $wb",
                  []> {
   let Inst{20} = 0;
 }
 
 def VSTMS : AXSI5<(outs), (ins addrmode5:$addr, pred:$p, reglist:$wb,
                            variable_ops), IIC_fpStorem,
-                 "vstm${addr:submode}${p}\t${addr:base}, $wb",
+//                 "vstm${addr:submode}${p}\t${addr:base}, $wb",
+                 "sfi_store_preamble ${addr:basereg}, ${p}\n\tvstm${addr:submode}${p}\t${addr:base}, $wb",
                  []> {
   let Inst{20} = 0;
 }
 } // mayStore, hasExtraSrcRegAllocReq
+
+// @LOCALMOD-END
 
 // FLDMX, FSTMX - mixing S/D registers for pre-armv6 cores
 

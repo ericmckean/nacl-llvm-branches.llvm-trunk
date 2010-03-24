@@ -42,9 +42,14 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
 #include <sstream>
+
 using namespace llvm;
 
+#include "llvm/Support/CommandLine.h"
+
+
 static bool CC_ARM_APCS_Custom_f64(unsigned &ValNo, EVT &ValVT, EVT &LocVT,
+
                                    CCValAssign::LocInfo &LocInfo,
                                    ISD::ArgFlagsTy &ArgFlags,
                                    CCState &State);
@@ -61,8 +66,18 @@ static bool RetCC_ARM_AAPCS_Custom_f64(unsigned &ValNo, EVT &ValVT, EVT &LocVT,
                                        ISD::ArgFlagsTy &ArgFlags,
                                        CCState &State);
 
+
+// @LOCALMOD-START
+extern cl::opt<bool> FlagSfiStore;
+
+cl::opt<bool> FlagAeabiCalls("aeabi-calls",
+                        cl::desc("use AEABI calls"));
+// @LOCALMOD-END
+
+
 void ARMTargetLowering::addTypeForNEON(EVT VT, EVT PromotedLdStVT,
                                        EVT PromotedBitwiseVT) {
+
   if (VT != PromotedLdStVT) {
     setOperationAction(ISD::LOAD, VT.getSimpleVT(), Promote);
     AddPromotedToType (ISD::LOAD, VT.getSimpleVT(),
@@ -135,6 +150,41 @@ static TargetLoweringObjectFile *createTLOF(TargetMachine &TM) {
 ARMTargetLowering::ARMTargetLowering(TargetMachine &TM)
     : TargetLowering(TM, createTLOF(TM)) {
   Subtarget = &TM.getSubtarget<ARMSubtarget>();
+
+  // @LOCALMOD-START
+  // NOTE: THIS IS INCOMPLETE: IT LACKS COMPARISON, ETC
+  //  NOTE: also check thread stuff
+  //from:  http://gcc.gnu.org/ml/gcc-patches/2008-03/msg00141.html
+
+  if (FlagAeabiCalls) {
+
+    // Single-precision floating-point arithmetic.
+    setLibcallName(RTLIB::ADD_F32, "__aeabi_fadd");
+    setLibcallName(RTLIB::SUB_F32, "__aeabi_fsub");
+    setLibcallName(RTLIB::MUL_F32, "__aeabi_fmul");
+    setLibcallName(RTLIB::DIV_F32, "__aeabi_fdiv");
+
+    // Double-precision floating-point arithmetic.
+    setLibcallName(RTLIB::ADD_F64, "__aeabi_dadd");
+    setLibcallName(RTLIB::SUB_F64, "__aeabi_dsub");
+    setLibcallName(RTLIB::MUL_F64, "__aeabi_dmul");
+    setLibcallName(RTLIB::DIV_F64, "__aeabi_ddiv");
+
+
+    setLibcallName(RTLIB::FPTOSINT_F64_I32, "__aeabi_d2iz");
+    setLibcallName(RTLIB::FPTOUINT_F64_I32, "__aeabi_d2uiz");
+    setLibcallName(RTLIB::FPTOSINT_F32_I32, "__aeabi_f2iz");
+    setLibcallName(RTLIB::FPTOUINT_F32_I32, "__aeabi_f2uiz");
+
+    setLibcallName(RTLIB::FPROUND_F64_F32, "__aeabi_d2f");
+    setLibcallName(RTLIB::FPEXT_F32_F64,   "__aeabi_f2d");
+
+    setLibcallName(RTLIB::SINTTOFP_I32_F64, "__aeabi_i2d");
+    setLibcallName(RTLIB::UINTTOFP_I32_F64, "__aeabi_ui2d");
+    setLibcallName(RTLIB::SINTTOFP_I32_F32, "__aeabi_i2f");
+    setLibcallName(RTLIB::UINTTOFP_I32_F32, "__aeabi_ui2f");
+  }
+  // @LOCALMOD-END
 
   if (Subtarget->isTargetDarwin()) {
     // Uses VFP for Thumb libfuncs if available.
@@ -364,6 +414,11 @@ ARMTargetLowering::ARMTargetLowering(TargetMachine &TM)
   setOperationAction(ISD::GLOBAL_OFFSET_TABLE, MVT::i32, Custom);
   setOperationAction(ISD::GlobalTLSAddress, MVT::i32, Custom);
   setOperationAction(ISD::BlockAddress, MVT::i32, Custom);
+  // @LOCALMOD-START
+  if (!Subtarget->useInlineJumpTables())
+    setOperationAction(ISD::JumpTable,     MVT::i32,   Custom);
+  // @LOCALMOD-END
+
 
   // Use the default implementation.
   setOperationAction(ISD::VASTART,            MVT::Other, Custom);
@@ -409,8 +464,11 @@ ARMTargetLowering::ARMTargetLowering(TargetMachine &TM)
   setOperationAction(ISD::BR_CC,     MVT::i32,   Custom);
   setOperationAction(ISD::BR_CC,     MVT::f32,   Custom);
   setOperationAction(ISD::BR_CC,     MVT::f64,   Custom);
-  setOperationAction(ISD::BR_JT,     MVT::Other, Custom);
-
+  // @LOCALMOD-START
+  setOperationAction(ISD::BR_JT,     MVT::Other,
+		     Subtarget->useInlineJumpTables() ? Custom : Expand);
+  // @ORIGINAL setOperationAction(ISD::BR_JT,     MVT::Other, Custom);
+  // @LOCALMOD-END
   // We don't support sin/cos/fmod/copysign/pow
   setOperationAction(ISD::FSIN,      MVT::f64, Expand);
   setOperationAction(ISD::FSIN,      MVT::f32, Expand);
@@ -1239,6 +1297,24 @@ SDValue ARMTargetLowering::LowerBlockAddress(SDValue Op, SelectionDAG &DAG) {
   return DAG.getNode(ARMISD::PIC_ADD, DL, PtrVT, Result, PICLabel);
 }
 
+// @LOCALMOD-START
+SDValue ARMTargetLowering::LowerJumpTable(SDValue Op, SelectionDAG &DAG) {
+  assert(!Subtarget->useInlineJumpTables() &&
+	 "inline jump tables not custom lowered");
+  const MVT PTy = getPointerTy();
+  const JumpTableSDNode *JT = cast<JumpTableSDNode>(Op);
+  const SDValue JTI = DAG.getTargetJumpTable(JT->getIndex(), PTy);
+  const DebugLoc dl = Op.getDebugLoc();
+
+  ARMConstantPoolValue *CPV = new ARMConstantPoolValue(*DAG.getContext(),
+						       JT->getIndex());
+  // TODO: factor this idiom to load a value from a CP into a new function
+  const SDValue PoolEntry = DAG.getTargetConstantPool(CPV, PTy, 4);
+  const SDValue PoolWrapper = DAG.getNode(ARMISD::Wrapper, dl, PTy, PoolEntry);
+  return DAG.getLoad(PTy, dl, DAG.getEntryNode(), PoolWrapper, NULL, 0);
+}
+// @LOCALMOD-END
+
 // Lower ISD::GlobalTLSAddress using the "general dynamic" model
 SDValue
 ARMTargetLowering::LowerToTLSGeneralDynamicModel(GlobalAddressSDNode *GA,
@@ -1360,6 +1436,8 @@ SDValue ARMTargetLowering::LowerGlobalAddressELF(SDValue Op,
                            PseudoSourceValue::getGOT(), 0);
     return Result;
   } else {
+    // The address will be stored in the constant pool, so
+    // put it in the pool and load it from there to materialize it
     SDValue CPAddr = DAG.getTargetConstantPool(GV, PtrVT, 4);
     CPAddr = DAG.getNode(ARMISD::Wrapper, dl, MVT::i32, CPAddr);
     return DAG.getLoad(PtrVT, dl, DAG.getEntryNode(), CPAddr,
@@ -1874,7 +1952,30 @@ SDValue ARMTargetLowering::LowerBR_CC(SDValue Op, SelectionDAG &DAG) {
   return Res;
 }
 
+
 SDValue ARMTargetLowering::LowerBR_JT(SDValue Op, SelectionDAG &DAG) {
+
+  //  The Jumptable idiom we are aiming for looks somthing like this:
+  //
+  //          .set PCRELV0, (.LJTI9_0_0-(.LPCRELL0+8))
+  //  .LPCRELL0:
+  //          add r3, pc, #PCRELV0
+  //          ldr pc, [r3, +r0, lsl #2]
+  //  .LJTI9_0_0:
+  //          .long    .LBB9_2
+  //          .long    .LBB9_5
+  //          .long    .LBB9_7
+  //          .long    .LBB9_4
+  //          .long    .LBB9_8
+  //
+  // In pic mode the table entries are relative to table beginning
+  // requiring and extra addition
+  //
+  // The code generation logic for ARMISD::BR_JT will also
+  // emit the table (c.f. ARMAsmPrinter::printJTBlockOperand())
+  // Also check  "def BR_JTm" in ARMInstrInfo.td
+
+  // allocate constant pool entry
   SDValue Chain = Op.getOperand(0);
   SDValue Table = Op.getOperand(1);
   SDValue Index = Op.getOperand(2);
@@ -2873,6 +2974,7 @@ SDValue ARMTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) {
   default: llvm_unreachable("Don't know how to custom lower this!");
   case ISD::ConstantPool:  return LowerConstantPool(Op, DAG);
   case ISD::BlockAddress:  return LowerBlockAddress(Op, DAG);
+  case ISD::JumpTable:     return LowerJumpTable(Op, DAG); // @LOCALMOD
   case ISD::GlobalAddress:
     return Subtarget->isTargetDarwin() ? LowerGlobalAddressDarwin(Op, DAG) :
       LowerGlobalAddressELF(Op, DAG);
@@ -3642,6 +3744,8 @@ bool ARMTargetLowering::isLegalT2ScaledAddressingMode(const AddrMode &AM,
 /// by AM is legal for this target, for a load/store of the specified type.
 bool ARMTargetLowering::isLegalAddressingMode(const AddrMode &AM,
                                               const Type *Ty) const {
+  // @DEBUG
+  //cout << "@@CHECK ADDRESSING MODE" << "\n";
   EVT VT = getValueType(Ty, true);
   if (!isLegalAddressImmediate(AM.BaseOffs, VT, Subtarget))
     return false;
@@ -3669,6 +3773,12 @@ bool ARMTargetLowering::isLegalAddressingMode(const AddrMode &AM,
       return isLegalT2ScaledAddressingMode(AM, VT);
 
     int Scale = AM.Scale;
+
+    // @LOCAMOD-START
+    // For simplicity do not allow scaling
+    if (FlagSfiStore && Scale != 0) return false;
+    // @LOCAMOD-END
+
     switch (VT.getSimpleVT().SimpleTy) {
     default: return false;
     case MVT::i1:
@@ -3806,6 +3916,14 @@ ARMTargetLowering::getPreIndexedAddressParts(SDNode *N, SDValue &Base,
   if (Subtarget->isThumb1Only())
     return false;
 
+  // @LOCAMOD-START
+  // NOTE: disallow ...
+  // NOTE: THIS IS A LITTLE DRASTIC
+  if (FlagSfiStore && N->getOpcode() == ISD::STORE) {
+    return false;
+  }
+  // @LOCAMOD-END
+
   EVT VT;
   SDValue Ptr;
   bool isSEXTLoad = false;
@@ -3844,6 +3962,13 @@ bool ARMTargetLowering::getPostIndexedAddressParts(SDNode *N, SDNode *Op,
                                                    SelectionDAG &DAG) const {
   if (Subtarget->isThumb1Only())
     return false;
+
+  // @LOCALMOD-START
+  // THIS IS A LITTLE DRASTIC
+  if (FlagSfiStore && N->getOpcode() == ISD::STORE) {
+    return false;
+  }
+  // @LOCALMOD-END
 
   EVT VT;
   SDValue Ptr;
