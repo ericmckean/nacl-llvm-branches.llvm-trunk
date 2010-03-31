@@ -640,12 +640,15 @@ let Uses = [ECX], isBranch = 1, isTerminator = 1 in
 
 // Indirect branches
 let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
-  def JMP32r     : I<0xFF, MRM4r, (outs), (ins GR32:$dst), "jmp{l}\t{*}$dst",
+// @LOCALMOD-START
+// NOTE:JMP32m must likely be banned
+  def JMP32r     : I<0xFF, MRM4r, (outs), (ins GR32:$dst), "nacljmp\t $dst",
                      [(brind GR32:$dst)]>;
-  def JMP32m     : I<0xFF, MRM4m, (outs), (ins i32mem:$dst), "jmp{l}\t{*}$dst",
-                     [(brind (loadi32 addr:$dst))]>;
-                     
-  def FARJMP16i  : Iseg16<0xEA, RawFrm, (outs), 
+
+//  def JMP32m     : I<0xFF, MRM4m, (outs), (ins i32mem:$dst), "jmp{l}\t{*}$dst",
+//                     [(brind (loadi32 addr:$dst))]>;
+// @LOCALMOD-END
+  def FARJMP16i  : Iseg16<0xEA, RawFrm, (outs),
                           (ins i16imm:$seg, i16imm:$off),
                           "ljmp{w}\t$seg, $off", []>, OpSize;
   def FARJMP32i  : Iseg32<0xEA, RawFrm, (outs),
@@ -678,15 +681,17 @@ let isCall = 1 in
               XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
               XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15, EFLAGS],
       Uses = [ESP] in {
+// @LOCALMOD-START
+// NOTE: CALL32m must likely be banned
     def CALLpcrel32 : Ii32PCRel<0xE8, RawFrm,
                            (outs), (ins i32imm_pcrel:$dst,variable_ops),
                            "call\t$dst", []>;
     def CALL32r     : I<0xFF, MRM2r, (outs), (ins GR32:$dst, variable_ops),
-                        "call\t{*}$dst", [(X86call GR32:$dst)]>;
-    def CALL32m     : I<0xFF, MRM2m, (outs), (ins i32mem:$dst, variable_ops),
-                        "call\t{*}$dst", [(X86call (loadi32 addr:$dst))]>;
-  
-    def FARCALL16i  : Iseg16<0x9A, RawFrm, (outs), 
+                        "naclcall\t$dst", [(X86call GR32:$dst)]>;
+//    def CALL32m     : I<0xFF, MRM2m, (outs), (ins i32mem:$dst, variable_ops),
+//                        "call\t{*}$dst", [(X86call (loadi32 addr:$dst))]>;
+// @LOCALMOD-END
+    def FARCALL16i  : Iseg16<0x9A, RawFrm, (outs),
                              (ins i16imm:$seg, i16imm:$off),
                              "lcall{w}\t$seg, $off", []>, OpSize;
     def FARCALL32i  : Iseg32<0x9A, RawFrm, (outs),
