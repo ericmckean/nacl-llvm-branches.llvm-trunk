@@ -1,0 +1,15 @@
+# switch to glob syntax.
+syntax: glob
+
+*.o
+*.a
+*.d
+*~
+*.dir
+*.tmp
+*.inc
+Release/
+include/llvm/Config/
+
+# switch to regexp syntax.
+syntax: regexp

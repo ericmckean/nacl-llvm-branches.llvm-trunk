@@ -552,6 +552,11 @@ bool X86DAGToDAGISel::MatchSegmentBaseAddress(SDValue N,
 }
 
 bool X86DAGToDAGISel::MatchLoad(SDValue N, X86ISelAddressMode &AM) {
+  // @LOCALMOD-START
+  // NOTE: the tls segment reg is NOT zero for nacl
+  return true;   
+  // @LOCALMOD-END
+
   // This optimization is valid because the GNU TLS model defines that
   // gs:0 (or fs:0 on X86-64) contains its own address.
   // For more information see http://people.redhat.com/drepper/tls.pdf

@@ -393,10 +393,19 @@ void AsmPrinter::EmitFunctionBody() {
   bool HasAnyRealCode = false;
   for (MachineFunction::const_iterator I = MF->begin(), E = MF->end();
        I != E; ++I) {
+    // @LOCALMOD-START
+    // NOTE: using const_cast to not have to change prototype
+    //       cast is safe
+    if(I->isLandingPad() || I->hasAddressTaken()) {
+      const MachineBasicBlock* mbb = I;
+      const_cast<MachineBasicBlock*>(mbb)->setAlignment(32);
+    }
+    // @LOCALMOD-END
     // Print a label for the basic block.
     EmitBasicBlockStart(I);
     for (MachineBasicBlock::const_iterator II = I->begin(), IE = I->end();
          II != IE; ++II) {
+      
       // Print the assembly for the instruction.
       if (!II->isLabel())
         HasAnyRealCode = true;
@@ -416,6 +425,7 @@ void AsmPrinter::EmitFunctionBody() {
         printLabelInst(II);
         break;
       case TargetOpcode::INLINEASM:
+        assert(0 && "no inline assembler support in pnacl"); // @LOCALMOD
         printInlineAsm(II);
         break;
       case TargetOpcode::IMPLICIT_DEF:
@@ -1813,4 +1823,3 @@ GCMetadataPrinter *AsmPrinter::GetOrCreateGCPrinter(GCStrategy *S) {
   llvm_report_error("no GCMetadataPrinter registered for GC: " + Twine(Name));
   return 0;
 }
-
