@@ -5929,6 +5929,9 @@ SDValue X86TargetLowering::EmitCmp(SDValue Op0, SDValue Op1, unsigned X86CC,
 /// if it's possible.
 static SDValue LowerToBT(SDValue And, ISD::CondCode CC,
                          DebugLoc dl, SelectionDAG &DAG) {
+  
+  return SDValue(); // @LOCALMOD disable bt usage for now
+  
   SDValue Op0 = And.getOperand(0);
   SDValue Op1 = And.getOperand(1);
   if (Op0.getOpcode() == ISD::TRUNCATE)
