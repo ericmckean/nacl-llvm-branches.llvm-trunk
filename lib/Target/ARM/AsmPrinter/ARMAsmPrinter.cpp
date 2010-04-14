@@ -1481,6 +1481,8 @@ void ARMAsmPrinter::EmitStartOfAsmFile(Module &M) {
     "hs",
     "hi",
     "lo",
+    "mi",
+    "pl",
     NULL,
   };
 
