@@ -69,17 +69,14 @@ bool X86AsmPrinter::runOnMachineFunction(MachineFunction &MF) {
   MachineJumpTableInfo *jt_info = MF.getJumpTableInfo();
   if (jt_info != NULL) {
     const std::vector<MachineJumpTableEntry> &JT = jt_info->getJumpTables();
-
     for (unsigned i = 0; i < JT.size(); ++i) {
-       // TODO(robertm): avoid vector construction
-      std::vector<MachineBasicBlock*> MBBs = JT[i].MBBs;
+      const std::vector<MachineBasicBlock*>& MBBs(JT[i].MBBs);
       for (unsigned j = 0; j < MBBs.size(); ++j) {
         MBBs[j]->setAlignment(32);
       }
     }
   }
   // @LOCALMOD-END
-  EmitAlignment(5); // @LOCALMOD
 
   // Have common code print out the function header with linkage info etc.
   EmitFunctionHeader();
