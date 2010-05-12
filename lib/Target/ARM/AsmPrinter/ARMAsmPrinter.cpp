@@ -1419,7 +1419,7 @@ void ARMAsmPrinter::EmitStartOfAsmFile(Module &M) {
 
     O <<
       "\t.macro sfi_code_mask reg cond=\n"
-      "\tbic\\cond \\reg, \\reg, #0xf000000f\n"
+      "\tbic\\cond \\reg, \\reg, #0xc000000f\n"
       "\t.endm\n"
       "\n\n";
   }
