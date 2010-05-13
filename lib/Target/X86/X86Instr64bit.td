@@ -148,15 +148,15 @@ let isCall = 1 in
                           (outs), (ins i64i32imm_pcrel:$dst, variable_ops),
                           "call{q}\t$dst", []>,
                         Requires<[In64BitMode, NotWin64]>;
-    def CALL64r       : I<0xFF, MRM2r, (outs), (ins GR64:$dst, variable_ops),
-                          "call{q}\t{*}$dst", [(X86call GR64:$dst)]>,
+    def CALL64r       : I<0, Pseudo, (outs), (ins GR64:$dst, variable_ops),
+                          "naclcall\t$dst, %r15", [(X86call GR64:$dst)]>,
                         Requires<[NotWin64]>;
-    def CALL64m       : I<0xFF, MRM2m, (outs), (ins i64mem:$dst, variable_ops),
-                          "call{q}\t{*}$dst", [(X86call (loadi64 addr:$dst))]>,
-                        Requires<[NotWin64]>;
+    // def CALL64m       : I<0xFF, MRM2m, (outs), (ins i64mem:$dst, variable_ops),
+    //                       "call{q}\t{*}$dst", [(X86call (loadi64 addr:$dst))]>,
+    //                     Requires<[NotWin64]>;
                         
-    def FARCALL64   : RI<0xFF, MRM3m, (outs), (ins opaque80mem:$dst),
-                         "lcall{q}\t{*}$dst", []>;
+    // def FARCALL64   : RI<0xFF, MRM3m, (outs), (ins opaque80mem:$dst),
+    //                      "lcall{q}\t{*}$dst", []>;
   }
 
   // FIXME: We need to teach codegen about single list of call-clobbered 
@@ -202,24 +202,29 @@ let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1 in
                        (ins i64mem_TC:$dst, i32imm:$offset, variable_ops),
                        "#TC_RETURN $dst $offset", []>;
 
+  def NACLRET    : I<0, Pseudo, (outs), (ins variable_ops),
+                     "pop %rcx\n\tnacljmp %ecx, %r15",
+                     [(X86retflag 0)]>,
+                     Requires<[In64BitMode]>;
+
   def TAILJMPd64 : Ii32<0xE9, RawFrm, (outs),
                                       (ins i64i32imm_pcrel:$dst, variable_ops),
                    "jmp\t$dst  # TAILCALL", []>;
-  def TAILJMPr64 : I<0xFF, MRM4r, (outs), (ins GR64_TC:$dst, variable_ops),
-                     "jmp{q}\t{*}$dst  # TAILCALL", []>;
+  def TAILJMPr64 : I<0, Pseudo, (outs), (ins GR64_TC:$dst, variable_ops),
+                     "nacljmp\t$dst,%r15  # TAILCALL", []>;
 
-  def TAILJMPm64 : I<0xFF, MRM4m, (outs), (ins i64mem_TC:$dst, variable_ops),
-                     "jmp{q}\t{*}$dst  # TAILCALL", []>;
+   def TAILJMPm64 : I<0xFF, MRM4m, (outs), (ins i64mem_TC:$dst, variable_ops),
+                      "jmp{q}\t{*}$dst  # TAILCALL", []>;
 }
 
 // Branches
 let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
   def JMP64pcrel32 : I<0xE9, RawFrm, (outs), (ins brtarget:$dst), 
                        "jmp{q}\t$dst", []>;
-  def JMP64r     : I<0xFF, MRM4r, (outs), (ins GR64:$dst), "jmp{q}\t{*}$dst",
+  def JMP64r     : I<0xFF, MRM4r, (outs), (ins GR64:$dst), "nacljmp\t$dst, %r15",
                      [(brind GR64:$dst)]>;
-  def JMP64m     : I<0xFF, MRM4m, (outs), (ins i64mem:$dst), "jmp{q}\t{*}$dst",
-                     [(brind (loadi64 addr:$dst))]>;
+  // def JMP64m     : I<0xFF, MRM4m, (outs), (ins i64mem:$dst), "jmp{q}\t{*}$dst",
+  //                    [(brind (loadi64 addr:$dst))]>;
   def FARJMP64   : RI<0xFF, MRM5m, (outs), (ins opaque80mem:$dst),
                       "ljmp{q}\t{*}$dst", []>;
 }

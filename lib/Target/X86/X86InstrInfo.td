@@ -586,9 +586,10 @@ let neverHasSideEffects = 1, isNotDuplicable = 1, Uses = [ESP] in
 // Return instructions.
 let isTerminator = 1, isReturn = 1, isBarrier = 1,
     hasCtrlDep = 1, FPForm = SpecialFP, FPFormBits = SpecialFP.Value in {
-  def RET    : I   <0xC3, RawFrm, (outs), (ins variable_ops),
+  def RET    : I   <0, Pseudo, (outs), (ins variable_ops),
                     "pop %ecx\n\tnacljmp %ecx",
-                    [(X86retflag 0)]>;
+                    [(X86retflag 0)]>,
+                    Requires<[In32BitMode]>;
   def RETI   : Ii16<0xC2, RawFrm, (outs), (ins i16imm:$amt, variable_ops),
                     "ret\t$amt",
                     [(X86retflag timm:$amt)]>;
@@ -643,7 +644,8 @@ let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
 // @LOCALMOD-START
 // NOTE:JMP32m must likely be banned
   def JMP32r     : I<0xFF, MRM4r, (outs), (ins GR32:$dst), "nacljmp\t $dst",
-                     [(brind GR32:$dst)]>;
+                     [(brind GR32:$dst)]>,
+                      Requires<[In32BitMode]>;
 
 //  def JMP32m     : I<0xFF, MRM4m, (outs), (ins i32mem:$dst), "jmp{l}\t{*}$dst",
 //                     [(brind (loadi32 addr:$dst))]>;
@@ -687,7 +689,8 @@ let isCall = 1 in
                            (outs), (ins i32imm_pcrel:$dst,variable_ops),
                            "call\t$dst", []>;
     def CALL32r     : I<0xFF, MRM2r, (outs), (ins GR32:$dst, variable_ops),
-                        "naclcall\t$dst", [(X86call GR32:$dst)]>;
+                        "naclcall\t$dst", [(X86call GR32:$dst)]>,
+                      Requires<[In32BitMode]>;
 //    def CALL32m     : I<0xFF, MRM2m, (outs), (ins i32mem:$dst, variable_ops),
 //                        "call\t{*}$dst", [(X86call (loadi32 addr:$dst))]>;
 // @LOCALMOD-END
