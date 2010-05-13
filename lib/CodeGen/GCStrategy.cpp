@@ -27,6 +27,7 @@
 #include "llvm/Target/TargetInstrInfo.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetRegisterInfo.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -70,9 +71,9 @@ namespace {
     
     void FindSafePoints(MachineFunction &MF);
     void VisitCallPoint(MachineBasicBlock::iterator MI);
-    unsigned InsertLabel(MachineBasicBlock &MBB, 
-                         MachineBasicBlock::iterator MI,
-                         DebugLoc DL) const;
+    MCSymbol *InsertLabel(MachineBasicBlock &MBB, 
+                          MachineBasicBlock::iterator MI,
+                          DebugLoc DL) const;
     
     void FindStackOffsets(MachineFunction &MF);
     
@@ -109,7 +110,7 @@ GCStrategy::~GCStrategy() {
 bool GCStrategy::initializeCustomLowering(Module &M) { return false; }
  
 bool GCStrategy::performCustomLowering(Function &F) {
-  errs() << "gc " << getName() << " must override performCustomLowering.\n";
+  dbgs() << "gc " << getName() << " must override performCustomLowering.\n";
   llvm_unreachable(0);
   return 0;
 }
@@ -328,14 +329,11 @@ void MachineCodeAnalysis::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<GCModuleInfo>();
 }
 
-unsigned MachineCodeAnalysis::InsertLabel(MachineBasicBlock &MBB, 
-                                     MachineBasicBlock::iterator MI,
-                                     DebugLoc DL) const {
-  unsigned Label = MMI->NextLabelID();
-  
-  BuildMI(MBB, MI, DL,
-          TII->get(TargetInstrInfo::GC_LABEL)).addImm(Label);
-  
+MCSymbol *MachineCodeAnalysis::InsertLabel(MachineBasicBlock &MBB, 
+                                           MachineBasicBlock::iterator MI,
+                                           DebugLoc DL) const {
+  MCSymbol *Label = MBB.getParent()->getContext().GetOrCreateTemporarySymbol();
+  BuildMI(MBB, MI, DL, TII->get(TargetOpcode::GC_LABEL)).addSym(Label);
   return Label;
 }
 

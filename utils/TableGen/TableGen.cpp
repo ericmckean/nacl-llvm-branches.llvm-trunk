@@ -15,21 +15,24 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Record.h"
-#include "TGParser.h"
-#include "CallingConvEmitter.h"
-#include "CodeEmitterGen.h"
-#include "RegisterInfoEmitter.h"
-#include "InstrInfoEmitter.h"
-#include "InstrEnumEmitter.h"
-#include "AsmWriterEmitter.h"
 #include "AsmMatcherEmitter.h"
+#include "AsmWriterEmitter.h"
+#include "CallingConvEmitter.h"
+#include "ClangDiagnosticsEmitter.h"
+#include "CodeEmitterGen.h"
 #include "DAGISelEmitter.h"
+#include "DisassemblerEmitter.h"
+#include "EDEmitter.h"
 #include "FastISelEmitter.h"
-#include "SubtargetEmitter.h"
+#include "InstrEnumEmitter.h"
+#include "InstrInfoEmitter.h"
 #include "IntrinsicEmitter.h"
 #include "LLVMCConfigurationEmitter.h"
-#include "ClangDiagnosticsEmitter.h"
+#include "OptParserEmitter.h"
+#include "Record.h"
+#include "RegisterInfoEmitter.h"
+#include "SubtargetEmitter.h"
+#include "TGParser.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -45,15 +48,18 @@ enum ActionType {
   GenEmitter,
   GenRegisterEnums, GenRegister, GenRegisterHeader,
   GenInstrEnums, GenInstrs, GenAsmWriter, GenAsmMatcher,
+  GenDisassembler,
   GenCallingConv,
   GenClangDiagsDefs,
   GenClangDiagGroups,
   GenDAGISel,
   GenFastISel,
+  GenOptParserDefs, GenOptParserImpl,
   GenSubtarget,
   GenIntrinsic,
   GenTgtIntrinsic,
   GenLLVMCConf,
+  GenEDHeader, GenEDInfo,
   PrintEnums
 };
 
@@ -78,12 +84,18 @@ namespace {
                                "Generate calling convention descriptions"),
                     clEnumValN(GenAsmWriter, "gen-asm-writer",
                                "Generate assembly writer"),
+                    clEnumValN(GenDisassembler, "gen-disassembler",
+                               "Generate disassembler"),
                     clEnumValN(GenAsmMatcher, "gen-asm-matcher",
                                "Generate assembly instruction matcher"),
                     clEnumValN(GenDAGISel, "gen-dag-isel",
                                "Generate a DAG instruction selector"),
                     clEnumValN(GenFastISel, "gen-fast-isel",
                                "Generate a \"fast\" instruction selector"),
+                    clEnumValN(GenOptParserDefs, "gen-opt-parser-defs",
+                               "Generate option definitions"),
+                    clEnumValN(GenOptParserImpl, "gen-opt-parser-impl",
+                               "Generate option parser implementation"),
                     clEnumValN(GenSubtarget, "gen-subtarget",
                                "Generate subtarget enumerations"),
                     clEnumValN(GenIntrinsic, "gen-intrinsic",
@@ -96,6 +108,10 @@ namespace {
                                "Generate Clang diagnostic groups"),
                     clEnumValN(GenLLVMCConf, "gen-llvmc",
                                "Generate LLVMC configuration library"),
+                    clEnumValN(GenEDHeader, "gen-enhanced-disassembly-header",
+                               "Generate enhanced disassembly info header"),
+                    clEnumValN(GenEDInfo, "gen-enhanced-disassembly-info",
+                               "Generate enhanced disassembly info"),
                     clEnumValN(PrintEnums, "print-enums",
                                "Print enum values for a class"),
                     clEnumValEnd));
@@ -221,7 +237,16 @@ int main(int argc, char **argv) {
       break;
     case GenClangDiagGroups:
       ClangDiagGroupsEmitter(Records).run(*Out);
-      break;        
+      break;
+    case GenDisassembler:
+      DisassemblerEmitter(Records).run(*Out);
+      break;
+    case GenOptParserDefs:
+      OptParserEmitter(Records, true).run(*Out);
+      break;
+    case GenOptParserImpl:
+      OptParserEmitter(Records, false).run(*Out);
+      break;
     case GenDAGISel:
       DAGISelEmitter(Records).run(*Out);
       break;
@@ -239,6 +264,12 @@ int main(int argc, char **argv) {
       break;
     case GenLLVMCConf:
       LLVMCConfigurationEmitter(Records).run(*Out);
+      break;
+    case GenEDHeader:
+      EDEmitter(Records).runHeader(*Out);
+      break;
+    case GenEDInfo:
+      EDEmitter(Records).run(*Out);
       break;
     case PrintEnums:
     {

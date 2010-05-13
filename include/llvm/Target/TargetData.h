@@ -59,8 +59,6 @@ struct TargetAlignElem {
                              unsigned char pref_align, uint32_t bit_width);
   /// Equality predicate
   bool operator==(const TargetAlignElem &rhs) const;
-  /// output stream operator
-  std::ostream &dump(std::ostream &os) const;
 };
 
 class TargetData : public ImmutablePass {
@@ -84,7 +82,7 @@ private:
   /// type and bit width were not found in the SmallVector.
   static const TargetAlignElem InvalidAlignmentElem;
 
-  // Opaque pointer for the StructType -> StructLayout map.
+  // The StructType -> StructLayout map.
   mutable void *LayoutMap;
 
   //! Set/initialize target alignments
@@ -152,7 +150,7 @@ public:
   /// The width is specified in bits.
   ///
   bool isLegalInteger(unsigned Width) const {
-    for (unsigned i = 0, e = LegalIntWidths.size(); i != e; ++i)
+    for (unsigned i = 0, e = (unsigned)LegalIntWidths.size(); i != e; ++i)
       if (LegalIntWidths[i] == Width)
         return true;
     return false;
@@ -226,6 +224,11 @@ public:
   /// getABITypeAlignment - Return the minimum ABI-required alignment for the
   /// specified type.
   unsigned char getABITypeAlignment(const Type *Ty) const;
+  
+  /// getABIIntegerTypeAlignment - Return the minimum ABI-required alignment for
+  /// an integer type of the specified bitwidth.
+  unsigned char getABIIntegerTypeAlignment(unsigned BitWidth) const;
+  
 
   /// getCallFrameTypeAlignment - Return the minimum ABI-required alignment
   /// for the specified type when it is part of a call frame.

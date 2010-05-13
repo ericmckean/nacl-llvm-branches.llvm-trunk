@@ -29,12 +29,14 @@
 namespace llvm {
 
 class AliasAnalysis;
-class TargetLowering;
-class MachineModuleInfo;
 class DwarfWriter;
-class MachineFunction;
-class MachineConstantPoolValue;
 class FunctionLoweringInfo;
+class MachineConstantPoolValue;
+class MachineFunction;
+class MachineModuleInfo;
+class SDNodeOrdering;
+class SDDbgValue;
+class TargetLowering;
 
 template<> struct ilist_traits<SDNode> : public ilist_default_traits<SDNode> {
 private:
@@ -56,11 +58,55 @@ private:
   static void createNode(const SDNode &);
 };
 
+/// SDDbgInfo - Keeps track of dbg_value information through SDISel.  We do
+/// not build SDNodes for these so as not to perturb the generated code;
+/// instead the info is kept off to the side in this structure.  SDNodes may
+/// have an associated dbg_value entry in DbgValMap.  Debug info that is not
+/// associated with any SDNode is held in DbgConstMap.  It is possible for
+/// optimizations to change a variable to a constant, in which case the
+/// corresponding debug info is moved from the variable to the constant table
+/// (NYI).
+class SDDbgInfo {
+  DenseMap<const SDNode*, SDDbgValue*> DbgVblMap;
+  SmallVector<SDDbgValue*, 4> DbgConstMap;
+
+  void operator=(const SDDbgInfo&);   // Do not implement.
+  SDDbgInfo(const SDDbgInfo&);   // Do not implement.
+public:
+  SDDbgInfo() {}
+
+  void add(const SDNode *Node, SDDbgValue *V) {
+    DbgVblMap[Node] = V;
+  }
+  void add(SDDbgValue *V) { DbgConstMap.push_back(V); }
+  void remove(const SDNode *Node) {
+    DenseMap<const SDNode*, SDDbgValue*>::iterator Itr =
+                      DbgVblMap.find(Node);
+    if (Itr != DbgVblMap.end())
+      DbgVblMap.erase(Itr);
+  }
+  // No need to remove a constant.
+  void clear() {
+    DbgVblMap.clear();
+    DbgConstMap.clear();
+  }
+  SDDbgValue *getSDDbgValue(const SDNode *Node) {
+    return DbgVblMap[Node];
+  }
+  typedef SmallVector<SDDbgValue*, 4>::iterator ConstDbgIterator;
+  ConstDbgIterator DbgConstBegin() { return DbgConstMap.begin(); }
+  ConstDbgIterator DbgConstEnd() { return DbgConstMap.end(); }
+};
+
 enum CombineLevel {
   Unrestricted,   // Combine may create illegal operations and illegal types.
   NoIllegalTypes, // Combine may create illegal operations but no illegal types.
   NoIllegalOperations // Combine may only create legal operations and types.
 };
+
+class SelectionDAG;
+void checkForCycles(const SDNode *N);
+void checkForCycles(const SelectionDAG *DAG);
 
 /// SelectionDAG class - This is used to represent a portion of an LLVM function
 /// in a low-level Data Dependence DAG representation suitable for instruction
@@ -110,6 +156,13 @@ class SelectionDAG {
   /// SelectionDAG.
   BumpPtrAllocator Allocator;
 
+  /// SDNodeOrdering - The ordering of the SDNodes. It roughly corresponds to
+  /// the ordering of the original LLVM instructions.
+  SDNodeOrdering *Ordering;
+
+  /// DbgInfo - Tracks dbg_value information through SDISel.
+  SDDbgInfo *DbgInfo;
+
   /// VerifyNode - Sanity check the given node.  Aborts if it is invalid.
   void VerifyNode(SDNode *N);
 
@@ -119,6 +172,9 @@ class SelectionDAG {
   bool setSubgraphColorHelper(SDNode *N, const char *Color,
                               DenseSet<SDNode *> &visited,
                               int level, bool &printed);
+
+  void operator=(const SelectionDAG&); // Do not implement.
+  SelectionDAG(const SelectionDAG&);   // Do not implement.
 
 public:
   SelectionDAG(TargetLowering &tli, FunctionLoweringInfo &fli);
@@ -196,7 +252,12 @@ public:
   const SDValue &setRoot(SDValue N) {
     assert((!N.getNode() || N.getValueType() == MVT::Other) &&
            "DAG root value is not a chain!");
-    return Root = N;
+    if (N.getNode())
+      checkForCycles(N.getNode());
+    Root = N;
+    if (N.getNode())
+      checkForCycles(this);
+    return Root;
   }
 
   /// Combine - This iterates over the nodes in the SelectionDAG, folding
@@ -220,7 +281,7 @@ public:
   ///
   /// Note that this is an involved process that may invalidate pointers into
   /// the graph.
-  void Legalize(bool TypesNeedLegalizing, CodeGenOpt::Level OptLevel);
+  void Legalize(CodeGenOpt::Level OptLevel);
 
   /// LegalizeVectors - This transforms the SelectionDAG into a SelectionDAG
   /// that only uses vector math operations supported by the target.  This is
@@ -322,12 +383,9 @@ public:
                                   unsigned char TargetFlags = 0);
   SDValue getValueType(EVT);
   SDValue getRegister(unsigned Reg, EVT VT);
-  SDValue getDbgStopPoint(DebugLoc DL, SDValue Root, 
-                          unsigned Line, unsigned Col, MDNode *CU);
-  SDValue getLabel(unsigned Opcode, DebugLoc dl, SDValue Root,
-                   unsigned LabelID);
-  SDValue getBlockAddress(BlockAddress *BA, DebugLoc dl,
-                          bool isTarget = false);
+  SDValue getEHLabel(DebugLoc dl, SDValue Root, MCSymbol *Label);
+  SDValue getBlockAddress(BlockAddress *BA, EVT VT,
+                          bool isTarget = false, unsigned char TargetFlags = 0);
 
   SDValue getCopyToReg(SDValue Chain, DebugLoc dl, unsigned Reg, SDValue N) {
     return getNode(ISD::CopyToReg, dl, MVT::Other, Chain,
@@ -566,18 +624,18 @@ public:
   /// determined by their operands, and they produce a value AND a token chain.
   ///
   SDValue getLoad(EVT VT, DebugLoc dl, SDValue Chain, SDValue Ptr,
-                    const Value *SV, int SVOffset, bool isVolatile=false,
-                    unsigned Alignment=0);
+                  const Value *SV, int SVOffset, bool isVolatile,
+                  bool isNonTemporal, unsigned Alignment);
   SDValue getExtLoad(ISD::LoadExtType ExtType, DebugLoc dl, EVT VT,
-                       SDValue Chain, SDValue Ptr, const Value *SV,
-                       int SVOffset, EVT MemVT, bool isVolatile=false,
-                       unsigned Alignment=0);
+                     SDValue Chain, SDValue Ptr, const Value *SV,
+                     int SVOffset, EVT MemVT, bool isVolatile,
+                     bool isNonTemporal, unsigned Alignment);
   SDValue getIndexedLoad(SDValue OrigLoad, DebugLoc dl, SDValue Base,
                            SDValue Offset, ISD::MemIndexedMode AM);
   SDValue getLoad(ISD::MemIndexedMode AM, DebugLoc dl, ISD::LoadExtType ExtType,
                   EVT VT, SDValue Chain, SDValue Ptr, SDValue Offset,
                   const Value *SV, int SVOffset, EVT MemVT,
-                  bool isVolatile=false, unsigned Alignment=0);
+                  bool isVolatile, bool isNonTemporal, unsigned Alignment);
   SDValue getLoad(ISD::MemIndexedMode AM, DebugLoc dl, ISD::LoadExtType ExtType,
                   EVT VT, SDValue Chain, SDValue Ptr, SDValue Offset,
                   EVT MemVT, MachineMemOperand *MMO);
@@ -585,13 +643,14 @@ public:
   /// getStore - Helper function to build ISD::STORE nodes.
   ///
   SDValue getStore(SDValue Chain, DebugLoc dl, SDValue Val, SDValue Ptr,
-                     const Value *SV, int SVOffset, bool isVolatile=false,
-                     unsigned Alignment=0);
+                   const Value *SV, int SVOffset, bool isVolatile,
+                   bool isNonTemporal, unsigned Alignment);
   SDValue getStore(SDValue Chain, DebugLoc dl, SDValue Val, SDValue Ptr,
                    MachineMemOperand *MMO);
   SDValue getTruncStore(SDValue Chain, DebugLoc dl, SDValue Val, SDValue Ptr,
-                          const Value *SV, int SVOffset, EVT TVT,
-                          bool isVolatile=false, unsigned Alignment=0);
+                        const Value *SV, int SVOffset, EVT TVT,
+                        bool isNonTemporal, bool isVolatile,
+                        unsigned Alignment);
   SDValue getTruncStore(SDValue Chain, DebugLoc dl, SDValue Val, SDValue Ptr,
                         EVT TVT, MachineMemOperand *MMO);
   SDValue getIndexedStore(SDValue OrigStoe, DebugLoc dl, SDValue Base,
@@ -652,27 +711,8 @@ public:
   SDNode *SelectNodeTo(SDNode *N, unsigned TargetOpc, SDVTList VTs,
                        const SDValue *Ops, unsigned NumOps);
 
-  /// MorphNodeTo - These *mutate* the specified node to have the specified
+  /// MorphNodeTo - This *mutates* the specified node to have the specified
   /// return type, opcode, and operands.
-  SDNode *MorphNodeTo(SDNode *N, unsigned Opc, EVT VT);
-  SDNode *MorphNodeTo(SDNode *N, unsigned Opc, EVT VT, SDValue Op1);
-  SDNode *MorphNodeTo(SDNode *N, unsigned Opc, EVT VT,
-                      SDValue Op1, SDValue Op2);
-  SDNode *MorphNodeTo(SDNode *N, unsigned Opc, EVT VT,
-                      SDValue Op1, SDValue Op2, SDValue Op3);
-  SDNode *MorphNodeTo(SDNode *N, unsigned Opc, EVT VT,
-                      const SDValue *Ops, unsigned NumOps);
-  SDNode *MorphNodeTo(SDNode *N, unsigned Opc, EVT VT1, EVT VT2);
-  SDNode *MorphNodeTo(SDNode *N, unsigned Opc, EVT VT1,
-                      EVT VT2, const SDValue *Ops, unsigned NumOps);
-  SDNode *MorphNodeTo(SDNode *N, unsigned Opc, EVT VT1,
-                      EVT VT2, EVT VT3, const SDValue *Ops, unsigned NumOps);
-  SDNode *MorphNodeTo(SDNode *N, unsigned Opc, EVT VT1,
-                      EVT VT2, SDValue Op1);
-  SDNode *MorphNodeTo(SDNode *N, unsigned Opc, EVT VT1,
-                      EVT VT2, SDValue Op1, SDValue Op2);
-  SDNode *MorphNodeTo(SDNode *N, unsigned Opc, EVT VT1,
-                      EVT VT2, SDValue Op1, SDValue Op2, SDValue Op3);
   SDNode *MorphNodeTo(SDNode *N, unsigned Opc, SDVTList VTs,
                       const SDValue *Ops, unsigned NumOps);
 
@@ -825,6 +865,26 @@ public:
     }
   }
 
+  /// AssignOrdering - Assign an order to the SDNode.
+  void AssignOrdering(const SDNode *SD, unsigned Order);
+
+  /// GetOrdering - Get the order for the SDNode.
+  unsigned GetOrdering(const SDNode *SD) const;
+
+  /// AssignDbgInfo - Assign debug info to the SDNode.
+  void AssignDbgInfo(SDNode *SD, SDDbgValue *db);
+
+  /// RememberDbgInfo - Remember debug info with no associated SDNode.
+  void RememberDbgInfo(SDDbgValue *db);
+
+  /// GetDbgInfo - Get the debug info for the SDNode.
+  SDDbgValue *GetDbgInfo(const SDNode* SD);
+
+  SDDbgInfo::ConstDbgIterator DbgConstBegin() { 
+    return DbgInfo->DbgConstBegin(); 
+  }
+  SDDbgInfo::ConstDbgIterator DbgConstEnd() { return DbgInfo->DbgConstEnd(); }
+
   void dump() const;
 
   /// CreateStackTemporary - Create a stack temporary, suitable for holding the
@@ -876,6 +936,15 @@ public:
   /// isKnownNeverNan - Test whether the given SDValue is known to never be NaN.
   bool isKnownNeverNaN(SDValue Op) const;
 
+  /// isKnownNeverZero - Test whether the given SDValue is known to never be
+  /// positive or negative Zero.
+  bool isKnownNeverZero(SDValue Op) const;
+
+  /// isEqualTo - Test whether two SDValues are known to compare equal. This
+  /// is true if they are the same value, or if one is negative zero and the
+  /// other positive zero.
+  bool isEqualTo(SDValue A, SDValue B) const;
+
   /// isVerifiedDebugInfoDesc - Returns true if the specified SDValue has
   /// been verified as a debug information descriptor.
   bool isVerifiedDebugInfoDesc(SDValue Op) const;
@@ -883,6 +952,24 @@ public:
   /// getShuffleScalarElt - Returns the scalar element that will make up the ith
   /// element of the result of the vector shuffle.
   SDValue getShuffleScalarElt(const ShuffleVectorSDNode *N, unsigned Idx);
+
+  /// UnrollVectorOp - Utility function used by legalize and lowering to
+  /// "unroll" a vector operation by splitting out the scalars and operating
+  /// on each element individually.  If the ResNE is 0, fully unroll the vector
+  /// op. If ResNE is less than the width of the vector op, unroll up to ResNE.
+  /// If the  ResNE is greater than the width of the vector op, unroll the
+  /// vector op and fill the end of the resulting vector with UNDEFS.
+  SDValue UnrollVectorOp(SDNode *N, unsigned ResNE = 0);
+
+  /// isConsecutiveLoad - Return true if LD is loading 'Bytes' bytes from a 
+  /// location that is 'Dist' units away from the location that the 'Base' load 
+  /// is loading from.
+  bool isConsecutiveLoad(LoadSDNode *LD, LoadSDNode *Base,
+                         unsigned Bytes, int Dist) const;
+
+  /// InferPtrAlignment - Infer alignment of a load / store address. Return 0 if
+  /// it cannot be inferred.
+  unsigned InferPtrAlignment(SDValue Ptr) const;
 
 private:
   bool RemoveNodeFromCSEMaps(SDNode *N);

@@ -1,14 +1,14 @@
-; RUN: llc < %s -tailcallopt -march=x86-64 | FileCheck %s
+; RUN: llc < %s -tailcallopt -march=x86-64 -post-RA-scheduler=true | FileCheck %s
 
 ; Check that lowered arguments on the stack do not overwrite each other.
 ; Add %in1 %p1 to a different temporary register (%eax).
 ; CHECK: movl  %edi, %eax
 ; Move param %in1 to temp register (%r10d).
 ; CHECK: movl  40(%rsp), %r10d
-; Move result of addition to stack.
-; CHECK: movl  %eax, 40(%rsp)
 ; Move param %in2 to stack.
 ; CHECK: movl  %r10d, 32(%rsp)
+; Move result of addition to stack.
+; CHECK: movl  %eax, 40(%rsp)
 ; Eventually, do a TAILCALL
 ; CHECK: TAILCALL
 

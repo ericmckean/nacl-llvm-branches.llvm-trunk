@@ -23,6 +23,7 @@ include "llvm/Target/Target.td"
 def FeatureCMOV    : SubtargetFeature<"cmov","HasCMov", "true",
                                       "Enable conditional move instructions">;
 
+
 def FeatureMMX     : SubtargetFeature<"mmx","X86SSELevel", "MMX",
                                       "Enable MMX instructions">;
 def FeatureSSE1    : SubtargetFeature<"sse", "X86SSELevel", "SSE1",
@@ -54,7 +55,8 @@ def Feature3DNowA  : SubtargetFeature<"3dnowa", "X863DNowLevel", "ThreeDNowA",
 // feature, because SSE2 can be disabled (e.g. for compiling OS kernels)
 // without disabling 64-bit mode.
 def Feature64Bit   : SubtargetFeature<"64bit", "HasX86_64", "true",
-                                      "Support 64-bit instructions">;
+                                      "Support 64-bit instructions",
+                                      [FeatureCMOV]>;
 def FeatureSlowBTMem : SubtargetFeature<"slow-bt-mem", "IsBTMemSlow", "true",
                                        "Bit testing of memory is slow">;
 def FeatureSSE4A   : SubtargetFeature<"sse4a", "HasSSE4A", "true",
@@ -63,9 +65,12 @@ def FeatureSSE4A   : SubtargetFeature<"sse4a", "HasSSE4A", "true",
 def FeatureAVX     : SubtargetFeature<"avx", "HasAVX", "true",
                                       "Enable AVX instructions">;
 def FeatureFMA3    : SubtargetFeature<"fma3", "HasFMA3", "true",
-                                      "Enable three-operand fused multiple-add">;
+                                     "Enable three-operand fused multiple-add">;
 def FeatureFMA4    : SubtargetFeature<"fma4", "HasFMA4", "true",
                                       "Enable four-operand fused multiple-add">;
+def FeatureVectorUAMem : SubtargetFeature<"vector-unaligned-mem",
+                                          "HasVectorUAMem", "true",
+                 "Allow unaligned memory operands on vector/SIMD instructions">;
 
 //===----------------------------------------------------------------------===//
 // X86 processors supported.

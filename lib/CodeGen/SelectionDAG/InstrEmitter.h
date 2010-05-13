@@ -23,6 +23,7 @@
 namespace llvm {
 
 class TargetInstrDesc;
+class SDDbgValue;
 
 class InstrEmitter {
   MachineFunction *MF;
@@ -97,7 +98,18 @@ public:
   /// MachineInstr.
   static unsigned CountOperands(SDNode *Node);
 
-  /// EmitNode - Generate machine code for an node and needed dependencies.
+  /// EmitDbgValue - Generate any debug info that refers to this Node.  Constant
+  /// dbg_value is not handled here.
+  void EmitDbgValue(SDNode *Node,
+                    DenseMap<SDValue, unsigned> &VRBaseMap,
+                    SDDbgValue* sd);
+
+
+  /// EmitDbgValue - Generate a constant DBG_VALUE.  No node is involved.
+  void EmitDbgValue(SDDbgValue* sd,
+                DenseMap<MachineBasicBlock*, MachineBasicBlock*> *EM);
+
+  /// EmitNode - Generate machine code for a node and needed dependencies.
   ///
   void EmitNode(SDNode *Node, bool IsClone, bool IsCloned,
                 DenseMap<SDValue, unsigned> &VRBaseMap,

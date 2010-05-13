@@ -22,22 +22,22 @@ using namespace llvm;
 
 // Out of line virtual method.
 void MachineModuleInfoMachO::Anchor() {}
-
+void MachineModuleInfoELF::Anchor() {}
 
 static int SortSymbolPair(const void *LHS, const void *RHS) {
-  const MCSymbol *LHSS =
-    ((const std::pair<const MCSymbol*, const MCSymbol*>*)LHS)->first;
-  const MCSymbol *RHSS =
-    ((const std::pair<const MCSymbol*, const MCSymbol*>*)RHS)->first;
+  typedef std::pair<MCSymbol*, MachineModuleInfoImpl::StubValueTy> PairTy;
+  const MCSymbol *LHSS = ((const PairTy *)LHS)->first;
+  const MCSymbol *RHSS = ((const PairTy *)RHS)->first;
   return LHSS->getName().compare(RHSS->getName());
 }
 
 /// GetSortedStubs - Return the entries from a DenseMap in a deterministic
 /// sorted orer.
-MachineModuleInfoMachO::SymbolListTy
-MachineModuleInfoMachO::GetSortedStubs(const DenseMap<const MCSymbol*, 
-                                                      const MCSymbol*> &Map) {
-  MachineModuleInfoMachO::SymbolListTy List(Map.begin(), Map.end());
+MachineModuleInfoImpl::SymbolListTy
+MachineModuleInfoImpl::GetSortedStubs(const DenseMap<MCSymbol*,
+                                      MachineModuleInfoImpl::StubValueTy>&Map) {
+  MachineModuleInfoImpl::SymbolListTy List(Map.begin(), Map.end());
+
   if (!List.empty())
     qsort(&List[0], List.size(), sizeof(List[0]), SortSymbolPair);
   return List;

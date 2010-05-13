@@ -92,7 +92,7 @@ def immSExt16int  : PatLeaf<(imm), [{ //(int)imm fits in a 16 bit sign extended 
          ((int64_t)N->getZExtValue() << 32) >> 32;
 }], SExt16>;
 
-def zappat : PatFrag<(ops node:$LHS), (and node:$LHS, imm:$L), [{
+def zappat : PatFrag<(ops node:$LHS), (and node:$LHS, imm), [{
   ConstantSDNode *RHS = dyn_cast<ConstantSDNode>(N->getOperand(1));
   if (!RHS) return 0;
   uint64_t build = get_zapImm(N->getOperand(0), (uint64_t)RHS->getZExtValue());
@@ -602,9 +602,9 @@ def RPCC : MfcForm<0x18, 0xC000, "rpcc $RA", s_rpcc>; //Read process cycle count
 def MB  : MfcPForm<0x18, 0x4000, "mb",  s_imisc>; //memory barrier
 def WMB : MfcPForm<0x18, 0x4400, "wmb", s_imisc>; //write memory barrier
 
-def : Pat<(membarrier (i64 imm:$ll), (i64 imm:$ls), (i64 imm:$sl), (i64 1), (i64 imm:$dev)),
+def : Pat<(membarrier (i64 imm), (i64 imm), (i64 imm), (i64 1), (i64 imm)),
           (WMB)>;
-def : Pat<(membarrier (i64 imm:$ll), (i64 imm:$ls), (i64 imm:$sl), (i64 imm:$ss), (i64 imm:$dev)),
+def : Pat<(membarrier (i64 imm), (i64 imm), (i64 imm), (i64 imm), (i64 imm)),
           (MB)>;
 
 //Basic Floating point ops
@@ -892,7 +892,7 @@ def : Pat<(brcond (setge GPRC:$RA, 0), bb:$DISP),
       (COND_BRANCH_I (immBRCond 2),  GPRC:$RA, bb:$DISP)>;
 def : Pat<(brcond (setgt GPRC:$RA, 0), bb:$DISP), 
       (COND_BRANCH_I (immBRCond 3),  GPRC:$RA, bb:$DISP)>;
-def : Pat<(brcond (and   GPRC:$RA, 1), bb:$DISP), 
+def : Pat<(brcond (and GPRC:$RA, 1), bb:$DISP), 
       (COND_BRANCH_I (immBRCond 6),  GPRC:$RA, bb:$DISP)>;
 def : Pat<(brcond (setle GPRC:$RA, 0), bb:$DISP), 
       (COND_BRANCH_I (immBRCond 4),  GPRC:$RA, bb:$DISP)>;
@@ -1059,8 +1059,8 @@ def : Pat<(i64 immSExt16:$imm),
 def : Pat<(i64 immSExt16int:$imm),
           (ZAPNOTi (LDA (SExt16 immSExt16int:$imm), R31), 15)>;
 def : Pat<(i64 immConst2PartInt:$imm),
-          (ZAPNOTi (LDA (LL16 (SExt32 immConst2PartInt:$imm)), 
-                        (LDAH (LH16 (SExt32 immConst2PartInt:$imm)), R31)), 15)>;
+          (ZAPNOTi (LDA (LL16 (i64 (SExt32 immConst2PartInt:$imm))),
+                        (LDAH (LH16 (i64 (SExt32 immConst2PartInt:$imm))), R31)), 15)>;
 
 
 //TODO: I want to just define these like this!

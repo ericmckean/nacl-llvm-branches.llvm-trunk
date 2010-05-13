@@ -12,10 +12,12 @@ add_llvm_library(LLVMSystem
   Process.cpp
   Program.cpp
   RWMutex.cpp
+  SearchForAddressOfSpecialSymbol.cpp
   Signals.cpp
   ThreadLocal.cpp
   Threading.cpp
   TimeValue.cpp
+  Valgrind.cpp
   Unix/Alarm.inc
   Unix/Host.inc
   Unix/Memory.inc
@@ -42,5 +44,5 @@ add_llvm_library(LLVMSystem
   )
 
 if( BUILD_SHARED_LIBS AND NOT WIN32 )
-  target_link_libraries(LLVMSystem dl)
+  target_link_libraries(LLVMSystem ${CMAKE_DL_LIBS})
 endif()

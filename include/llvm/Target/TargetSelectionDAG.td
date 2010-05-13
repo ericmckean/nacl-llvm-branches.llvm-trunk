@@ -345,6 +345,8 @@ def sint_to_fp : SDNode<"ISD::SINT_TO_FP" , SDTIntToFPOp>;
 def uint_to_fp : SDNode<"ISD::UINT_TO_FP" , SDTIntToFPOp>;
 def fp_to_sint : SDNode<"ISD::FP_TO_SINT" , SDTFPToIntOp>;
 def fp_to_uint : SDNode<"ISD::FP_TO_UINT" , SDTFPToIntOp>;
+def f16_to_f32 : SDNode<"ISD::FP16_TO_FP32", SDTIntToFPOp>;
+def f32_to_f16 : SDNode<"ISD::FP32_TO_FP16", SDTFPToIntOp>;
 
 def setcc      : SDNode<"ISD::SETCC"      , SDTSetCC>;
 def select     : SDNode<"ISD::SELECT"     , SDTSelect>;
@@ -479,7 +481,6 @@ class PatLeaf<dag frag, code pred = [{}], SDNodeXForm xform = NOOP_SDNodeXForm>
 def vtInt      : PatLeaf<(vt),  [{ return N->getVT().isInteger(); }]>;
 def vtFP       : PatLeaf<(vt),  [{ return N->getVT().isFloatingPoint(); }]>;
 
-def immAllOnes : PatLeaf<(imm), [{ return N->isAllOnesValue(); }]>;
 def immAllOnesV: PatLeaf<(build_vector), [{
   return ISD::isBuildVectorAllOnes(N);
 }]>;
@@ -496,7 +497,7 @@ def immAllZerosV_bc: PatLeaf<(bitconvert), [{
 
 
 // Other helper fragments.
-def not  : PatFrag<(ops node:$in), (xor node:$in, immAllOnes)>;
+def not  : PatFrag<(ops node:$in), (xor node:$in, -1)>;
 def vnot : PatFrag<(ops node:$in), (xor node:$in, immAllOnesV)>;
 def vnot_conv : PatFrag<(ops node:$in), (xor node:$in, immAllOnesV_bc)>;
 def ineg : PatFrag<(ops node:$in), (sub 0, node:$in)>;
@@ -843,11 +844,6 @@ class Pat<dag pattern, dag result> : Pattern<pattern, [result]>;
 // Complex pattern definitions.
 //
 
-class CPAttribute;
-// Pass the parent Operand as root to CP function rather 
-// than the root of the sub-DAG
-def CPAttrParentAsRoot : CPAttribute;
-
 // Complex patterns, e.g. X86 addressing mode, requires pattern matching code
 // in C++. NumOperands is the number of operands returned by the select function;
 // SelectFunc is the name of the function used to pattern match the max. pattern;
@@ -855,19 +851,10 @@ def CPAttrParentAsRoot : CPAttribute;
 // e.g. X86 addressing mode - def addr : ComplexPattern<4, "SelectAddr", [add]>;
 //
 class ComplexPattern<ValueType ty, int numops, string fn,
-                     list<SDNode> roots = [], list<SDNodeProperty> props = [],
-                     list<CPAttribute> attrs = []> {
+                     list<SDNode> roots = [], list<SDNodeProperty> props = []> {
   ValueType Ty = ty;
   int NumOperands = numops;
   string SelectFunc = fn;
   list<SDNode> RootNodes = roots;
   list<SDNodeProperty> Properties = props;
-  list<CPAttribute> Attributes = attrs;
 }
-
-//===----------------------------------------------------------------------===//
-// Dwarf support.
-//
-def SDT_dwarf_loc : SDTypeProfile<0, 3,
-                      [SDTCisInt<0>, SDTCisInt<1>, SDTCisInt<2>]>;
-def dwarf_loc : SDNode<"ISD::DEBUG_LOC", SDT_dwarf_loc,[SDNPHasChain]>;

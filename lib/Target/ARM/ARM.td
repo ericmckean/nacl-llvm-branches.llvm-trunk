@@ -40,6 +40,8 @@ def FeatureNEON : SubtargetFeature<"neon", "ARMFPUType", "NEON",
                                    "Enable NEON instructions">;
 def FeatureThumb2 : SubtargetFeature<"thumb2", "ThumbMode", "Thumb2",
                                      "Enable Thumb2 instructions">;
+def FeatureFP16   : SubtargetFeature<"fp16", "HasFP16", "true",
+                                     "Enable half-precision floating point">;
 
 //===----------------------------------------------------------------------===//
 // ARM Processors supported.
@@ -89,16 +91,18 @@ def : ProcNoItin<"xscale",          [ArchV5TE]>;
 def : ProcNoItin<"iwmmxt",          [ArchV5TE]>;
 
 // V6 Processors.
-def : ProcNoItin<"arm1136j-s",      [ArchV6]>;
-def : ProcNoItin<"arm1136jf-s",     [ArchV6, FeatureVFP2]>;
-def : ProcNoItin<"arm1176jz-s",     [ArchV6]>;
-def : ProcNoItin<"arm1176jzf-s",    [ArchV6, FeatureVFP2]>;
-def : ProcNoItin<"mpcorenovfp",     [ArchV6]>;
-def : ProcNoItin<"mpcore",          [ArchV6, FeatureVFP2]>;
+def : Processor<"arm1136j-s",       ARMV6Itineraries, [ArchV6]>;
+def : Processor<"arm1136jf-s",      ARMV6Itineraries, [ArchV6, FeatureVFP2]>;
+def : Processor<"arm1176jz-s",      ARMV6Itineraries, [ArchV6]>;
+def : Processor<"arm1176jzf-s",     ARMV6Itineraries, [ArchV6, FeatureVFP2]>;
+def : Processor<"mpcorenovfp",      ARMV6Itineraries, [ArchV6]>;
+def : Processor<"mpcore",           ARMV6Itineraries, [ArchV6, FeatureVFP2]>;
 
 // V6T2 Processors.
-def : ProcNoItin<"arm1156t2-s",     [ArchV6T2, FeatureThumb2]>;
-def : ProcNoItin<"arm1156t2f-s",    [ArchV6T2, FeatureThumb2, FeatureVFP2]>;
+def : Processor<"arm1156t2-s",     ARMV6Itineraries,
+                 [ArchV6T2, FeatureThumb2]>;
+def : Processor<"arm1156t2f-s",    ARMV6Itineraries,
+                 [ArchV6T2, FeatureThumb2, FeatureVFP2]>;
 
 // V7 Processors.
 def : Processor<"cortex-a8",        CortexA8Itineraries,
