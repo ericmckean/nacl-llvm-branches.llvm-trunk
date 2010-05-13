@@ -40,19 +40,8 @@ public:
   
   void printSORegOperand(const MCInst *MI, unsigned OpNum);
   void printAddrMode2Operand(const MCInst *MI, unsigned OpNum);
-
-  // @LOCALMOD-START
-  // NOTE: UNTESTED - but also not used
-  void printAddrModeHelper(const MCInst *MI, int base, int pred, const char* Modifier);
-  void printAddrMode2Operand(const MCInst *MI, unsigned OpNum, const char* cp);
-  void printAddrMode3Operand(const MCInst *MI, unsigned OpNum, const char* cp);
-  void printAddrMode2OffsetOperand(const MCInst *MI, unsigned OpNum, const char* cp);
-  void printAddrMode3OffsetOperand(const MCInst *MI, unsigned OpNum, const char* cp);
-  // @LOCALMOD-END
   void printAddrMode2OffsetOperand(const MCInst *MI, unsigned OpNum);
   void printAddrMode3Operand(const MCInst *MI, unsigned OpNum);
-
-
   void printAddrMode3OffsetOperand(const MCInst *MI, unsigned OpNum);
   void printAddrMode4Operand(const MCInst *MI, unsigned OpNum,
                              const char *Modifier = 0);
