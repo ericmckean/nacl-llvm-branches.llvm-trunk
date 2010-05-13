@@ -19,14 +19,16 @@
 
 namespace llvm {
   
-class ConstantFP;
 class BlockAddress;
-class MachineBasicBlock;
+class ConstantFP;
 class GlobalValue;
+class MachineBasicBlock;
 class MachineInstr;
-class TargetMachine;
 class MachineRegisterInfo;
+class MDNode;
+class TargetMachine;
 class raw_ostream;
+class MCSymbol;
   
 /// MachineOperand class - Representation of each machine instruction operand.
 ///
@@ -42,7 +44,9 @@ public:
     MO_JumpTableIndex,         ///< Address of indexed Jump Table for switch
     MO_ExternalSymbol,         ///< Name of external global symbol
     MO_GlobalAddress,          ///< Address of a global value
-    MO_BlockAddress            ///< Address of a basic block
+    MO_BlockAddress,           ///< Address of a basic block
+    MO_Metadata,               ///< Metadata reference (for debug info)
+    MO_MCSymbol                ///< MCSymbol reference (for debug/eh info)
   };
 
 private:
@@ -85,6 +89,10 @@ private:
   /// model the GCC inline asm '&' constraint modifier.
   bool IsEarlyClobber : 1;
 
+  /// IsDebug - True if this MO_Register 'use' operand is in a debug pseudo,
+  /// not a real instruction.  Such uses should be ignored during codegen.
+  bool IsDebug : 1;
+
   /// ParentMI - This is the instruction that this operand is embedded into. 
   /// This is valid for all operand types, when the operand is in an instr.
   MachineInstr *ParentMI;
@@ -94,6 +102,8 @@ private:
     MachineBasicBlock *MBB;   // For MO_MachineBasicBlock.
     const ConstantFP *CFP;    // For MO_FPImmediate.
     int64_t ImmVal;           // For MO_Immediate.
+    const MDNode *MD;         // For MO_Metadata.
+    MCSymbol *Sym;            // For MO_MCSymbol
 
     struct {                  // For MO_Register.
       unsigned RegNo;
@@ -158,6 +168,9 @@ public:
   bool isSymbol() const { return OpKind == MO_ExternalSymbol; }
   /// isBlockAddress - Tests if this is a MO_BlockAddress operand.
   bool isBlockAddress() const { return OpKind == MO_BlockAddress; }
+  /// isMetadata - Tests if this is a MO_Metadata operand.
+  bool isMetadata() const { return OpKind == MO_Metadata; }
+  bool isMCSymbol() const { return OpKind == MO_MCSymbol; }
 
   //===--------------------------------------------------------------------===//
   // Accessors for Register Operands
@@ -209,6 +222,11 @@ public:
     return IsEarlyClobber;
   }
 
+  bool isDebug() const {
+    assert(isReg() && "Wrong MachineOperand accessor");
+    return IsDebug;
+  }
+
   /// getNextOperandForReg - Return the next MachineOperand in the function that
   /// uses or defines this register.
   MachineOperand *getNextOperandForReg() const {
@@ -231,11 +249,13 @@ public:
   
   void setIsUse(bool Val = true) {
     assert(isReg() && "Wrong MachineOperand accessor");
+    assert((Val || !isDebug()) && "Marking a debug operation as def");
     IsDef = !Val;
   }
   
   void setIsDef(bool Val = true) {
     assert(isReg() && "Wrong MachineOperand accessor");
+    assert((!Val || !isDebug()) && "Marking a debug operation as def");
     IsDef = Val;
   }
 
@@ -246,6 +266,7 @@ public:
 
   void setIsKill(bool Val = true) {
     assert(isReg() && !IsDef && "Wrong MachineOperand accessor");
+    assert((!Val || !isDebug()) && "Marking a debug operation as kill");
     IsKill = Val;
   }
   
@@ -298,6 +319,11 @@ public:
     assert(isBlockAddress() && "Wrong MachineOperand accessor");
     return Contents.OffsetedInfo.Val.BA;
   }
+
+  MCSymbol *getMCSymbol() const {
+    assert(isMCSymbol() && "Wrong MachineOperand accessor");
+    return Contents.Sym;
+  }
   
   /// getOffset - Return the offset from the symbol in this operand. This always
   /// returns 0 for ExternalSymbol operands.
@@ -310,6 +336,11 @@ public:
   const char *getSymbolName() const {
     assert(isSymbol() && "Wrong MachineOperand accessor");
     return Contents.OffsetedInfo.Val.SymbolName;
+  }
+
+  const MDNode *getMetadata() const {
+    assert(isMetadata() && "Wrong MachineOperand accessor");
+    return Contents.MD;
   }
   
   //===--------------------------------------------------------------------===//
@@ -356,7 +387,7 @@ public:
   /// the setReg method should be used.
   void ChangeToRegister(unsigned Reg, bool isDef, bool isImp = false,
                         bool isKill = false, bool isDead = false,
-                        bool isUndef = false);
+                        bool isUndef = false, bool isDebug = false);
   
   //===--------------------------------------------------------------------===//
   // Construction methods.
@@ -378,7 +409,8 @@ public:
                                   bool isKill = false, bool isDead = false,
                                   bool isUndef = false,
                                   bool isEarlyClobber = false,
-                                  unsigned SubReg = 0) {
+                                  unsigned SubReg = 0,
+                                  bool isDebug = false) {
     MachineOperand Op(MachineOperand::MO_Register);
     Op.IsDef = isDef;
     Op.IsImp = isImp;
@@ -386,6 +418,7 @@ public:
     Op.IsDead = isDead;
     Op.IsUndef = isUndef;
     Op.IsEarlyClobber = isEarlyClobber;
+    Op.IsDebug = isDebug;
     Op.Contents.Reg.RegNo = Reg;
     Op.Contents.Reg.Prev = 0;
     Op.Contents.Reg.Next = 0;
@@ -435,13 +468,26 @@ public:
     Op.setTargetFlags(TargetFlags);
     return Op;
   }
-  static MachineOperand CreateBA(BlockAddress *BA) {
+  static MachineOperand CreateBA(BlockAddress *BA,
+                                 unsigned char TargetFlags = 0) {
     MachineOperand Op(MachineOperand::MO_BlockAddress);
     Op.Contents.OffsetedInfo.Val.BA = BA;
     Op.setOffset(0); // Offset is always 0.
+    Op.setTargetFlags(TargetFlags);
+    return Op;
+  }
+  static MachineOperand CreateMetadata(const MDNode *Meta) {
+    MachineOperand Op(MachineOperand::MO_Metadata);
+    Op.Contents.MD = Meta;
     return Op;
   }
 
+  static MachineOperand CreateMCSymbol(MCSymbol *Sym) {
+    MachineOperand Op(MachineOperand::MO_MCSymbol);
+    Op.Contents.Sym = Sym;
+    return Op;
+  }
+  
   friend class MachineInstr;
   friend class MachineRegisterInfo;
 private:

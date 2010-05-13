@@ -135,43 +135,31 @@ void TargetInstrInfoImpl::reMaterialize(MachineBasicBlock &MBB,
                                         MachineBasicBlock::iterator I,
                                         unsigned DestReg,
                                         unsigned SubIdx,
-                                        const MachineInstr *Orig) const {
+                                        const MachineInstr *Orig,
+                                        const TargetRegisterInfo *TRI) const {
   MachineInstr *MI = MBB.getParent()->CloneMachineInstr(Orig);
   MachineOperand &MO = MI->getOperand(0);
-  MO.setReg(DestReg);
-  MO.setSubReg(SubIdx);
+  if (TargetRegisterInfo::isVirtualRegister(DestReg)) {
+    MO.setReg(DestReg);
+    MO.setSubReg(SubIdx);
+  } else if (SubIdx) {
+    MO.setReg(TRI->getSubReg(DestReg, SubIdx));
+  } else {
+    MO.setReg(DestReg);
+  }
   MBB.insert(I, MI);
 }
 
-bool
-TargetInstrInfoImpl::isIdentical(const MachineInstr *MI,
-                                 const MachineInstr *Other,
-                                 const MachineRegisterInfo *MRI) const {
-  if (MI->getOpcode() != Other->getOpcode() ||
-      MI->getNumOperands() != Other->getNumOperands())
-    return false;
+bool TargetInstrInfoImpl::produceSameValue(const MachineInstr *MI0,
+                                           const MachineInstr *MI1) const {
+  return MI0->isIdenticalTo(MI1, MachineInstr::IgnoreVRegDefs);
+}
 
-  for (unsigned i = 0, e = MI->getNumOperands(); i != e; ++i) {
-    const MachineOperand &MO = MI->getOperand(i);
-    const MachineOperand &OMO = Other->getOperand(i);
-    if (MO.isReg() && MO.isDef()) {
-      assert(OMO.isReg() && OMO.isDef());
-      unsigned Reg = MO.getReg();
-      if (TargetRegisterInfo::isPhysicalRegister(Reg)) {
-        if (Reg != OMO.getReg())
-          return false;
-      } else if (MRI->getRegClass(MO.getReg()) !=
-                 MRI->getRegClass(OMO.getReg()))
-        return false;
-
-      continue;
-    }
-
-    if (!MO.isIdenticalTo(OMO))
-      return false;
-  }
-
-  return true;
+MachineInstr *TargetInstrInfoImpl::duplicate(MachineInstr *Orig,
+                                             MachineFunction &MF) const {
+  assert(!Orig->getDesc().isNotDuplicable() &&
+         "Instruction cannot be duplicated");
+  return MF.CloneMachineInstr(Orig);
 }
 
 unsigned
@@ -322,7 +310,7 @@ TargetInstrInfo::isReallyTriviallyReMaterializableGeneric(const MachineInstr *
       return false;
 
     // For the def, it should be the only def of that register.
-    if (MO.isDef() && (next(MRI.def_begin(Reg)) != MRI.def_end() ||
+    if (MO.isDef() && (llvm::next(MRI.def_begin(Reg)) != MRI.def_end() ||
                        MRI.isLiveIn(Reg)))
       return false;
 

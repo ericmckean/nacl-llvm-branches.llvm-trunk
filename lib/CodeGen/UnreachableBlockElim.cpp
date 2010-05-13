@@ -148,8 +148,7 @@ bool UnreachableMachineBlockElim::runOnMachineFunction(MachineFunction &F) {
         MachineBasicBlock* succ = *BB->succ_begin();
 
         MachineBasicBlock::iterator start = succ->begin();
-        while (start != succ->end() &&
-               start->getOpcode() == TargetInstrInfo::PHI) {
+        while (start != succ->end() && start->isPHI()) {
           for (unsigned i = start->getNumOperands() - 1; i >= 2; i-=2)
             if (start->getOperand(i).isMBB() &&
                 start->getOperand(i).getMBB() == BB) {
@@ -166,20 +165,8 @@ bool UnreachableMachineBlockElim::runOnMachineFunction(MachineFunction &F) {
   }
 
   // Actually remove the blocks now.
-  for (unsigned i = 0, e = DeadBlocks.size(); i != e; ++i) {
-    MachineBasicBlock *MBB = DeadBlocks[i];
-    // If there are any labels in the basic block, unregister them from
-    // MachineModuleInfo.
-    if (MMI && !MBB->empty()) {
-      for (MachineBasicBlock::iterator I = MBB->begin(),
-             E = MBB->end(); I != E; ++I) {
-        if (I->isLabel())
-          // The label ID # is always operand #0, an immediate.
-          MMI->InvalidateLabel(I->getOperand(0).getImm());
-      }
-    }
-    MBB->eraseFromParent();
-  }
+  for (unsigned i = 0, e = DeadBlocks.size(); i != e; ++i)
+    DeadBlocks[i]->eraseFromParent();
 
   // Cleanup PHI nodes.
   for (MachineFunction::iterator I = F.begin(), E = F.end(); I != E; ++I) {
@@ -188,8 +175,7 @@ bool UnreachableMachineBlockElim::runOnMachineFunction(MachineFunction &F) {
     SmallPtrSet<MachineBasicBlock*, 8> preds(BB->pred_begin(),
                                              BB->pred_end());
     MachineBasicBlock::iterator phi = BB->begin();
-    while (phi != BB->end() &&
-           phi->getOpcode() == TargetInstrInfo::PHI) {
+    while (phi != BB->end() && phi->isPHI()) {
       for (unsigned i = phi->getNumOperands() - 1; i >= 2; i-=2)
         if (!preds.count(phi->getOperand(i).getMBB())) {
           phi->RemoveOperand(i);

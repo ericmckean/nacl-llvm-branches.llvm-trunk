@@ -405,12 +405,29 @@ bool ARMBaseInstrInfo::DefinesPredicate(MachineInstr *MI,
   return Found;
 }
 
+/// isPredicable - Return true if the specified instruction can be predicated.
+/// By default, this returns true for every instruction with a
+/// PredicateOperand.
+bool ARMBaseInstrInfo::isPredicable(MachineInstr *MI) const {
+  const TargetInstrDesc &TID = MI->getDesc();
+  if (!TID.isPredicable())
+    return false;
 
-/// FIXME: Works around a gcc miscompilation with -fstrict-aliasing
+  if ((TID.TSFlags & ARMII::DomainMask) == ARMII::DomainNEON) {
+    ARMFunctionInfo *AFI =
+      MI->getParent()->getParent()->getInfo<ARMFunctionInfo>();
+    return AFI->isThumb2Function();
+  }
+  return true;
+}
+
+/// FIXME: Works around a gcc miscompilation with -fstrict-aliasing.
+DISABLE_INLINE
 static unsigned getNumJTEntries(const std::vector<MachineJumpTableEntry> &JT,
-                                unsigned JTI) DISABLE_INLINE;
+                                unsigned JTI);
 static unsigned getNumJTEntries(const std::vector<MachineJumpTableEntry> &JT,
                                 unsigned JTI) {
+  assert(JTI < JT.size());
   return JT[JTI].MBBs.size();
 }
 
@@ -439,10 +456,10 @@ unsigned ARMBaseInstrInfo::GetInstSizeInBytes(const MachineInstr *MI) const {
     switch (Opc) {
     default:
       llvm_unreachable("Unknown or unset size field for instr!");
-    case TargetInstrInfo::IMPLICIT_DEF:
-    case TargetInstrInfo::KILL:
-    case TargetInstrInfo::DBG_LABEL:
-    case TargetInstrInfo::EH_LABEL:
+    case TargetOpcode::IMPLICIT_DEF:
+    case TargetOpcode::KILL:
+    case TargetOpcode::DBG_LABEL:
+    case TargetOpcode::EH_LABEL:
       return 0;
     }
     break;
@@ -458,8 +475,10 @@ unsigned ARMBaseInstrInfo::GetInstSizeInBytes(const MachineInstr *MI) const {
       return MI->getOperand(2).getImm();
     case ARM::Int_eh_sjlj_setjmp:
       return 24;
+    case ARM::tInt_eh_sjlj_setjmp:
+      return 14;
     case ARM::t2Int_eh_sjlj_setjmp:
-      return 22;
+      return 14;
     case ARM::BR_JTr:
     case ARM::BR_JTm:
     case ARM::BR_JTadd:
@@ -477,6 +496,7 @@ unsigned ARMBaseInstrInfo::GetInstSizeInBytes(const MachineInstr *MI) const {
         MI->getOperand(NumOps - (TID.isPredicable() ? 3 : 2));
       unsigned JTI = JTOP.getIndex();
       const MachineJumpTableInfo *MJTI = MF->getJumpTableInfo();
+      assert(MJTI != 0);
       const std::vector<MachineJumpTableEntry> &JT = MJTI->getJumpTables();
       assert(JTI < JT.size());
       // Thumb instructions are 2 byte aligned, but JT entries are 4 byte
@@ -629,6 +649,13 @@ ARMBaseInstrInfo::copyRegToReg(MachineBasicBlock &MBB,
   DebugLoc DL = DebugLoc::getUnknownLoc();
   if (I != MBB.end()) DL = I->getDebugLoc();
 
+  // tGPR is used sometimes in ARM instructions that need to avoid using
+  // certain registers.  Just treat it as GPR here.
+  if (DestRC == ARM::tGPRRegisterClass)
+    DestRC = ARM::GPRRegisterClass;
+  if (SrcRC == ARM::tGPRRegisterClass)
+    SrcRC = ARM::GPRRegisterClass;
+
   if (DestRC != SrcRC) {
     if (DestRC->getSize() != SrcRC->getSize())
       return false;
@@ -662,11 +689,13 @@ ARMBaseInstrInfo::copyRegToReg(MachineBasicBlock &MBB,
              SrcRC == ARM::DPR_VFP2RegisterClass ||
              SrcRC == ARM::DPR_8RegisterClass) {
     // Always use neon reg-reg move if source or dest is NEON-only regclass.
-    BuildMI(MBB, I, DL, get(ARM::VMOVDneon), DestReg).addReg(SrcReg);
+    AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::VMOVDneon),
+                           DestReg).addReg(SrcReg));
   } else if (DestRC == ARM::QPRRegisterClass ||
              DestRC == ARM::QPR_VFP2RegisterClass ||
              DestRC == ARM::QPR_8RegisterClass) {
-    BuildMI(MBB, I, DL, get(ARM::VMOVQ), DestReg).addReg(SrcReg);
+    AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::VMOVQ),
+                           DestReg).addReg(SrcReg));
   } else {
     return false;
   }
@@ -690,6 +719,11 @@ storeRegToStackSlot(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
                             MFI.getObjectSize(FI),
                             Align);
 
+  // tGPR is used sometimes in ARM instructions that need to avoid using
+  // certain registers.  Just treat it as GPR here.
+  if (RC == ARM::tGPRRegisterClass)
+    RC = ARM::GPRRegisterClass;
+
   if (RC == ARM::GPRRegisterClass) {
     AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::STR))
                    .addReg(SrcReg, getKillRegState(isKill))
@@ -709,14 +743,15 @@ storeRegToStackSlot(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
             RC == ARM::QPR_VFP2RegisterClass) && "Unknown regclass!");
     // FIXME: Neon instructions should support predicates
     if (Align >= 16
-        && (getRegisterInfo().needsStackRealignment(MF))) {
-      BuildMI(MBB, I, DL, get(ARM::VST1q64))
-        .addFrameIndex(FI).addImm(0).addImm(0).addImm(128).addMemOperand(MMO)
-        .addReg(SrcReg, getKillRegState(isKill));
+        && (getRegisterInfo().canRealignStack(MF))) {
+      AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::VST1q64))
+                     .addFrameIndex(FI).addImm(0).addImm(0).addImm(128)
+                     .addMemOperand(MMO)
+                     .addReg(SrcReg, getKillRegState(isKill)));
     } else {
-      BuildMI(MBB, I, DL, get(ARM::VSTRQ)).
-        addReg(SrcReg, getKillRegState(isKill))
-        .addFrameIndex(FI).addImm(0).addMemOperand(MMO);
+      AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::VSTRQ)).
+                     addReg(SrcReg, getKillRegState(isKill))
+                     .addFrameIndex(FI).addImm(0).addMemOperand(MMO));
     }
   }
 }
@@ -737,6 +772,11 @@ loadRegFromStackSlot(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
                             MFI.getObjectSize(FI),
                             Align);
 
+  // tGPR is used sometimes in ARM instructions that need to avoid using
+  // certain registers.  Just treat it as GPR here.
+  if (RC == ARM::tGPRRegisterClass)
+    RC = ARM::GPRRegisterClass;
+
   if (RC == ARM::GPRRegisterClass) {
     AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::LDR), DestReg)
                    .addFrameIndex(FI).addReg(0).addImm(0).addMemOperand(MMO));
@@ -752,15 +792,14 @@ loadRegFromStackSlot(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
     assert((RC == ARM::QPRRegisterClass ||
             RC == ARM::QPR_VFP2RegisterClass ||
             RC == ARM::QPR_8RegisterClass) && "Unknown regclass!");
-    // FIXME: Neon instructions should support predicates
     if (Align >= 16
-        && (getRegisterInfo().needsStackRealignment(MF))) {
-      BuildMI(MBB, I, DL, get(ARM::VLD1q64))
-        .addReg(DestReg)
-        .addFrameIndex(FI).addImm(0).addImm(0).addImm(128).addMemOperand(MMO);
+        && (getRegisterInfo().canRealignStack(MF))) {
+      AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::VLD1q64), DestReg)
+                     .addFrameIndex(FI).addImm(0).addImm(0).addImm(128)
+                     .addMemOperand(MMO));
     } else {
-      BuildMI(MBB, I, DL, get(ARM::VLDRQ), DestReg).addFrameIndex(FI).addImm(0).
-        addMemOperand(MMO);
+      AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::VLDRQ), DestReg)
+                     .addFrameIndex(FI).addImm(0).addMemOperand(MMO));
     }
   }
 }
@@ -932,12 +971,46 @@ ARMBaseInstrInfo::canFoldMemoryOperand(const MachineInstr *MI,
   return false;
 }
 
+/// Create a copy of a const pool value. Update CPI to the new index and return
+/// the label UID.
+static unsigned duplicateCPV(MachineFunction &MF, unsigned &CPI) {
+  MachineConstantPool *MCP = MF.getConstantPool();
+  ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
+
+  const MachineConstantPoolEntry &MCPE = MCP->getConstants()[CPI];
+  assert(MCPE.isMachineConstantPoolEntry() &&
+         "Expecting a machine constantpool entry!");
+  ARMConstantPoolValue *ACPV =
+    static_cast<ARMConstantPoolValue*>(MCPE.Val.MachineCPVal);
+
+  unsigned PCLabelId = AFI->createConstPoolEntryUId();
+  ARMConstantPoolValue *NewCPV = 0;
+  if (ACPV->isGlobalValue())
+    NewCPV = new ARMConstantPoolValue(ACPV->getGV(), PCLabelId,
+                                      ARMCP::CPValue, 4);
+  else if (ACPV->isExtSymbol())
+    NewCPV = new ARMConstantPoolValue(MF.getFunction()->getContext(),
+                                      ACPV->getSymbol(), PCLabelId, 4);
+  else if (ACPV->isBlockAddress())
+    NewCPV = new ARMConstantPoolValue(ACPV->getBlockAddress(), PCLabelId,
+                                      ARMCP::CPBlockAddress, 4);
+  else
+    llvm_unreachable("Unexpected ARM constantpool value type!!");
+  CPI = MCP->getConstantPoolIndex(NewCPV, MCPE.getAlignment());
+  return PCLabelId;
+}
+
 void ARMBaseInstrInfo::
 reMaterialize(MachineBasicBlock &MBB,
               MachineBasicBlock::iterator I,
               unsigned DestReg, unsigned SubIdx,
-              const MachineInstr *Orig) const {
-  DebugLoc dl = Orig->getDebugLoc();
+              const MachineInstr *Orig,
+              const TargetRegisterInfo *TRI) const {
+  if (SubIdx && TargetRegisterInfo::isPhysicalRegister(DestReg)) {
+    DestReg = TRI->getSubReg(DestReg, SubIdx);
+    SubIdx = 0;
+  }
+
   unsigned Opcode = Orig->getOpcode();
   switch (Opcode) {
   default: {
@@ -949,28 +1022,8 @@ reMaterialize(MachineBasicBlock &MBB,
   case ARM::tLDRpci_pic:
   case ARM::t2LDRpci_pic: {
     MachineFunction &MF = *MBB.getParent();
-    ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
-    MachineConstantPool *MCP = MF.getConstantPool();
     unsigned CPI = Orig->getOperand(1).getIndex();
-    const MachineConstantPoolEntry &MCPE = MCP->getConstants()[CPI];
-    assert(MCPE.isMachineConstantPoolEntry() &&
-           "Expecting a machine constantpool entry!");
-    ARMConstantPoolValue *ACPV =
-      static_cast<ARMConstantPoolValue*>(MCPE.Val.MachineCPVal);
-    unsigned PCLabelId = AFI->createConstPoolEntryUId();
-    ARMConstantPoolValue *NewCPV = 0;
-    if (ACPV->isGlobalValue())
-      NewCPV = new ARMConstantPoolValue(ACPV->getGV(), PCLabelId,
-                                        ARMCP::CPValue, 4);
-    else if (ACPV->isExtSymbol())
-      NewCPV = new ARMConstantPoolValue(MF.getFunction()->getContext(),
-                                        ACPV->getSymbol(), PCLabelId, 4);
-    else if (ACPV->isBlockAddress())
-      NewCPV = new ARMConstantPoolValue(ACPV->getBlockAddress(), PCLabelId,
-                                        ARMCP::CPBlockAddress, 4);
-    else
-      llvm_unreachable("Unexpected ARM constantpool value type!!");
-    CPI = MCP->getConstantPoolIndex(NewCPV, MCPE.getAlignment());
+    unsigned PCLabelId = duplicateCPV(MF, CPI);
     MachineInstrBuilder MIB = BuildMI(MBB, I, Orig->getDebugLoc(), get(Opcode),
                                       DestReg)
       .addConstantPoolIndex(CPI).addImm(PCLabelId);
@@ -983,11 +1036,29 @@ reMaterialize(MachineBasicBlock &MBB,
   NewMI->getOperand(0).setSubReg(SubIdx);
 }
 
-bool ARMBaseInstrInfo::isIdentical(const MachineInstr *MI0,
-                                  const MachineInstr *MI1,
-                                  const MachineRegisterInfo *MRI) const {
+MachineInstr *
+ARMBaseInstrInfo::duplicate(MachineInstr *Orig, MachineFunction &MF) const {
+  MachineInstr *MI = TargetInstrInfoImpl::duplicate(Orig, MF);
+  switch(Orig->getOpcode()) {
+  case ARM::tLDRpci_pic:
+  case ARM::t2LDRpci_pic: {
+    unsigned CPI = Orig->getOperand(1).getIndex();
+    unsigned PCLabelId = duplicateCPV(MF, CPI);
+    Orig->getOperand(1).setIndex(CPI);
+    Orig->getOperand(2).setImm(PCLabelId);
+    break;
+  }
+  }
+  return MI;
+}
+
+bool ARMBaseInstrInfo::produceSameValue(const MachineInstr *MI0,
+                                        const MachineInstr *MI1) const {
   int Opcode = MI0->getOpcode();
-  if (Opcode == ARM::t2LDRpci_pic || Opcode == ARM::tLDRpci_pic) {
+  if (Opcode == ARM::t2LDRpci ||
+      Opcode == ARM::t2LDRpci_pic ||
+      Opcode == ARM::tLDRpci ||
+      Opcode == ARM::tLDRpci_pic) {
     if (MI1->getOpcode() != Opcode)
       return false;
     if (MI0->getNumOperands() != MI1->getNumOperands())
@@ -1011,7 +1082,7 @@ bool ARMBaseInstrInfo::isIdentical(const MachineInstr *MI0,
     return ACPV0->hasSameValue(ACPV1);
   }
 
-  return TargetInstrInfoImpl::isIdentical(MI0, MI1, MRI);
+  return MI0->isIdenticalTo(MI1, MachineInstr::IgnoreVRegDefs);
 }
 
 /// getInstrPredicate - If instruction is predicated, returns its predicate
@@ -1151,6 +1222,7 @@ bool llvm::rewriteARMFrameIndex(MachineInstr &MI, unsigned FrameRegIdx,
       break;
     }
     case ARMII::AddrMode4:
+    case ARMII::AddrMode6:
       // Can't fold any offset even if it's zero.
       return false;
     case ARMII::AddrMode5: {

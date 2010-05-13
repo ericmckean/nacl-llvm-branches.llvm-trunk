@@ -23,16 +23,18 @@
 #include "llvm/Support/DebugLoc.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/Recycler.h"
-#include <map>
 
 namespace llvm {
 
+class DILocation;
 class Value;
 class Function;
 class MachineRegisterInfo;
 class MachineFrameInfo;
 class MachineConstantPool;
 class MachineJumpTableInfo;
+class MCContext;
+class Pass;
 class TargetMachine;
 class TargetRegisterClass;
 
@@ -70,6 +72,7 @@ struct MachineFunctionInfo {
 class MachineFunction {
   Function *Fn;
   const TargetMachine &Target;
+  MCContext &Ctx;
 
   // RegInfo - Information about each register in use in the function.
   MachineRegisterInfo *RegInfo;
@@ -112,20 +115,32 @@ class MachineFunction {
   // Tracks debug locations.
   DebugLocTracker DebugLocInfo;
 
+  /// FunctionNumber - This provides a unique ID for each function emitted in
+  /// this translation unit.
+  ///
+  unsigned FunctionNumber;
+  
   // The alignment of the function.
   unsigned Alignment;
 
-  MachineFunction(const MachineFunction &); // intentionally unimplemented
-  void operator=(const MachineFunction&);   // intentionally unimplemented
+  MachineFunction(const MachineFunction &); // DO NOT IMPLEMENT
+  void operator=(const MachineFunction&);   // DO NOT IMPLEMENT
 
 public:
-  MachineFunction(Function *Fn, const TargetMachine &TM);
+  MachineFunction(Function *Fn, const TargetMachine &TM, unsigned FunctionNum,
+                  MCContext &Ctx);
   ~MachineFunction();
 
+  MCContext &getContext() const { return Ctx; }
+  
   /// getFunction - Return the LLVM function that this machine code represents
   ///
   Function *getFunction() const { return Fn; }
 
+  /// getFunctionNumber - Return a unique ID for the current function.
+  ///
+  unsigned getFunctionNumber() const { return FunctionNumber; }
+  
   /// getTarget - Return the target machine this machine code is compiled with
   ///
   const TargetMachine &getTarget() const { return Target; }
@@ -143,11 +158,16 @@ public:
   const MachineFrameInfo *getFrameInfo() const { return FrameInfo; }
 
   /// getJumpTableInfo - Return the jump table info object for the current 
-  /// function.  This object contains information about jump tables for switch
-  /// instructions in the current function.
-  ///
-  MachineJumpTableInfo *getJumpTableInfo() { return JumpTableInfo; }
+  /// function.  This object contains information about jump tables in the
+  /// current function.  If the current function has no jump tables, this will
+  /// return null.
   const MachineJumpTableInfo *getJumpTableInfo() const { return JumpTableInfo; }
+  MachineJumpTableInfo *getJumpTableInfo() { return JumpTableInfo; }
+
+  /// getOrCreateJumpTableInfo - Get the JumpTableInfo for this function, if it
+  /// does already exist, allocate one.
+  MachineJumpTableInfo *getOrCreateJumpTableInfo(unsigned JTEntryKind);
+
   
   /// getConstantPool - Return the constant pool object for the current
   /// function.
@@ -163,6 +183,11 @@ public:
   ///
   void setAlignment(unsigned A) { Alignment = A; }
 
+  /// EnsureAlignment - Make sure the function is at least 'A' bits aligned.
+  void EnsureAlignment(unsigned A) {
+    if (Alignment < A) Alignment = A;
+  }
+  
   /// getInfo - Keep track of various per-function pieces of information for
   /// backends that would like to do so.
   ///
@@ -175,9 +200,6 @@ public:
                                                       AlignOf<Ty>::Alignment));
         MFInfo = new (Loc) Ty(*this);
     }
-
-    assert((void*)dynamic_cast<Ty*>(MFInfo) == (void*)MFInfo &&
-           "Invalid concrete type or multiple inheritence for getInfo");
     return static_cast<Ty*>(MFInfo);
   }
 
@@ -231,6 +253,10 @@ public:
   /// dump - Print the current MachineFunction to cerr, useful for debugger use.
   ///
   void dump() const;
+
+  /// verify - Run the current MachineFunction through the machine code
+  /// verifier, useful for debugger use.
+  void verify(Pass *p=NULL, bool allowDoubleDefs=false) const;
 
   // Provide accessors for the MachineBasicBlock list...
   typedef BasicBlockListType::iterator iterator;
@@ -309,9 +335,11 @@ public:
                                    bool NoImp = false);
 
   /// CloneMachineInstr - Create a new MachineInstr which is a copy of the
-  /// 'Orig' instruction, identical in all ways except the the instruction
+  /// 'Orig' instruction, identical in all ways except the instruction
   /// has no parent, prev, or next.
   ///
+  /// See also TargetInstrInfo::duplicate() for target-specific fixes to cloned
+  /// instructions.
   MachineInstr *CloneMachineInstr(const MachineInstr *Orig);
 
   /// DeleteMachineInstr - Delete the given MachineInstr.
@@ -360,11 +388,22 @@ public:
                         MachineInstr::mmo_iterator End);
 
   //===--------------------------------------------------------------------===//
+  // Label Manipulation.
+  //
+  
+  /// getJTISymbol - Return the MCSymbol for the specified non-empty jump table.
+  /// If isLinkerPrivate is specified, an 'l' label is returned, otherwise a
+  /// normal 'L' label is returned.
+  MCSymbol *getJTISymbol(unsigned JTI, MCContext &Ctx, 
+                         bool isLinkerPrivate = false) const;
+  
+  
+  //===--------------------------------------------------------------------===//
   // Debug location.
   //
 
-  /// getDebugLocTuple - Get the DebugLocTuple for a given DebugLoc object.
-  DebugLocTuple getDebugLocTuple(DebugLoc DL) const;
+  /// getDILocation - Get the DILocation for a given DebugLoc object.
+  DILocation getDILocation(DebugLoc DL) const;
 
   /// getDefaultDebugLoc - Get the default debug location for the machine
   /// function.

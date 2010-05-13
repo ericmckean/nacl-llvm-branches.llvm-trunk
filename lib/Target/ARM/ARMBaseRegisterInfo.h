@@ -96,6 +96,7 @@ public:
 
   bool hasFP(const MachineFunction &MF) const;
 
+  bool canRealignStack(const MachineFunction &MF) const;
   bool needsStackRealignment(const MachineFunction &MF) const;
 
   bool cannotEliminateFrame(const MachineFunction &MF) const;
@@ -106,6 +107,9 @@ public:
   // Debug information queries.
   unsigned getRARegister() const;
   unsigned getFrameRegister(const MachineFunction &MF) const;
+  int getFrameIndexReference(const MachineFunction &MF, int FI,
+                             unsigned &FrameReg) const;
+  int getFrameIndexOffset(const MachineFunction &MF, int FI) const;
 
   // Exception handling queries.
   unsigned getEHExceptionRegister() const;
@@ -134,13 +138,14 @@ public:
   virtual bool requiresFrameIndexScavenging(const MachineFunction &MF) const;
 
   virtual bool hasReservedCallFrame(MachineFunction &MF) const;
+  virtual bool canSimplifyCallFramePseudos(MachineFunction &MF) const;
 
   virtual void eliminateCallFramePseudoInstr(MachineFunction &MF,
                                              MachineBasicBlock &MBB,
                                              MachineBasicBlock::iterator I) const;
 
   virtual unsigned eliminateFrameIndex(MachineBasicBlock::iterator II,
-                                       int SPAdj, int *Value = NULL,
+                                       int SPAdj, FrameIndexValue *Value = NULL,
                                        RegScavenger *RS = NULL) const;
 
   virtual void emitPrologue(MachineFunction &MF) const;

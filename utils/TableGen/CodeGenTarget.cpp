@@ -184,16 +184,16 @@ void CodeGenTarget::ReadRegisterClasses() const {
   RegisterClasses.assign(RegClasses.begin(), RegClasses.end());
 }
 
-std::vector<unsigned char> CodeGenTarget::getRegisterVTs(Record *R) const {
-  std::vector<unsigned char> Result;
+std::vector<MVT::SimpleValueType> CodeGenTarget::
+getRegisterVTs(Record *R) const {
+  std::vector<MVT::SimpleValueType> Result;
   const std::vector<CodeGenRegisterClass> &RCs = getRegisterClasses();
   for (unsigned i = 0, e = RCs.size(); i != e; ++i) {
     const CodeGenRegisterClass &RC = RegisterClasses[i];
     for (unsigned ei = 0, ee = RC.Elements.size(); ei != ee; ++ei) {
       if (R == RC.Elements[ei]) {
         const std::vector<MVT::SimpleValueType> &InVTs = RC.getValueTypes();
-        for (unsigned i = 0, e = InVTs.size(); i != e; ++i)
-          Result.push_back(InVTs[i]);
+        Result.insert(Result.end(), InVTs.begin(), InVTs.end());
       }
     }
   }
@@ -337,6 +337,11 @@ getInstructionsByEnumValue(std::vector<const CodeGenInstruction*>
     throw "Could not find 'COPY_TO_REGCLASS' instruction!";
   const CodeGenInstruction *COPY_TO_REGCLASS = &I->second;
 
+  I = getInstructions().find("DBG_VALUE");
+  if (I == Instructions.end())
+    throw "Could not find 'DBG_VALUE' instruction!";
+  const CodeGenInstruction *DBG_VALUE = &I->second;
+
   // Print out the rest of the instructions now.
   NumberedInstructions.push_back(PHI);
   NumberedInstructions.push_back(INLINEASM);
@@ -349,6 +354,7 @@ getInstructionsByEnumValue(std::vector<const CodeGenInstruction*>
   NumberedInstructions.push_back(IMPLICIT_DEF);
   NumberedInstructions.push_back(SUBREG_TO_REG);
   NumberedInstructions.push_back(COPY_TO_REGCLASS);
+  NumberedInstructions.push_back(DBG_VALUE);
   for (inst_iterator II = inst_begin(), E = inst_end(); II != E; ++II)
     if (&II->second != PHI &&
         &II->second != INLINEASM &&
@@ -360,7 +366,8 @@ getInstructionsByEnumValue(std::vector<const CodeGenInstruction*>
         &II->second != INSERT_SUBREG &&
         &II->second != IMPLICIT_DEF &&
         &II->second != SUBREG_TO_REG &&
-        &II->second != COPY_TO_REGCLASS)
+        &II->second != COPY_TO_REGCLASS &&
+        &II->second != DBG_VALUE)
       NumberedInstructions.push_back(&II->second);
 }
 
@@ -399,18 +406,6 @@ ComplexPattern::ComplexPattern(Record *R) {
       Properties |= 1 << SDNPMemOperand;
     } else {
       errs() << "Unsupported SD Node property '" << PropList[i]->getName()
-             << "' on ComplexPattern '" << R->getName() << "'!\n";
-      exit(1);
-    }
-  
-  // Parse the attributes.  
-  Attributes = 0;
-  PropList = R->getValueAsListOfDefs("Attributes");
-  for (unsigned i = 0, e = PropList.size(); i != e; ++i)
-    if (PropList[i]->getName() == "CPAttrParentAsRoot") {
-      Attributes |= 1 << CPAttrParentAsRoot;
-    } else {
-      errs() << "Unsupported pattern attribute '" << PropList[i]->getName()
              << "' on ComplexPattern '" << R->getName() << "'!\n";
       exit(1);
     }

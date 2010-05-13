@@ -23,43 +23,36 @@
 #include "ARMTargetMachine.h"
 #include "llvm/Constants.h"
 #include "llvm/Module.h"
+#include "llvm/Type.h"
 #include "llvm/Assembly/Writer.h"
 #include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/CodeGen/DwarfWriter.h"
 #include "llvm/CodeGen/MachineModuleInfoImpls.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineJumpTableInfo.h"
+#include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
+#include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCSectionMachO.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSymbol.h"
+#include "llvm/Target/Mangler.h"
 #include "llvm/Target/TargetData.h"
-#include "llvm/Target/TargetLoweringObjectFile.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/Target/TargetRegistry.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallString.h"
-#include "llvm/ADT/Statistic.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FormattedStream.h"
-#include "llvm/Support/Mangler.h"
 #include "llvm/Support/MathExtras.h"
 #include <cctype>
-#include <sstream>
-
 using namespace llvm;
-
-// @LOCALMOD
-cl::opt<bool> FlagSfiZeroMask("sfi-zero-mask");
-// @LOCALMOD
-
-STATISTIC(EmittedInsts, "Number of machine instrs printed");
 
 static cl::opt<bool>
 EnableMCInst("enable-arm-mcinst-printer", cl::Hidden,
@@ -82,8 +75,8 @@ namespace {
 
   public:
     explicit ARMAsmPrinter(formatted_raw_ostream &O, TargetMachine &TM,
-                           const MCAsmInfo *T, bool V)
-      : AsmPrinter(O, TM, T, V), AFI(NULL), MCP(NULL) {
+                           MCStreamer &Streamer)
+      : AsmPrinter(O, TM, Streamer), AFI(NULL), MCP(NULL) {
       Subtarget = &TM.getSubtarget<ARMSubtarget>();
     }
 
@@ -91,38 +84,15 @@ namespace {
       return "ARM Assembly Printer";
     }
     
-    void printMCInst(const MCInst *MI) {
-      ARMInstPrinter(O, *MAI, VerboseAsm).printInstruction(MI);
-    }
-    
     void printInstructionThroughMCStreamer(const MachineInstr *MI);
     
 
     void printOperand(const MachineInstr *MI, int OpNum,
                       const char *Modifier = 0);
-
     void printSOImmOperand(const MachineInstr *MI, int OpNum);
     void printSOImm2PartOperand(const MachineInstr *MI, int OpNum);
     void printSORegOperand(const MachineInstr *MI, int OpNum);
     void printAddrMode2Operand(const MachineInstr *MI, int OpNum);
-
-    // @LOCALMOD-START
-    // NOTE: we force the extra Modifier argument in the .td file
-    void printAddrModeHelper(const MachineInstr *MI,
-                             int base,
-                             int pred,
-                             const char* Modifier);
-
-    void printAddrMode2Operand(const MachineInstr *MI, int OpNo,
-                               const char* Modifier);
-    void printAddrMode3Operand(const MachineInstr *MI, int OpNo,
-                               const char* Modifier);
-
-    void printAddrMode2OffsetOperand(const MachineInstr *MI, int OpNo,
-                                     const char* Modifier);
-    void printAddrMode3OffsetOperand(const MachineInstr *MI, int OpNo,
-                                     const char* Modifier);
-    // @LOCALMOD-END
     void printAddrMode2OffsetOperand(const MachineInstr *MI, int OpNum);
     void printAddrMode3Operand(const MachineInstr *MI, int OpNum);
     void printAddrMode3OffsetOperand(const MachineInstr *MI, int OpNum);
@@ -135,6 +105,7 @@ namespace {
                                 const char *Modifier = 0);
     void printBitfieldInvMaskImmOperand (const MachineInstr *MI, int OpNum);
 
+    void printThumbS4ImmOperand(const MachineInstr *MI, int OpNum);
     void printThumbITMask(const MachineInstr *MI, int OpNum);
     void printThumbAddrModeRROperand(const MachineInstr *MI, int OpNum);
     void printThumbAddrModeRI5Operand(const MachineInstr *MI, int OpNum,
@@ -149,9 +120,14 @@ namespace {
     void printT2AddrModeImm8Operand(const MachineInstr *MI, int OpNum);
     void printT2AddrModeImm8s4Operand(const MachineInstr *MI, int OpNum);
     void printT2AddrModeImm8OffsetOperand(const MachineInstr *MI, int OpNum);
+    void printT2AddrModeImm8s4OffsetOperand(const MachineInstr *MI, int OpNum) {}
     void printT2AddrModeSoRegOperand(const MachineInstr *MI, int OpNum);
 
+    void printCPSOptionOperand(const MachineInstr *MI, int OpNum) {}
+    void printMSRMaskOperand(const MachineInstr *MI, int OpNum) {}
+    void printNegZeroOperand(const MachineInstr *MI, int OpNum) {}
     void printPredicateOperand(const MachineInstr *MI, int OpNum);
+    void printMandatoryPredicateOperand(const MachineInstr *MI, int OpNum);
     void printSBitModifierOperand(const MachineInstr *MI, int OpNum);
     void printPCLabel(const MachineInstr *MI, int OpNum);
     void printRegisterList(const MachineInstr *MI, int OpNum);
@@ -183,62 +159,64 @@ namespace {
                                        unsigned AsmVariant,
                                        const char *ExtraCode);
 
-    void PrintGlobalVariable(const GlobalVariable* GVar);
     void printInstruction(const MachineInstr *MI);  // autogenerated.
     static const char *getRegisterName(unsigned RegNo);
 
-    void printMachineInstruction(const MachineInstr *MI);
+    virtual void EmitInstruction(const MachineInstr *MI);
     bool runOnMachineFunction(MachineFunction &F);
+    
+    virtual void EmitConstantPool() {} // we emit constant pools customly!
+    virtual void EmitFunctionEntryLabel();
     void EmitStartOfAsmFile(Module &M);
     void EmitEndOfAsmFile(Module &M);
+
+    MCSymbol *GetARMSetPICJumpTableLabel2(unsigned uid, unsigned uid2,
+                                          const MachineBasicBlock *MBB) const;
+    MCSymbol *GetARMJTIPICJumpTableLabel2(unsigned uid, unsigned uid2) const;
 
     /// EmitMachineConstantPoolValue - Print a machine constantpool value to
     /// the .s file.
     virtual void EmitMachineConstantPoolValue(MachineConstantPoolValue *MCPV) {
-      // NOTE: A lot of this code is replicated in  ARMConstantPoolValue::print
-      printDataDirective(MCPV->getType());
+      switch (TM.getTargetData()->getTypeAllocSize(MCPV->getType())) {
+      case 1: O << MAI->getData8bitsDirective(0); break;
+      case 2: O << MAI->getData16bitsDirective(0); break;
+      case 4: O << MAI->getData32bitsDirective(0); break;
+      default: assert(0 && "Unknown CPV size");
+      }
 
       ARMConstantPoolValue *ACPV = static_cast<ARMConstantPoolValue*>(MCPV);
-      std::string Name;
+      SmallString<128> TmpNameStr;
 
       if (ACPV->isLSDA()) {
-        SmallString<16> LSDAName;
-        raw_svector_ostream(LSDAName) << MAI->getPrivateGlobalPrefix() <<
+        raw_svector_ostream(TmpNameStr) << MAI->getPrivateGlobalPrefix() <<
           "_LSDA_" << getFunctionNumber();
-        Name = LSDAName.str();
-      } else if (ACPV->isJumpTable()) {
-	Name = std::string(MAI->getPrivateGlobalPrefix()) + "JTI" +
-               utostr(getFunctionNumber()) + '_' +
-               utostr(*ACPV->getJumpTableIndex());
+        O << TmpNameStr.str();
       } else if (ACPV->isBlockAddress()) {
-        Name = GetBlockAddressSymbol(ACPV->getBlockAddress())->getName();
+        O << GetBlockAddressSymbol(ACPV->getBlockAddress())->getName();
       } else if (ACPV->isGlobalValue()) {
         GlobalValue *GV = ACPV->getGV();
         bool isIndirect = Subtarget->isTargetDarwin() &&
           Subtarget->GVIsIndirectSymbol(GV, TM.getRelocationModel());
         if (!isIndirect)
-          Name = Mang->getMangledName(GV);
+          O << *Mang->getSymbol(GV);
         else {
           // FIXME: Remove this when Darwin transition to @GOT like syntax.
-          Name = Mang->getMangledName(GV, "$non_lazy_ptr", true);
-          MCSymbol *Sym = OutContext.GetOrCreateSymbol(StringRef(Name));
+          MCSymbol *Sym = GetSymbolWithGlobalValueBase(GV, "$non_lazy_ptr");
+          O << *Sym;
           
           MachineModuleInfoMachO &MMIMachO =
             MMI->getObjFileInfo<MachineModuleInfoMachO>();
-          const MCSymbol *&StubSym =
+          MachineModuleInfoImpl::StubValueTy &StubSym =
             GV->hasHiddenVisibility() ? MMIMachO.getHiddenGVStubEntry(Sym) :
                                         MMIMachO.getGVStubEntry(Sym);
-          if (StubSym == 0) {
-            SmallString<128> NameStr;
-            Mang->getNameWithPrefix(NameStr, GV, false);
-            StubSym = OutContext.GetOrCreateSymbol(NameStr.str());
-          }
+          if (StubSym.getPointer() == 0)
+            StubSym = MachineModuleInfoImpl::
+              StubValueTy(Mang->getSymbol(GV), !GV->hasInternalLinkage());
         }
       } else {
         assert(ACPV->isExtSymbol() && "unrecognized constant pool value");
-        Name = Mang->makeNameProper(ACPV->getSymbol());
+        O << *GetExternalSymbolSymbol(ACPV->getSymbol());
       }
-      O << Name;
 
       if (ACPV->hasModifier()) O << "(" << ACPV->getModifier() << ")";
       if (ACPV->getPCAdjustment() != 0) {
@@ -247,9 +225,9 @@ namespace {
           << "+" << (unsigned)ACPV->getPCAdjustment();
          if (ACPV->mustAddCurrentAddress())
            O << "-.";
-         O << ")";
+         O << ')';
       }
-      O << "\n";
+      OutStreamer.AddBlankLine();
     }
 
     void getAnalysisUsage(AnalysisUsage &AU) const {
@@ -261,166 +239,35 @@ namespace {
   };
 } // end of anonymous namespace
 
-// @LOCALMOD-START
-extern cl::opt<bool> FlagSfiStore;
-extern cl::opt<bool> FlagSfiStack;
-extern cl::opt<bool> FlagSfiBranch;
-cl::opt<bool> FlagSfiData("sfi-data",
-                        cl::desc("use illegal at data bundle beginning"));
-// @LOCALMOD-END
-
-
 #include "ARMGenAsmWriter.inc"
+
+void ARMAsmPrinter::EmitFunctionEntryLabel() {
+  if (AFI->isThumbFunction()) {
+    O << "\t.code\t16\n";
+    O << "\t.thumb_func";
+    if (Subtarget->isTargetDarwin())
+      O << '\t' << *CurrentFnSym;
+    O << '\n';
+  }
+  
+  OutStreamer.EmitLabel(CurrentFnSym);
+}
 
 /// runOnMachineFunction - This uses the printInstruction()
 /// method to print assembly for each instruction.
 ///
 bool ARMAsmPrinter::runOnMachineFunction(MachineFunction &MF) {
-  this->MF = &MF;
-
   AFI = MF.getInfo<ARMFunctionInfo>();
   MCP = MF.getConstantPool();
 
-  SetupMachineFunction(MF);
-  O << "\n";
-
-  // NOTE: we don't print out constant pools here, they are handled as
-  // instructions.
-  O << '\n';
-
-  // Print out labels for the function.
-  const Function *F = MF.getFunction();
-  OutStreamer.SwitchSection(getObjFileLowering().SectionForGlobal(F, Mang, TM));
-
-  switch (F->getLinkage()) {
-  default: llvm_unreachable("Unknown linkage type!");
-  case Function::PrivateLinkage:
-  case Function::InternalLinkage:
-    break;
-  case Function::ExternalLinkage:
-    O << "\t.globl\t" << CurrentFnName << "\n";
-    break;
-  case Function::LinkerPrivateLinkage:
-  case Function::WeakAnyLinkage:
-  case Function::WeakODRLinkage:
-  case Function::LinkOnceAnyLinkage:
-  case Function::LinkOnceODRLinkage:
-    if (Subtarget->isTargetDarwin()) {
-      O << "\t.globl\t" << CurrentFnName << "\n";
-      O << "\t.weak_definition\t" << CurrentFnName << "\n";
-    } else {
-      O << MAI->getWeakRefDirective() << CurrentFnName << "\n";
-    }
-    break;
-  }
-
-  printVisibility(CurrentFnName, F->getVisibility());
-
-  unsigned FnAlign = 1 << MF.getAlignment();  // MF alignment is log2.
-  if (AFI->isThumbFunction()) {
-    EmitAlignment(FnAlign, F, AFI->getAlign());
-    O << "\t.code\t16\n";
-    O << "\t.thumb_func";
-    if (Subtarget->isTargetDarwin())
-      O << "\t" << CurrentFnName;
-    O << "\n";
-  } else {
-    // @LOCALMOD-START
-    // EmitAlignment(FnAlign, F);
-    // make sure function entry is aligned. We use  XmagicX as our basis
-    // for alignment decisions (c.f. assembler sfi macros)
-    int alignment = MF.getAlignment();
-    if (alignment < 4) alignment = 4;
-    EmitAlignment(alignment, F);
-    O << "\t.set XmagicX, .\n";
-    // @LOCALMOD-END
-  }
-
-  O << CurrentFnName << ":\n";
-  // Emit pre-function debug information.
-  DW->BeginFunction(&MF);
-
-  if (Subtarget->isTargetDarwin()) {
-    // If the function is empty, then we need to emit *something*. Otherwise,
-    // the function's label might be associated with something that it wasn't
-    // meant to be associated with. We emit a noop in this situation.
-    MachineFunction::iterator I = MF.begin();
-
-    if (++I == MF.end() && MF.front().empty())
-      O << "\tnop\n";
-  }
-
-  // @LOCALMOD-START
-  // Make sure all jump targets are aligned
-  // and also all constant pools
-  if (FlagSfiBranch) {
-    // JUMP TABLE TARGETS
-    MachineJumpTableInfo *jt_info = MF.getJumpTableInfo();
-    const std::vector<MachineJumpTableEntry> &JT = jt_info->getJumpTables();
-    for (unsigned i=0; i < JT.size(); ++i) {
-      std::vector<MachineBasicBlock*> MBBs = JT[i].MBBs;
-
-      //cout << "JUMPTABLE "<< i << " " << MBBs.size() << "\n";
-      for (unsigned j=0; j < MBBs.size(); ++j) {
-	if (MBBs[j]->begin()->getOpcode() == ARM::CONSTPOOL_ENTRY) {
-	  continue;
-	}
-        MBBs[j]->setAlignment(16);
-      }
-    }
-
-    // FIRST ENTRY IN A ConstanPool
-    bool last_bb_was_constant_pool = false;
-    for (MachineFunction::iterator I = MF.begin(), E = MF.end();
-         I != E; ++I) {
-      if (I->isLandingPad()) {
-        I->setAlignment(16);
-      }
-
-      if (I->empty()) continue;
-
-      bool is_constant_pool = I->begin()->getOpcode() == ARM::CONSTPOOL_ENTRY;
-
-      if (last_bb_was_constant_pool != is_constant_pool) {
-        I->setAlignment(16);
-      }
-
-      last_bb_was_constant_pool = is_constant_pool;
-    }
-  }
-  // @LOCALMOD-END
-
-  // Print out code for the function.
-  for (MachineFunction::const_iterator I = MF.begin(), E = MF.end();
-       I != E; ++I) {
-    // Print a label for the basic block.
-    if (I != MF.begin())
-      EmitBasicBlockStart(I);
-
-    // Print the assembly for the instruction.
-    for (MachineBasicBlock::const_iterator II = I->begin(), E = I->end();
-         II != E; ++II)
-      printMachineInstruction(II);
-  }
-
-  if (MAI->hasDotTypeDotSizeDirective())
-    O << "\t.size " << CurrentFnName << ", .-" << CurrentFnName << "\n";
-
-  // @LOCALMOD-START
-  // Print out jump tables referenced by the function.
-  if (!Subtarget->useInlineJumpTables())
-    EmitJumpTableInfo(MF.getJumpTableInfo(), MF);
-  // @LOCALMOD-END
-
-  // Emit post-function debug information.
-  DW->EndFunction(&MF);
-
-  return false;
+  return AsmPrinter::runOnMachineFunction(MF);
 }
 
 void ARMAsmPrinter::printOperand(const MachineInstr *MI, int OpNum,
                                  const char *Modifier) {
   const MachineOperand &MO = MI->getOperand(OpNum);
+  unsigned TF = MO.getTargetFlags();
+
   switch (MO.getType()) {
   default:
     assert(0 && "<unknown operand type>");
@@ -447,22 +294,29 @@ void ARMAsmPrinter::printOperand(const MachineInstr *MI, int OpNum,
   case MachineOperand::MO_Immediate: {
     int64_t Imm = MO.getImm();
     O << '#';
-    if (Modifier) {
-      if (strcmp(Modifier, "lo16") == 0)
-        O << ":lower16:";
-      else if (strcmp(Modifier, "hi16") == 0)
-        O << ":upper16:";
-    }
+    if ((Modifier && strcmp(Modifier, "lo16") == 0) ||
+        (TF & ARMII::MO_LO16))
+      O << ":lower16:";
+    else if ((Modifier && strcmp(Modifier, "hi16") == 0) ||
+             (TF & ARMII::MO_HI16))
+      O << ":upper16:";
     O << Imm;
     break;
   }
   case MachineOperand::MO_MachineBasicBlock:
-    GetMBBSymbol(MO.getMBB()->getNumber())->print(O, MAI);
+    O << *MO.getMBB()->getSymbol();
     return;
   case MachineOperand::MO_GlobalAddress: {
     bool isCallOp = Modifier && !strcmp(Modifier, "call");
     GlobalValue *GV = MO.getGlobal();
-    O << Mang->getMangledName(GV);
+
+    if ((Modifier && strcmp(Modifier, "lo16") == 0) ||
+        (TF & ARMII::MO_LO16))
+      O << ":lower16:";
+    else if ((Modifier && strcmp(Modifier, "hi16") == 0) ||
+             (TF & ARMII::MO_HI16))
+      O << ":upper16:";
+    O << *Mang->getSymbol(GV);
 
     printOffset(MO.getOffset());
 
@@ -473,21 +327,18 @@ void ARMAsmPrinter::printOperand(const MachineInstr *MI, int OpNum,
   }
   case MachineOperand::MO_ExternalSymbol: {
     bool isCallOp = Modifier && !strcmp(Modifier, "call");
-    std::string Name = Mang->makeNameProper(MO.getSymbolName());
-
-    O << Name;
+    O << *GetExternalSymbolSymbol(MO.getSymbolName());
+    
     if (isCallOp && Subtarget->isTargetELF() &&
         TM.getRelocationModel() == Reloc::PIC_)
       O << "(PLT)";
     break;
   }
   case MachineOperand::MO_ConstantPoolIndex:
-    O << MAI->getPrivateGlobalPrefix() << "CPI" << getFunctionNumber()
-      << '_' << MO.getIndex();
+    O << *GetCPISymbol(MO.getIndex());
     break;
   case MachineOperand::MO_JumpTableIndex:
-    O << MAI->getPrivateGlobalPrefix() << "JTI" << getFunctionNumber()
-      << '_' << MO.getIndex();
+    O << *GetJTISymbol(MO.getIndex());
     break;
   }
 }
@@ -599,65 +450,6 @@ void ARMAsmPrinter::printAddrMode2Operand(const MachineInstr *MI, int Op) {
   O << "]";
 }
 
-// @LOCALMOD-START
-
-// This hack prepends a line of the form:
-// sfi_store <basereg>, <pr>
-// before sandboxed store instructions
-void ARMAsmPrinter::printAddrModeHelper(const MachineInstr *MI,
-                                        int base,
-                                        int pred,
-                                        const char* Modifier) {
-  assert(0 == strcmp("sfi", Modifier));
-
-  const char *base_reg = getRegisterName(MI->getOperand(base).getReg());
-  // NOTE: sfi_store_preamble is aware of sp
-  O << "sfi_store_preamble " << base_reg << ", ";
-  printPredicateOperand(MI, pred);
-  O << "\n\t";
-}
-
-void ARMAsmPrinter::printAddrMode2Operand(const MachineInstr *MI, int Op,
-                                          const char *Modifier) {
-  if (!FlagSfiStore) return;
-
-  printAddrModeHelper(MI, Op, Op + 3, Modifier);
-
-  const MachineOperand &MO2 = MI->getOperand(Op+1);
-  if (MO2.getReg()) {
-    O << "BAD BAD BAD FORBIDDEN ADDR MODE\n";
-    assert(0);
-  }
-}
-
-void ARMAsmPrinter::printAddrMode3Operand(const MachineInstr *MI, int Op,
-                                          const char *Modifier) {
-  if (!FlagSfiStore) return;
-
-  printAddrModeHelper(MI, Op, Op + 3, Modifier);
-
-  const MachineOperand &MO2 = MI->getOperand(Op+1);
-  if (MO2.getReg()) {
-    O << "BAD BAD BAD FORBIDDEN ADDR MODE\n";
-    assert(0);
-  }
-}
-
-void ARMAsmPrinter::printAddrMode2OffsetOperand(const MachineInstr *MI,
-                                                int Op,
-                                                const char *Modifier) {
-  if (!FlagSfiStore) return;
-  printAddrModeHelper(MI, Op - 1, Op + 2, Modifier);
-}
-
-void ARMAsmPrinter::printAddrMode3OffsetOperand(const MachineInstr *MI,
-                                                int Op,
-                                                const char *Modifier) {
-  if (!FlagSfiStore) return;
-  printAddrModeHelper(MI, Op - 1, Op + 2, Modifier);
-}
-// @LOCALMOD-END
-
 void ARMAsmPrinter::printAddrMode2OffsetOperand(const MachineInstr *MI, int Op){
   const MachineOperand &MO1 = MI->getOperand(Op);
   const MachineOperand &MO2 = MI->getOperand(Op+1);
@@ -729,8 +521,10 @@ void ARMAsmPrinter::printAddrMode4Operand(const MachineInstr *MI, int Op,
     if (MO1.getReg() == ARM::SP) {
       // FIXME
       bool isLDM = (MI->getOpcode() == ARM::LDM ||
+                    MI->getOpcode() == ARM::LDM_UPD ||
                     MI->getOpcode() == ARM::LDM_RET ||
                     MI->getOpcode() == ARM::t2LDM ||
+                    MI->getOpcode() == ARM::t2LDM_UPD ||
                     MI->getOpcode() == ARM::t2LDM_RET);
       O << ARM_AM::getAMSubModeAltStr(Mode, isLDM);
     } else
@@ -739,10 +533,6 @@ void ARMAsmPrinter::printAddrMode4Operand(const MachineInstr *MI, int Op,
     ARM_AM::AMSubMode Mode = ARM_AM::getAM4SubMode(MO2.getImm());
     if (Mode == ARM_AM::ia)
       O << ".w";
-  // @LOCALMOD-START
-  } else if (Modifier && strcmp(Modifier, "base") == 0) {
-    printOperand(MI, Op);
-    // @LOCALMOD-END
   } else {
     printOperand(MI, Op);
     if (ARM_AM::getAM4WBFlag(MO2.getImm()))
@@ -773,17 +563,6 @@ void ARMAsmPrinter::printAddrMode5Operand(const MachineInstr *MI, int Op,
       O << "!";
     return;
   }
-  //@LOCALMOD-START
-   else if (Modifier && strcmp(Modifier, "sfi") == 0) {
-     printAddrModeHelper(MI, Op, Op + 2, Modifier);
-     return;
-   } else if (Modifier && strcmp(Modifier, "basereg") == 0) {
-     O << getRegisterName(MO1.getReg());
-     return;
-   }
-  //@LOCALMOD-END
-
-
 
   O << "[" << getRegisterName(MO1.getReg());
 
@@ -803,11 +582,8 @@ void ARMAsmPrinter::printAddrMode6Operand(const MachineInstr *MI, int Op) {
 
   O << "[" << getRegisterName(MO1.getReg());
   if (MO4.getImm()) {
-    if (Subtarget->isTargetDarwin())
-      O << ", :";
-    else
-      O << " @";
-    O << MO4.getImm();
+    // FIXME: Both darwin as and GNU as violate ARM docs here.
+    O << ", :" << MO4.getImm();
   }
   O << "]";
 
@@ -842,6 +618,10 @@ ARMAsmPrinter::printBitfieldInvMaskImmOperand(const MachineInstr *MI, int Op) {
 }
 
 //===--------------------------------------------------------------------===//
+
+void ARMAsmPrinter::printThumbS4ImmOperand(const MachineInstr *MI, int Op) {
+  O << "#" <<  MI->getOperand(Op).getImm() * 4;
+}
 
 void
 ARMAsmPrinter::printThumbITMask(const MachineInstr *MI, int Op) {
@@ -882,7 +662,7 @@ ARMAsmPrinter::printThumbAddrModeRI5Operand(const MachineInstr *MI, int Op,
   if (MO3.getReg())
     O << ", " << getRegisterName(MO3.getReg());
   else if (unsigned ImmOffs = MO2.getImm())
-    O << ", #" << ImmOffs * Scale;
+    O << ", #+" << ImmOffs * Scale;
   O << "]";
 }
 
@@ -904,7 +684,7 @@ void ARMAsmPrinter::printThumbAddrModeSPOperand(const MachineInstr *MI,int Op) {
   const MachineOperand &MO2 = MI->getOperand(Op+1);
   O << "[" << getRegisterName(MO1.getReg());
   if (unsigned ImmOffs = MO2.getImm())
-    O << ", #" << ImmOffs << " * 4";
+    O << ", #+" << ImmOffs*4;
   O << "]";
 }
 
@@ -970,9 +750,9 @@ void ARMAsmPrinter::printT2AddrModeImm8s4Operand(const MachineInstr *MI,
   int32_t OffImm = (int32_t)MO2.getImm() / 4;
   // Don't print +0.
   if (OffImm < 0)
-    O << ", #-" << -OffImm << " * 4";
+    O << ", #-" << -OffImm * 4;
   else if (OffImm > 0)
-    O << ", #+" << OffImm << " * 4";
+    O << ", #+" << OffImm * 4;
   O << "]";
 }
 
@@ -1015,6 +795,12 @@ void ARMAsmPrinter::printPredicateOperand(const MachineInstr *MI, int OpNum) {
     O << ARMCondCodeToString(CC);
 }
 
+void ARMAsmPrinter::printMandatoryPredicateOperand(const MachineInstr *MI,
+                                                   int OpNum) {
+  ARMCC::CondCodes CC = (ARMCC::CondCodes)MI->getOperand(OpNum).getImm();
+  O << ARMCondCodeToString(CC);
+}
+
 void ARMAsmPrinter::printSBitModifierOperand(const MachineInstr *MI, int OpNum){
   unsigned Reg = MI->getOperand(OpNum).getReg();
   if (Reg) {
@@ -1031,11 +817,10 @@ void ARMAsmPrinter::printPCLabel(const MachineInstr *MI, int OpNum) {
 
 void ARMAsmPrinter::printRegisterList(const MachineInstr *MI, int OpNum) {
   O << "{";
-  // Always skip the first operand, it's the optional (and implicit writeback).
-  for (unsigned i = OpNum+1, e = MI->getNumOperands(); i != e; ++i) {
+  for (unsigned i = OpNum, e = MI->getNumOperands(); i != e; ++i) {
     if (MI->getOperand(i).isImplicit())
       continue;
-    if ((int)i != OpNum+1) O << ", ";
+    if ((int)i != OpNum) O << ", ";
     printOperand(MI, i);
   }
   O << "}";
@@ -1046,28 +831,9 @@ void ARMAsmPrinter::printCPInstOperand(const MachineInstr *MI, int OpNum,
   assert(Modifier && "This operand only works with a modifier!");
   // There are two aspects to a CONSTANTPOOL_ENTRY operand, the label and the
   // data itself.
-
   if (!strcmp(Modifier, "label")) {
-    // @LOCALMOD-START
-    // NOTE: we also should make sure that the first data item
-    // is not in a code bundle
-    // NOTE: there may be issues with alignment constraints
-    const unsigned size = MI->getOperand(2).getImm();
-    //assert(size == 4 || size == 8 && "Unsupported data item size");
-    if (size == 8) {
-      // we cannot generate a size 8 constant at offset 12 (mod 16)
-      O << "sfi_nop_if_at_bundle_end\n";
-    }
-
-    if (FlagSfiData) {
-      O << "sfi_illegal_if_at_bundle_begining  @ ========== SFI (" <<
-        size << ")\n";
-    }
-    // @LOCALMOD-END
-
     unsigned ID = MI->getOperand(OpNum).getImm();
-    O << MAI->getPrivateGlobalPrefix() << "CPI" << getFunctionNumber()
-      << '_' << ID << ":\n";
+    OutStreamer.EmitLabel(GetCPISymbol(ID));
   } else {
     assert(!strcmp(Modifier, "cpentry") && "Unknown modifier for CPE");
     unsigned CPI = MI->getOperand(OpNum).getIndex();
@@ -1075,9 +841,6 @@ void ARMAsmPrinter::printCPInstOperand(const MachineInstr *MI, int OpNum,
     const MachineConstantPoolEntry &MCPE = MCP->getConstants()[CPI];
 
     if (MCPE.isMachineConstantPoolEntry()) {
-      // @LOCALMOD-START
-      // O << "@ Const pool\n";
-      // @LOCALMOD-END
       EmitMachineConstantPoolValue(MCPE.Val.MachineCPVal);
     } else {
       EmitGlobalConstant(MCPE.Val.ConstVal);
@@ -1085,43 +848,59 @@ void ARMAsmPrinter::printCPInstOperand(const MachineInstr *MI, int OpNum,
   }
 }
 
+MCSymbol *ARMAsmPrinter::
+GetARMSetPICJumpTableLabel2(unsigned uid, unsigned uid2,
+                            const MachineBasicBlock *MBB) const {
+  SmallString<60> Name;
+  raw_svector_ostream(Name) << MAI->getPrivateGlobalPrefix()
+    << getFunctionNumber() << '_' << uid << '_' << uid2
+    << "_set_" << MBB->getNumber();
+  return OutContext.GetOrCreateTemporarySymbol(Name.str());
+}
+
+MCSymbol *ARMAsmPrinter::
+GetARMJTIPICJumpTableLabel2(unsigned uid, unsigned uid2) const {
+  SmallString<60> Name;
+  raw_svector_ostream(Name) << MAI->getPrivateGlobalPrefix() << "JTI"
+    << getFunctionNumber() << '_' << uid << '_' << uid2;
+  return OutContext.GetOrCreateTemporarySymbol(Name.str());
+}
+
 void ARMAsmPrinter::printJTBlockOperand(const MachineInstr *MI, int OpNum) {
   assert(!Subtarget->isThumb2() && "Thumb2 should use double-jump jumptables!");
 
   const MachineOperand &MO1 = MI->getOperand(OpNum);
   const MachineOperand &MO2 = MI->getOperand(OpNum+1); // Unique Id
+  
   unsigned JTI = MO1.getIndex();
-  O << MAI->getPrivateGlobalPrefix() << "JTI" << getFunctionNumber()
-    << '_' << JTI << '_' << MO2.getImm() << ":\n";
+  MCSymbol *JTISymbol = GetARMJTIPICJumpTableLabel2(JTI, MO2.getImm());
+  OutStreamer.EmitLabel(JTISymbol);
 
   const char *JTEntryDirective = MAI->getData32bitsDirective();
 
-  const MachineFunction *MF = MI->getParent()->getParent();
   const MachineJumpTableInfo *MJTI = MF->getJumpTableInfo();
   const std::vector<MachineJumpTableEntry> &JT = MJTI->getJumpTables();
   const std::vector<MachineBasicBlock*> &JTBBs = JT[JTI].MBBs;
-  bool UseSet= MAI->getSetDirective() && TM.getRelocationModel() == Reloc::PIC_;
+  bool UseSet= MAI->hasSetDirective() && TM.getRelocationModel() == Reloc::PIC_;
   SmallPtrSet<MachineBasicBlock*, 8> JTSets;
-
   for (unsigned i = 0, e = JTBBs.size(); i != e; ++i) {
     MachineBasicBlock *MBB = JTBBs[i];
     bool isNew = JTSets.insert(MBB);
 
-    if (UseSet && isNew)
-      printPICJumpTableSetLabel(JTI, MO2.getImm(), MBB);
+    if (UseSet && isNew) {
+      O << "\t.set\t"
+        << *GetARMSetPICJumpTableLabel2(JTI, MO2.getImm(), MBB) << ','
+        << *MBB->getSymbol() << '-' << *JTISymbol << '\n';
+    }
 
     O << JTEntryDirective << ' ';
     if (UseSet)
-      O << MAI->getPrivateGlobalPrefix() << getFunctionNumber()
-        << '_' << JTI << '_' << MO2.getImm()
-        << "_set_" << MBB->getNumber();
-    else if (TM.getRelocationModel() == Reloc::PIC_) {
-      GetMBBSymbol(MBB->getNumber())->print(O, MAI);
-      O << '-' << MAI->getPrivateGlobalPrefix() << "JTI"
-        << getFunctionNumber() << '_' << JTI << '_' << MO2.getImm();
-    } else {
-      GetMBBSymbol(MBB->getNumber())->print(O, MAI);
-    }
+      O << *GetARMSetPICJumpTableLabel2(JTI, MO2.getImm(), MBB);
+    else if (TM.getRelocationModel() == Reloc::PIC_)
+      O << *MBB->getSymbol() << '-' << *JTISymbol;
+    else
+      O << *MBB->getSymbol();
+
     if (i != e-1)
       O << '\n';
   }
@@ -1131,10 +910,10 @@ void ARMAsmPrinter::printJT2BlockOperand(const MachineInstr *MI, int OpNum) {
   const MachineOperand &MO1 = MI->getOperand(OpNum);
   const MachineOperand &MO2 = MI->getOperand(OpNum+1); // Unique Id
   unsigned JTI = MO1.getIndex();
-  O << MAI->getPrivateGlobalPrefix() << "JTI" << getFunctionNumber()
-    << '_' << JTI << '_' << MO2.getImm() << ":\n";
+  
+  MCSymbol *JTISymbol = GetARMJTIPICJumpTableLabel2(JTI, MO2.getImm());
+  OutStreamer.EmitLabel(JTISymbol);
 
-  const MachineFunction *MF = MI->getParent()->getParent();
   const MachineJumpTableInfo *MJTI = MF->getJumpTableInfo();
   const std::vector<MachineJumpTableEntry> &JT = MJTI->getJumpTables();
   const std::vector<MachineBasicBlock*> &JTBBs = JT[JTI].MBBs;
@@ -1150,15 +929,12 @@ void ARMAsmPrinter::printJT2BlockOperand(const MachineInstr *MI, int OpNum) {
       O << MAI->getData8bitsDirective();
     else if (HalfWordOffset)
       O << MAI->getData16bitsDirective();
-    if (ByteOffset || HalfWordOffset) {
-      O << '(';
-      GetMBBSymbol(MBB->getNumber())->print(O, MAI);
-      O << "-" << MAI->getPrivateGlobalPrefix() << "JTI" << getFunctionNumber()
-        << '_' << JTI << '_' << MO2.getImm() << ")/2";
-    } else {
-      O << "\tb.w ";
-      GetMBBSymbol(MBB->getNumber())->print(O, MAI);
-    }
+    
+    if (ByteOffset || HalfWordOffset)
+      O << '(' << *MBB->getSymbol() << "-" << *JTISymbol << ")/2";
+    else
+      O << "\tb.w " << *MBB->getSymbol();
+
     if (i != e-1)
       O << '\n';
   }
@@ -1184,7 +960,7 @@ void ARMAsmPrinter::printNoHashImmediate(const MachineInstr *MI, int OpNum) {
 
 void ARMAsmPrinter::printVFPf32ImmOperand(const MachineInstr *MI, int OpNum) {
   const ConstantFP *FP = MI->getOperand(OpNum).getFPImm();
-  O << '#' << ARM::getVFPf32Imm(FP->getValueAPF());
+  O << '#' << FP->getValueAPF().convertToFloat();
   if (VerboseAsm) {
     O.PadToColumn(MAI->getCommentColumn());
     O << MAI->getCommentString() << ' ';
@@ -1194,7 +970,7 @@ void ARMAsmPrinter::printVFPf32ImmOperand(const MachineInstr *MI, int OpNum) {
 
 void ARMAsmPrinter::printVFPf64ImmOperand(const MachineInstr *MI, int OpNum) {
   const ConstantFP *FP = MI->getOperand(OpNum).getFPImm();
-  O << '#' << ARM::getVFPf64Imm(FP->getValueAPF());
+  O << '#' << FP->getValueAPF().convertToDouble();
   if (VerboseAsm) {
     O.PadToColumn(MAI->getCommentColumn());
     O << MAI->getCommentString() << ' ';
@@ -1222,6 +998,7 @@ bool ARMAsmPrinter::PrintAsmOperand(const MachineInstr *MI, unsigned OpNum,
       printNoHashImmediate(MI, OpNum);
       return false;
     case 'P': // Print a VFP double precision register.
+    case 'q': // Print a NEON quad precision register.
       printOperand(MI, OpNum);
       return false;
     case 'Q':
@@ -1258,12 +1035,7 @@ bool ARMAsmPrinter::PrintAsmMemoryOperand(const MachineInstr *MI,
   return false;
 }
 
-void ARMAsmPrinter::printMachineInstruction(const MachineInstr *MI) {
-  ++EmittedInsts;
-
-  // Call the autogenerated instruction printer routines.
-  processDebugLoc(MI, true);
-  
+void ARMAsmPrinter::EmitInstruction(const MachineInstr *MI) {
   if (EnableMCInst) {
     printInstructionThroughMCStreamer(MI);
   } else {
@@ -1272,12 +1044,8 @@ void ARMAsmPrinter::printMachineInstruction(const MachineInstr *MI) {
       EmitAlignment(2);
     
     printInstruction(MI);
+    OutStreamer.AddBlankLine();
   }
-  
-  if (VerboseAsm && !MI->getDebugLoc().isUnknown())
-    EmitComments(*MI);
-  O << '\n';
-  processDebugLoc(MI, false);
 }
 
 void ARMAsmPrinter::EmitStartOfAsmFile(Module &M) {
@@ -1346,395 +1114,6 @@ void ARMAsmPrinter::EmitStartOfAsmFile(Module &M) {
 
     // FIXME: Should we signal R9 usage?
   }
-
-  O << " @ ========================================\n";
-  O << "@ Branch: " << FlagSfiBranch << "\n";
-  O << "@ Stack: " << FlagSfiStack << "\n";
-  O << "@ Store: " << FlagSfiStore << "\n";
-  O << "@ Data: " << FlagSfiData << "\n";
-
-  O << " @ ========================================\n";
-  // NOTE: this macro does bundle alignment as follows
-  //       if current bundle pos is X emit pX data items of value "val"
-  // NOTE: that pos will be one of: 0,4,8,12
-  //
-  O <<
-    "\t.macro sfi_long_based_on_pos p0 p1 p2 p3 val\n"
-    "\t.set pos, (. - XmagicX) % 16\n"
-    "\t.fill  (((\\p3<<12)|(\\p2<<8)|(\\p1<<4)|\\p0)>>pos) & 15, 4, \\val\n"
-    "\t.endm\n"
-    "\n\n";
-
-  O <<
-    "\t.macro sfi_illegal_if_at_bundle_begining\n"
-    "\tsfi_long_based_on_pos 1 0 0 0 0xe1277777\n"
-    "\t.endm\n"
-    "\n\n";
-
-  O <<
-    "\t.macro sfi_nop_if_at_bundle_end\n"
-    "\tsfi_long_based_on_pos 0 0 0 1 0xe1a00000\n"
-    "\t.endm\n"
-      "\n\n";
-
-  O <<
-    "\t.macro sfi_nops_to_force_slot3\n"
-    "\tsfi_long_based_on_pos 3 2 1 0 0xe1a00000\n"
-    "\t.endm\n"
-    "\n\n";
-
-  O <<
-    "\t.macro sfi_nops_to_force_slot2\n"
-    "\tsfi_long_based_on_pos 2 1 0 3 0xe1a00000\n"
-    "\t.endm\n"
-    "\n\n";
-
-  O <<
-    "\t.macro sfi_nops_to_force_slot1\n"
-    "\tsfi_long_based_on_pos 1 0 3 2 0xe1a00000\n"
-    "\t.endm\n"
-    "\n\n";
-
-  O << " @ ========================================\n";
-
-  if (FlagSfiZeroMask) {
-    O <<
-      "\t.macro sfi_data_mask reg cond\n"
-      "\tbic\\cond \\reg, \\reg, #0\n"
-      "\t.endm\n"
-      "\n\n";
-
-    O <<
-      "\t.macro sfi_code_mask reg cond=\n"
-      "\tbic\\cond \\reg, \\reg, #0\n"
-      "\t.endm\n"
-      "\n\n";
-
-  } else {
-    O <<
-      "\t.macro sfi_data_mask reg cond\n"
-      "\tbic\\cond \\reg, \\reg, #0xc0000000\n"
-      "\t.endm\n"
-      "\n\n";
-
-    O <<
-      "\t.macro sfi_code_mask reg cond=\n"
-      "\tbic\\cond \\reg, \\reg, #0xf000000f\n"
-      "\t.endm\n"
-      "\n\n";
-  }
-
-  O << " @ ========================================\n";
-  if (FlagSfiBranch) {
-    O <<
-      "\t.macro sfi_call_preamble\n"
-      "\tsfi_nops_to_force_slot3\n"
-      "\t.endm\n"
-      "\n\n";
-
-    O <<
-      "\t.macro sfi_return_alignment_and_code_mask reg cond=\n"
-      "\tsfi_nop_if_at_bundle_end\n"
-      "\tsfi_code_mask \\reg \\cond\n"
-      "\t.endm\n"
-      "\n\n";
-
-  } else {
-    O <<
-      "\t.macro sfi_call_preamble\n"
-      "\t.endm\n"
-      "\n\n";
-
-    O <<
-      "\t.macro sfi_return_alignment_and_code_mask reg cond=\n"
-      "\t.endm\n"
-      "\n\n";
-  }
-
-
-  if (FlagSfiStore) {
-    O << " @ ========================================\n";
-
-    O <<
-      "\t.macro sfi_store_preamble reg cond\n"
-      "\t.if \\reg != sp\n"
-      "\tsfi_nop_if_at_bundle_end\n"
-      "\tsfi_data_mask \\reg, \\cond\n"
-      "\t.endif\n"
-      "\t.endm\n"
-      "\n\n";
-  } else {
-    O <<
-    "\t.macro sfi_store_preamble reg cond\n"
-    "\t.endm\n"
-    "\n\n";
-  }
-
-  const char* kPreds[] = {
-    "eq",
-    "ne",
-    "lt",
-    "le",
-    "ls",
-    "ge",
-    "gt",
-    "hs",
-    "hi",
-    "lo",
-    "mi",
-    "pl",
-    NULL,
-  };
-
-  if (FlagSfiStack) {
-
-    O << " @ ========================================\n";
-
-    O <<
-      "\t.macro sfi_add rega regb imm rot=0\n"
-      "\tsfi_nop_if_at_bundle_end\n"
-      "\tadd \\rega, \\regb, \\imm, \\rot\n"
-      "\tsfi_data_mask \\rega\n"
-      "\t.endm\n"
-      "\n\n";
-
-    for (int p=0; kPreds[p] != NULL; ++p) {
-      O <<
-        "\t.macro sfi_add" << kPreds[p] << " rega regb imm rot=0\n"
-        "\tsfi_nop_if_at_bundle_end\n"
-        "\tadd" << kPreds[p] << " \\rega, \\regb, \\imm, \\rot\n"
-        "\tsfi_data_mask \\rega, " << kPreds[p] << "\n"
-        "\t.endm\n"
-        "\n\n";
-    }
-
-    O << " @ ========================================\n";
-    O <<
-      "\t.macro sfi_sub rega regb imm rot=0\n"
-      "\tsfi_nop_if_at_bundle_end\n"
-      "\tsub \\rega, \\regb, \\imm, \\rot\n"
-      "\tsfi_data_mask \\rega\n"
-      "\t.endm\n"
-      "\n\n";
-
-    for (int p=0; kPreds[p] != NULL; ++ p) {
-      O <<
-        "\t.macro sfi_sub" << kPreds[p] << " rega regb imm rot=0\n"
-        "\tsfi_nop_if_at_bundle_end\n"
-        "\tsub" << kPreds[p] << " \\rega, \\regb, \\imm, \\rot\n"
-        "\tsfi_data_mask \\rega, " << kPreds[p] << "\n"
-        "\t.endm\n"
-        "\n\n";
-    }
-
-    O << " @ ========================================\n";
-
-    O <<
-      "\t.macro sfi_mov rega regb\n"
-      "\tsfi_nop_if_at_bundle_end\n"
-      "\tmov \\rega, \\regb\n"
-      "\tsfi_data_mask \\rega\n"
-      "\t.endm\n"
-      "\n\n";
-
-    for (int p=0; kPreds[p] != NULL; ++ p) {
-      O <<
-        "\t.macro mov_sub" << kPreds[p] << " rega regb imm rot=0\n"
-        "\tsfi_nop_if_at_bundle_end\n"
-        "\tmov" << kPreds[p] << " \\rega, \\regb, \\imm, \\rot\n"
-        "\tsfi_data_mask \\rega, " << kPreds[p] << "\n"
-        "\t.endm\n"
-        "\n\n";
-    }
-
-  } // FlagSfiStack
-
-
-  O << " @ ========================================\n";
-
-  O <<
-    "\t.macro sfi_bx link\n"
-    "\tsfi_return_alignment_and_code_mask \\link\n"
-    "\tbx \\link\n"
-    "\t.endm\n"
-    "\n\n";
-
-
-  for (int p=0; kPreds[p] != NULL; ++ p) {
-    O <<
-      "\t.macro sfi_bx" << kPreds[p] << " link\n"
-      "\tsfi_return_alignment_and_code_mask \\link " << kPreds[p] << "\n"
-      "\tbx" << kPreds[p] << " \\link\n"
-      "\t.endm\n"
-      "\n\n";
-  }
-
-
-  O << " @ ========================================\n";
-
-  // This is use just before "mov pc, rx"
-  // TODO: make it possible to turn this off
-  O <<
-    "\t.macro sfi_indirect_jump_preamble link\n"
-    "\tsfi_nop_if_at_bundle_end\n"
-    "\tsfi_code_mask \\link\n"
-    "\t.endm\n"
-    "\n\n";
-
-  // This is use just before "blx rx"
-  // TODO: make it possible to turn this off
-  O <<
-    "\t.macro sfi_indirect_call_preamble link\n"
-    "\tsfi_nops_to_force_slot2\n"
-    "\tsfi_code_mask \\link\n"
-    "\t.endm\n"
-    "\n\n";
-
-  O << " @ ========================================\n";
-  O << "\t.text\n";
-
-  // @LOCALMOD-END
-
-}
-
-void ARMAsmPrinter::PrintGlobalVariable(const GlobalVariable* GVar) {
-  const TargetData *TD = TM.getTargetData();
-
-  if (!GVar->hasInitializer())   // External global require no code
-    return;
-
-  // Check to see if this is a special global used by LLVM, if so, emit it.
-
-  if (EmitSpecialLLVMGlobal(GVar)) {
-    if (Subtarget->isTargetDarwin() &&
-        TM.getRelocationModel() == Reloc::Static) {
-      if (GVar->getName() == "llvm.global_ctors")
-        O << ".reference .constructors_used\n";
-      else if (GVar->getName() == "llvm.global_dtors")
-        O << ".reference .destructors_used\n";
-    }
-    return;
-  }
-
-  std::string name = Mang->getMangledName(GVar);
-  Constant *C = GVar->getInitializer();
-  const Type *Type = C->getType();
-  unsigned Size = TD->getTypeAllocSize(Type);
-  unsigned Align = TD->getPreferredAlignmentLog(GVar);
-  bool isDarwin = Subtarget->isTargetDarwin();
-
-  printVisibility(name, GVar->getVisibility());
-
-  if (Subtarget->isTargetELF())
-    O << "\t.type " << name << ",%object\n";
-
-  const MCSection *TheSection =
-    getObjFileLowering().SectionForGlobal(GVar, Mang, TM);
-  OutStreamer.SwitchSection(TheSection);
-
-  // FIXME: get this stuff from section kind flags.
-  if (C->isNullValue() && !GVar->hasSection() && !GVar->isThreadLocal() &&
-      // Don't put things that should go in the cstring section into "comm".
-      !TheSection->getKind().isMergeableCString()) {
-    if (GVar->hasExternalLinkage()) {
-      if (const char *Directive = MAI->getZeroFillDirective()) {
-        O << "\t.globl\t" << name << "\n";
-        O << Directive << "__DATA, __common, " << name << ", "
-          << Size << ", " << Align << "\n";
-        return;
-      }
-    }
-
-    if (GVar->hasLocalLinkage() || GVar->isWeakForLinker()) {
-      if (Size == 0) Size = 1;   // .comm Foo, 0 is undefined, avoid it.
-
-      if (isDarwin) {
-        if (GVar->hasLocalLinkage()) {
-          O << MAI->getLCOMMDirective()  << name << "," << Size
-            << ',' << Align;
-        } else if (GVar->hasCommonLinkage()) {
-          O << MAI->getCOMMDirective()  << name << "," << Size
-            << ',' << Align;
-        } else {
-          OutStreamer.SwitchSection(TheSection);
-          O << "\t.globl " << name << '\n'
-            << MAI->getWeakDefDirective() << name << '\n';
-          EmitAlignment(Align, GVar);
-          O << name << ":";
-          if (VerboseAsm) {
-            O.PadToColumn(MAI->getCommentColumn());
-            O << MAI->getCommentString() << ' ';
-            WriteAsOperand(O, GVar, /*PrintType=*/false, GVar->getParent());
-          }
-          O << '\n';
-          EmitGlobalConstant(C);
-          return;
-        }
-      } else if (MAI->getLCOMMDirective() != NULL) {
-        if (GVar->hasLocalLinkage()) {
-          O << MAI->getLCOMMDirective() << name << "," << Size;
-        } else {
-          O << MAI->getCOMMDirective()  << name << "," << Size;
-          if (MAI->getCOMMDirectiveTakesAlignment())
-            O << ',' << (MAI->getAlignmentIsInBytes() ? (1 << Align) : Align);
-        }
-      } else {
-        if (GVar->hasLocalLinkage())
-          O << "\t.local\t" << name << "\n";
-        O << MAI->getCOMMDirective()  << name << "," << Size;
-        if (MAI->getCOMMDirectiveTakesAlignment())
-          O << "," << (MAI->getAlignmentIsInBytes() ? (1 << Align) : Align);
-      }
-      if (VerboseAsm) {
-        O.PadToColumn(MAI->getCommentColumn());
-        O << MAI->getCommentString() << ' ';
-        WriteAsOperand(O, GVar, /*PrintType=*/false, GVar->getParent());
-      }
-      O << "\n";
-      return;
-    }
-  }
-
-  switch (GVar->getLinkage()) {
-  case GlobalValue::CommonLinkage:
-  case GlobalValue::LinkOnceAnyLinkage:
-  case GlobalValue::LinkOnceODRLinkage:
-  case GlobalValue::WeakAnyLinkage:
-  case GlobalValue::WeakODRLinkage:
-  case GlobalValue::LinkerPrivateLinkage:
-    if (isDarwin) {
-      O << "\t.globl " << name << "\n"
-        << "\t.weak_definition " << name << "\n";
-    } else {
-      O << "\t.weak " << name << "\n";
-    }
-    break;
-  case GlobalValue::AppendingLinkage:
-  // FIXME: appending linkage variables should go into a section of
-  // their name or something.  For now, just emit them as external.
-  case GlobalValue::ExternalLinkage:
-    O << "\t.globl " << name << "\n";
-    break;
-  case GlobalValue::PrivateLinkage:
-  case GlobalValue::InternalLinkage:
-    break;
-  default:
-    llvm_unreachable("Unknown linkage type!");
-  }
-
-  EmitAlignment(Align, GVar);
-  O << name << ":";
-  if (VerboseAsm) {
-    O.PadToColumn(MAI->getCommentColumn());
-    O << MAI->getCommentString() << ' ';
-    WriteAsOperand(O, GVar, /*PrintType=*/false, GVar->getParent());
-  }
-  O << "\n";
-  if (MAI->hasDotTypeDotSizeDirective())
-    O << "\t.size " << name << ", " << Size << "\n";
-
-  EmitGlobalConstant(C);
-  O << '\n';
 }
 
 
@@ -1750,17 +1129,30 @@ void ARMAsmPrinter::EmitEndOfAsmFile(Module &M) {
 
     // Output non-lazy-pointers for external and common global variables.
     MachineModuleInfoMachO::SymbolListTy Stubs = MMIMacho.GetGVStubList();
-    
+
     if (!Stubs.empty()) {
       // Switch with ".non_lazy_symbol_pointer" directive.
       OutStreamer.SwitchSection(TLOFMacho.getNonLazySymbolPointerSection());
       EmitAlignment(2);
       for (unsigned i = 0, e = Stubs.size(); i != e; ++i) {
-        Stubs[i].first->print(O, MAI);
-        O << ":\n\t.indirect_symbol ";
-        Stubs[i].second->print(O, MAI);
-        O << "\n\t.long\t0\n";
+        // L_foo$stub:
+        OutStreamer.EmitLabel(Stubs[i].first);
+        //   .indirect_symbol _foo
+        MachineModuleInfoImpl::StubValueTy &MCSym = Stubs[i].second;
+        OutStreamer.EmitSymbolAttribute(MCSym.getPointer(),MCSA_IndirectSymbol);
+
+        if (MCSym.getInt())
+          // External to current translation unit.
+          OutStreamer.EmitIntValue(0, 4/*size*/, 0/*addrspace*/);
+        else
+          // Internal to current translation unit.
+          OutStreamer.EmitValue(MCSymbolRefExpr::Create(MCSym.getPointer(),
+                                                        OutContext),
+                                4/*size*/, 0/*addrspace*/);
       }
+
+      Stubs.clear();
+      OutStreamer.AddBlankLine();
     }
 
     Stubs = MMIMacho.GetHiddenGVStubList();
@@ -1768,11 +1160,17 @@ void ARMAsmPrinter::EmitEndOfAsmFile(Module &M) {
       OutStreamer.SwitchSection(getObjFileLowering().getDataSection());
       EmitAlignment(2);
       for (unsigned i = 0, e = Stubs.size(); i != e; ++i) {
-        Stubs[i].first->print(O, MAI);
-        O << ":\n\t.long ";
-        Stubs[i].second->print(O, MAI);
-        O << "\n";
+        // L_foo$stub:
+        OutStreamer.EmitLabel(Stubs[i].first);
+        //   .long _foo
+        OutStreamer.EmitValue(MCSymbolRefExpr::
+                              Create(Stubs[i].second.getPointer(),
+                                     OutContext),
+                              4/*size*/, 0/*addrspace*/);
       }
+
+      Stubs.clear();
+      OutStreamer.AddBlankLine();
     }
 
     // Funny Darwin hack: This flag tells the linker that no global symbols
@@ -1780,9 +1178,8 @@ void ARMAsmPrinter::EmitEndOfAsmFile(Module &M) {
     // implementation of multiple entry points).  If this doesn't occur, the
     // linker can safely perform dead code stripping.  Since LLVM never
     // generates code that does this, it is always safe to set.
-    OutStreamer.EmitAssemblerFlag(MCStreamer::SubsectionsViaSymbols);
+    OutStreamer.EmitAssemblerFlag(MCAF_SubsectionsViaSymbols);
   }
-
 }
 
 //===----------------------------------------------------------------------===//
@@ -1793,20 +1190,6 @@ void ARMAsmPrinter::printInstructionThroughMCStreamer(const MachineInstr *MI) {
   case ARM::t2MOVi32imm:
     assert(0 && "Should be lowered by thumb2it pass");
   default: break;
-  case TargetInstrInfo::DBG_LABEL:
-  case TargetInstrInfo::EH_LABEL:
-  case TargetInstrInfo::GC_LABEL:
-    printLabel(MI);
-    return;
-  case TargetInstrInfo::KILL:
-    printKill(MI);
-    return;
-  case TargetInstrInfo::INLINEASM:
-    printInlineAsm(MI);
-    return;
-  case TargetInstrInfo::IMPLICIT_DEF:
-    printImplicitDef(MI);
-    return;
   case ARM::PICADD: { // FIXME: Remove asm string from td file.
     // This is a pseudo op for a label + instruction sequence, which looks like:
     // LPC0:
@@ -1817,7 +1200,7 @@ void ARMAsmPrinter::printInstructionThroughMCStreamer(const MachineInstr *MI) {
     // FIXME: MOVE TO SHARED PLACE.
     unsigned Id = (unsigned)MI->getOperand(2).getImm();
     const char *Prefix = MAI->getPrivateGlobalPrefix();
-    MCSymbol *Label =OutContext.GetOrCreateSymbol(Twine(Prefix)
+    MCSymbol *Label =OutContext.GetOrCreateTemporarySymbol(Twine(Prefix)
                          + "PC" + Twine(getFunctionNumber()) + "_" + Twine(Id));
     OutStreamer.EmitLabel(Label);
     
@@ -1828,7 +1211,7 @@ void ARMAsmPrinter::printInstructionThroughMCStreamer(const MachineInstr *MI) {
     AddInst.addOperand(MCOperand::CreateReg(MI->getOperand(0).getReg()));
     AddInst.addOperand(MCOperand::CreateReg(ARM::PC));
     AddInst.addOperand(MCOperand::CreateReg(MI->getOperand(1).getReg()));
-    printMCInst(&AddInst);
+    OutStreamer.EmitInstruction(AddInst);
     return;
   }
   case ARM::CONSTPOOL_ENTRY: { // FIXME: Remove asm string from td file.
@@ -1840,12 +1223,7 @@ void ARMAsmPrinter::printInstructionThroughMCStreamer(const MachineInstr *MI) {
     unsigned CPIdx   = (unsigned)MI->getOperand(1).getIndex();
 
     EmitAlignment(2);
-
-    const char *Prefix = MAI->getPrivateGlobalPrefix();
-    MCSymbol *Label = OutContext.GetOrCreateSymbol(Twine(Prefix)+"CPI"+
-                                                   Twine(getFunctionNumber())+
-                                                   "_"+ Twine(LabelId));
-    OutStreamer.EmitLabel(Label);
+    OutStreamer.EmitLabel(GetCPISymbol(LabelId));
 
     const MachineConstantPoolEntry &MCPE = MCP->getConstants()[CPIdx];
     if (MCPE.isMachineConstantPoolEntry())
@@ -1874,8 +1252,7 @@ void ARMAsmPrinter::printInstructionThroughMCStreamer(const MachineInstr *MI) {
       TmpInst.addOperand(MCOperand::CreateReg(MI->getOperand(3).getReg()));
 
       TmpInst.addOperand(MCOperand::CreateReg(0));          // cc_out
-      printMCInst(&TmpInst);
-      O << '\n';
+      OutStreamer.EmitInstruction(TmpInst);
     }
 
     {
@@ -1889,7 +1266,7 @@ void ARMAsmPrinter::printInstructionThroughMCStreamer(const MachineInstr *MI) {
       TmpInst.addOperand(MCOperand::CreateReg(MI->getOperand(3).getReg()));
       
       TmpInst.addOperand(MCOperand::CreateReg(0));          // cc_out
-      printMCInst(&TmpInst);
+      OutStreamer.EmitInstruction(TmpInst);
     }
     return; 
   }
@@ -1908,8 +1285,7 @@ void ARMAsmPrinter::printInstructionThroughMCStreamer(const MachineInstr *MI) {
       TmpInst.addOperand(MCOperand::CreateImm(MI->getOperand(2).getImm()));
       TmpInst.addOperand(MCOperand::CreateReg(MI->getOperand(3).getReg()));
       
-      printMCInst(&TmpInst);
-      O << '\n';
+      OutStreamer.EmitInstruction(TmpInst);
     }
     
     {
@@ -1923,7 +1299,7 @@ void ARMAsmPrinter::printInstructionThroughMCStreamer(const MachineInstr *MI) {
       TmpInst.addOperand(MCOperand::CreateImm(MI->getOperand(2).getImm()));
       TmpInst.addOperand(MCOperand::CreateReg(MI->getOperand(3).getReg()));
       
-      printMCInst(&TmpInst);
+      OutStreamer.EmitInstruction(TmpInst);
     }
     
     return;
@@ -1932,8 +1308,7 @@ void ARMAsmPrinter::printInstructionThroughMCStreamer(const MachineInstr *MI) {
       
   MCInst TmpInst;
   MCInstLowering.Lower(MI, TmpInst);
-  
-  printMCInst(&TmpInst);
+  OutStreamer.EmitInstruction(TmpInst);
 }
 
 //===----------------------------------------------------------------------===//
@@ -1957,3 +1332,4 @@ extern "C" void LLVMInitializeARMAsmPrinter() {
   TargetRegistry::RegisterMCInstPrinter(TheARMTarget, createARMMCInstPrinter);
   TargetRegistry::RegisterMCInstPrinter(TheThumbTarget, createARMMCInstPrinter);
 }
+

@@ -1,4 +1,4 @@
-; RUN: llc < %s -march=x86-64 -mtriple=x86_64-unknown-linux-gnu -asm-verbose=false | FileCheck %s
+; RUN: llc < %s -march=x86-64 -mtriple=x86_64-unknown-linux-gnu -asm-verbose=false -post-RA-scheduler=true | FileCheck %s
 
 declare void @bar(i32)
 declare void @car(i32)
@@ -55,7 +55,7 @@ altret:
   ret void
 }
 
-declare i8* @choose(i8*, i8*);
+declare i8* @choose(i8*, i8*)
 
 ; BranchFolding should tail-duplicate the indirect jump to avoid
 ; redundant branching.
@@ -109,15 +109,15 @@ altret:
 
 ; CHECK: dont_merge_oddly:
 ; CHECK-NOT:   ret
-; CHECK:        ucomiss %xmm0, %xmm1
+; CHECK:        ucomiss %xmm1, %xmm2
 ; CHECK-NEXT:   jbe .LBB3_3
-; CHECK-NEXT:   ucomiss %xmm2, %xmm0
+; CHECK-NEXT:   ucomiss %xmm0, %xmm1
 ; CHECK-NEXT:   ja .LBB3_4
 ; CHECK-NEXT: .LBB3_2:
 ; CHECK-NEXT:   movb $1, %al
 ; CHECK-NEXT:   ret
 ; CHECK-NEXT: .LBB3_3:
-; CHECK-NEXT:   ucomiss %xmm2, %xmm1
+; CHECK-NEXT:   ucomiss %xmm0, %xmm2
 ; CHECK-NEXT:   jbe .LBB3_2
 ; CHECK-NEXT: .LBB3_4:
 ; CHECK-NEXT:   xorb %al, %al
@@ -274,7 +274,7 @@ declare fastcc %union.tree_node* @default_conversion(%union.tree_node*) nounwind
 ; one ret instruction.
 
 ; CHECK: foo:
-; CHECK:        call func
+; CHECK:        callq func
 ; CHECK-NEXT: .LBB5_2:
 ; CHECK-NEXT:   addq $8, %rsp
 ; CHECK-NEXT:   ret
@@ -293,3 +293,116 @@ return:
 }
 
 declare void @func()
+
+; one - One instruction may be tail-duplicated even with optsize.
+
+; CHECK: one:
+; CHECK: movl $0, XYZ(%rip)
+; CHECK: movl $0, XYZ(%rip)
+
+@XYZ = external global i32
+
+define void @one() nounwind optsize {
+entry:
+  %0 = icmp eq i32 undef, 0
+  br i1 %0, label %bbx, label %bby
+
+bby:
+  switch i32 undef, label %bb7 [
+    i32 16, label %return
+  ]
+
+bb7:
+  volatile store i32 0, i32* @XYZ
+  unreachable
+
+bbx:
+  switch i32 undef, label %bb12 [
+    i32 128, label %return
+  ]
+
+bb12:
+  volatile store i32 0, i32* @XYZ
+  unreachable
+
+return:
+  ret void
+}
+
+; two - Same as one, but with two instructions in the common
+; tail instead of one. This is too much to be merged, given
+; the optsize attribute.
+
+; CHECK: two:
+; CHECK-NOT: XYZ
+; CHECK: movl $0, XYZ(%rip)
+; CHECK: movl $1, XYZ(%rip)
+; CHECK-NOT: XYZ
+; CHECK: ret
+
+define void @two() nounwind optsize {
+entry:
+  %0 = icmp eq i32 undef, 0
+  br i1 %0, label %bbx, label %bby
+
+bby:
+  switch i32 undef, label %bb7 [
+    i32 16, label %return
+  ]
+
+bb7:
+  volatile store i32 0, i32* @XYZ
+  volatile store i32 1, i32* @XYZ
+  unreachable
+
+bbx:
+  switch i32 undef, label %bb12 [
+    i32 128, label %return
+  ]
+
+bb12:
+  volatile store i32 0, i32* @XYZ
+  volatile store i32 1, i32* @XYZ
+  unreachable
+
+return:
+  ret void
+}
+
+; two_nosize - Same as two, but without the optsize attribute.
+; Now two instructions are enough to be tail-duplicated.
+
+; CHECK: two_nosize:
+; CHECK: movl $0, XYZ(%rip)
+; CHECK: movl $1, XYZ(%rip)
+; CHECK: movl $0, XYZ(%rip)
+; CHECK: movl $1, XYZ(%rip)
+
+define void @two_nosize() nounwind {
+entry:
+  %0 = icmp eq i32 undef, 0
+  br i1 %0, label %bbx, label %bby
+
+bby:
+  switch i32 undef, label %bb7 [
+    i32 16, label %return
+  ]
+
+bb7:
+  volatile store i32 0, i32* @XYZ
+  volatile store i32 1, i32* @XYZ
+  unreachable
+
+bbx:
+  switch i32 undef, label %bb12 [
+    i32 128, label %return
+  ]
+
+bb12:
+  volatile store i32 0, i32* @XYZ
+  volatile store i32 1, i32* @XYZ
+  unreachable
+
+return:
+  ret void
+}

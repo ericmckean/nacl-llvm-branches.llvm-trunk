@@ -75,29 +75,10 @@ unsigned ARMInstrInfo::getUnindexedOpcode(unsigned Opc) const {
   return 0;
 }
 
-bool ARMInstrInfo::BlockHasNoFallThrough(const MachineBasicBlock &MBB) const {
-  if (MBB.empty()) return false;
-
-  switch (MBB.back().getOpcode()) {
-  case ARM::BX_RET:   // Return.
-  case ARM::LDM_RET:
-  case ARM::B:
-  case ARM::BRIND:
-  case ARM::BR_JTr:   // Jumptable branch.
-  case ARM::BR_JTm:   // Jumptable branch through mem.
-  case ARM::BR_JTadd: // Jumptable branch add to pc.
-    return true;
-  default:
-    break;
-  }
-
-  return false;
-}
-
 void ARMInstrInfo::
 reMaterialize(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
-              unsigned DestReg, unsigned SubIdx,
-              const MachineInstr *Orig) const {
+              unsigned DestReg, unsigned SubIdx, const MachineInstr *Orig,
+              const TargetRegisterInfo *TRI) const {
   DebugLoc dl = Orig->getDebugLoc();
   unsigned Opcode = Orig->getOpcode();
   switch (Opcode) {
@@ -115,5 +96,5 @@ reMaterialize(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
   }
   }
 
-  return ARMBaseInstrInfo::reMaterialize(MBB, I, DestReg, SubIdx, Orig);
+  return ARMBaseInstrInfo::reMaterialize(MBB, I, DestReg, SubIdx, Orig, TRI);
 }

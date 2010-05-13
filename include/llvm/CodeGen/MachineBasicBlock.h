@@ -21,6 +21,8 @@ namespace llvm {
 
 class BasicBlock;
 class MachineFunction;
+class MCSymbol;
+class StringRef;
 class raw_ostream;
 
 template <>
@@ -92,9 +94,14 @@ class MachineBasicBlock : public ilist_node<MachineBasicBlock> {
 
 public:
   /// getBasicBlock - Return the LLVM basic block that this instance
-  /// corresponded to originally.
+  /// corresponded to originally. Note that this may be NULL if this instance
+  /// does not correspond directly to an LLVM basic block.
   ///
   const BasicBlock *getBasicBlock() const { return BB; }
+
+  /// getName - Return the name of the corresponding LLVM basic block, or
+  /// "(null)".
+  StringRef getName() const;
 
   /// hasAddressTaken - Test whether this block is potentially the target
   /// of an indirect branch.
@@ -266,15 +273,16 @@ public:
   /// ends with an unconditional branch to some other block.
   bool isLayoutSuccessor(const MachineBasicBlock *MBB) const;
 
+  /// canFallThrough - Return true if the block can implicitly transfer
+  /// control to the block after it by falling off the end of it.  This should
+  /// return false if it can reach the block after it, but it uses an explicit
+  /// branch to do so (e.g., a table jump).  True is a conservative answer.
+  bool canFallThrough();
+
   /// getFirstTerminator - returns an iterator to the first terminator
   /// instruction of this basic block. If a terminator does not exist,
   /// it returns end()
   iterator getFirstTerminator();
-
-  /// isOnlyReachableViaFallthough - Return true if this basic block has
-  /// exactly one predecessor and the control transfer mechanism between
-  /// the predecessor and this block is a fall-through.
-  bool isOnlyReachableByFallthrough() const;
 
   void pop_front() { Insts.pop_front(); }
   void pop_back() { Insts.pop_back(); }
@@ -326,6 +334,10 @@ public:
                             MachineBasicBlock *DestB,
                             bool isCond);
 
+  /// findDebugLoc - find the next valid DebugLoc starting at MBBI, skipping
+  /// any DBG_VALUE instructions.  Return UnknownLoc if there is none.
+  DebugLoc findDebugLoc(MachineBasicBlock::iterator &MBBI);
+
   // Debugging methods.
   void dump() const;
   void print(raw_ostream &OS) const;
@@ -337,6 +349,10 @@ public:
   int getNumber() const { return Number; }
   void setNumber(int N) { Number = N; }
 
+  /// getSymbol - Return the MCSymbol for this basic block.
+  ///
+  MCSymbol *getSymbol() const;
+  
 private:   // Methods used to maintain doubly linked list of blocks...
   friend struct ilist_traits<MachineBasicBlock>;
 
@@ -357,6 +373,8 @@ private:   // Methods used to maintain doubly linked list of blocks...
 };
 
 raw_ostream& operator<<(raw_ostream &OS, const MachineBasicBlock &MBB);
+
+void WriteAsOperand(raw_ostream &, const MachineBasicBlock*, bool t);
 
 //===--------------------------------------------------------------------===//
 // GraphTraits specializations for machine basic block graphs (machine-CFGs)

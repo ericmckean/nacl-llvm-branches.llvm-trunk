@@ -10,6 +10,11 @@
 #include "llvm/CodeGen/MachineModuleInfo.h"
 
 #include "llvm/Constants.h"
+#include "llvm/DerivedTypes.h"
+#include "llvm/GlobalVariable.h"
+#include "llvm/Intrinsics.h"
+#include "llvm/Instructions.h"
+#include "llvm/Module.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineFunction.h"
@@ -17,11 +22,7 @@
 #include "llvm/Target/TargetInstrInfo.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
-#include "llvm/DerivedTypes.h"
-#include "llvm/GlobalVariable.h"
-#include "llvm/Intrinsics.h"
-#include "llvm/Instructions.h"
-#include "llvm/Module.h"
+#include "llvm/MC/MCSymbol.h"
 #include "llvm/Support/Dwarf.h"
 #include "llvm/Support/ErrorHandling.h"
 using namespace llvm;
@@ -29,7 +30,7 @@ using namespace llvm::dwarf;
 
 // Handle the Pass registration stuff necessary to use TargetData's.
 static RegisterPass<MachineModuleInfo>
-X("machinemoduleinfo", "Module Information");
+X("machinemoduleinfo", "Machine Module Information");
 char MachineModuleInfo::ID = 0;
 
 // Out of line virtual method.
@@ -37,14 +38,19 @@ MachineModuleInfoImpl::~MachineModuleInfoImpl() {}
 
 //===----------------------------------------------------------------------===//
 
-MachineModuleInfo::MachineModuleInfo()
-: ImmutablePass(&ID)
-, ObjFileMMI(0)
-, CallsEHReturn(0)
-, CallsUnwindInit(0)
-, DbgInfoAvailable(false) {
+MachineModuleInfo::MachineModuleInfo(const MCAsmInfo &MAI)
+: ImmutablePass(&ID), Context(MAI),
+  ObjFileMMI(0),
+  CurCallSite(0), CallsEHReturn(0), CallsUnwindInit(0), DbgInfoAvailable(false){
   // Always emit some info, by default "no personality" info.
   Personalities.push_back(NULL);
+}
+
+MachineModuleInfo::MachineModuleInfo()
+: ImmutablePass(&ID), Context(*(MCAsmInfo*)0) {
+  assert(0 && "This MachineModuleInfo constructor should never be called, MMI "
+         "should always be explicitly constructed by LLVMTargetMachine");
+  abort();
 }
 
 MachineModuleInfo::~MachineModuleInfo() {
@@ -71,6 +77,7 @@ void MachineModuleInfo::EndFunction() {
 
   // Clean up exception info.
   LandingPads.clear();
+  CallSiteMap.clear();
   TypeInfos.clear();
   FilterIds.clear();
   FilterEnds.clear();
@@ -97,6 +104,18 @@ void MachineModuleInfo::AnalyzeModule(Module &M) {
       UsedFunctions.insert(F);
 }
 
+/// getAddrLabelSymbol - Return the symbol to be used for the specified basic
+/// block when its address is taken.  This cannot be its normal LBB label
+/// because the block may be accessed outside its containing function.
+MCSymbol *MachineModuleInfo::getAddrLabelSymbol(const BasicBlock *BB) {
+  assert(BB->hasAddressTaken() &&
+         "Shouldn't get label for block without address taken");
+  MCSymbol *&Entry = AddrLabelSymbols[const_cast<BasicBlock*>(BB)];
+  if (Entry) return Entry;
+  return Entry = Context.CreateTempSymbol();
+}
+
+
 //===-EH-------------------------------------------------------------------===//
 
 /// getOrCreateLandingPadInfo - Find or create an LandingPadInfo for the
@@ -117,7 +136,7 @@ LandingPadInfo &MachineModuleInfo::getOrCreateLandingPadInfo
 /// addInvoke - Provide the begin and end labels of an invoke style call and
 /// associate it with a try landing pad block.
 void MachineModuleInfo::addInvoke(MachineBasicBlock *LandingPad,
-                                  unsigned BeginLabel, unsigned EndLabel) {
+                                  MCSymbol *BeginLabel, MCSymbol *EndLabel) {
   LandingPadInfo &LP = getOrCreateLandingPadInfo(LandingPad);
   LP.BeginLabels.push_back(BeginLabel);
   LP.EndLabels.push_back(EndLabel);
@@ -125,8 +144,8 @@ void MachineModuleInfo::addInvoke(MachineBasicBlock *LandingPad,
 
 /// addLandingPad - Provide the label of a try LandingPad block.
 ///
-unsigned MachineModuleInfo::addLandingPad(MachineBasicBlock *LandingPad) {
-  unsigned LandingPadLabel = NextLabelID();
+MCSymbol *MachineModuleInfo::addLandingPad(MachineBasicBlock *LandingPad) {
+  MCSymbol *LandingPadLabel = Context.CreateTempSymbol();
   LandingPadInfo &LP = getOrCreateLandingPadInfo(LandingPad);
   LP.LandingPadLabel = LandingPadLabel;
   return LandingPadLabel;
@@ -183,7 +202,8 @@ void MachineModuleInfo::addCleanup(MachineBasicBlock *LandingPad) {
 void MachineModuleInfo::TidyLandingPads() {
   for (unsigned i = 0; i != LandingPads.size(); ) {
     LandingPadInfo &LandingPad = LandingPads[i];
-    LandingPad.LandingPadLabel = MappedLabel(LandingPad.LandingPadLabel);
+    if (LandingPad.LandingPadLabel && !LandingPad.LandingPadLabel->isDefined())
+      LandingPad.LandingPadLabel = 0;
 
     // Special case: we *should* emit LPs with null LP MBB. This indicates
     // "nounwind" case.
@@ -192,19 +212,14 @@ void MachineModuleInfo::TidyLandingPads() {
       continue;
     }
 
-    for (unsigned j=0; j != LandingPads[i].BeginLabels.size(); ) {
-      unsigned BeginLabel = MappedLabel(LandingPad.BeginLabels[j]);
-      unsigned EndLabel = MappedLabel(LandingPad.EndLabels[j]);
-
-      if (!BeginLabel || !EndLabel) {
-        LandingPad.BeginLabels.erase(LandingPad.BeginLabels.begin() + j);
-        LandingPad.EndLabels.erase(LandingPad.EndLabels.begin() + j);
-        continue;
-      }
-
-      LandingPad.BeginLabels[j] = BeginLabel;
-      LandingPad.EndLabels[j] = EndLabel;
-      ++j;
+    for (unsigned j = 0, e = LandingPads[i].BeginLabels.size(); j != e; ++j) {
+      MCSymbol *BeginLabel = LandingPad.BeginLabels[j];
+      MCSymbol *EndLabel = LandingPad.EndLabels[j];
+      if (BeginLabel->isDefined() && EndLabel->isDefined()) continue;
+      
+      LandingPad.BeginLabels.erase(LandingPad.BeginLabels.begin() + j);
+      LandingPad.EndLabels.erase(LandingPad.EndLabels.begin() + j);
+      --j, --e;
     }
 
     // Remove landing pads with no try-ranges.
@@ -218,7 +233,6 @@ void MachineModuleInfo::TidyLandingPads() {
     if (!LandingPad.LandingPadBlock ||
         (LandingPad.TypeIds.size() == 1 && !LandingPad.TypeIds[0]))
       LandingPad.TypeIds.clear();
-
     ++i;
   }
 }
@@ -293,75 +307,3 @@ unsigned MachineModuleInfo::getPersonalityIndex() const {
   return 0;
 }
 
-//===----------------------------------------------------------------------===//
-/// DebugLabelFolding pass - This pass prunes out redundant labels.  This allows
-/// a info consumer to determine if the range of two labels is empty, by seeing
-/// if the labels map to the same reduced label.
-
-namespace llvm {
-
-struct DebugLabelFolder : public MachineFunctionPass {
-  static char ID;
-  DebugLabelFolder() : MachineFunctionPass(&ID) {}
-
-  virtual void getAnalysisUsage(AnalysisUsage &AU) const {
-    AU.setPreservesCFG();
-    AU.addPreservedID(MachineLoopInfoID);
-    AU.addPreservedID(MachineDominatorsID);
-    MachineFunctionPass::getAnalysisUsage(AU);
-  }
-
-  virtual bool runOnMachineFunction(MachineFunction &MF);
-  virtual const char *getPassName() const { return "Label Folder"; }
-};
-
-char DebugLabelFolder::ID = 0;
-
-bool DebugLabelFolder::runOnMachineFunction(MachineFunction &MF) {
-  // Get machine module info.
-  MachineModuleInfo *MMI = getAnalysisIfAvailable<MachineModuleInfo>();
-  if (!MMI) return false;
-
-  // Track if change is made.
-  bool MadeChange = false;
-  // No prior label to begin.
-  unsigned PriorLabel = 0;
-
-  // Iterate through basic blocks.
-  for (MachineFunction::iterator BB = MF.begin(), E = MF.end();
-       BB != E; ++BB) {
-    // Iterate through instructions.
-    for (MachineBasicBlock::iterator I = BB->begin(), E = BB->end(); I != E; ) {
-      // Is it a label.
-      if (I->isDebugLabel() && !MMI->isDbgLabelUsed(I->getOperand(0).getImm())){
-        // The label ID # is always operand #0, an immediate.
-        unsigned NextLabel = I->getOperand(0).getImm();
-
-        // If there was an immediate prior label.
-        if (PriorLabel) {
-          // Remap the current label to prior label.
-          MMI->RemapLabel(NextLabel, PriorLabel);
-          // Delete the current label.
-          I = BB->erase(I);
-          // Indicate a change has been made.
-          MadeChange = true;
-          continue;
-        } else {
-          // Start a new round.
-          PriorLabel = NextLabel;
-        }
-       } else {
-        // No consecutive labels.
-        PriorLabel = 0;
-      }
-
-      ++I;
-    }
-  }
-
-  return MadeChange;
-}
-
-FunctionPass *createDebugLabelFoldingPass() { return new DebugLabelFolder(); }
-
-}

@@ -35,7 +35,7 @@ class MachineRelocation;
 class Value;
 class GlobalValue;
 class Function;
-
+  
 /// JITCodeEmitter - This class defines two sorts of methods: those for
 /// emitting the actual bytes of machine code, and those for emitting auxillary
 /// structures, such as jump tables, relocations, etc.
@@ -68,23 +68,11 @@ public:
   ///
   virtual bool finishFunction(MachineFunction &F) = 0;
   
-  /// startGVStub - This callback is invoked when the JIT needs the
-  /// address of a GV (e.g. function) that has not been code generated yet.
-  /// The StubSize specifies the total size required by the stub.
-  ///
-  virtual void startGVStub(const GlobalValue* GV, unsigned StubSize,
-                           unsigned Alignment = 1) = 0;
-
-  /// startGVStub - This callback is invoked when the JIT needs the address of a 
-  /// GV (e.g. function) that has not been code generated yet.  Buffer points to
-  /// memory already allocated for this stub.
-  ///
-  virtual void startGVStub(const GlobalValue* GV, void *Buffer,
-                           unsigned StubSize) = 0;
-  
-  /// finishGVStub - This callback is invoked to terminate a GV stub.
-  ///
-  virtual void *finishGVStub(const GlobalValue* F) = 0;
+  /// allocIndirectGV - Allocates and fills storage for an indirect
+  /// GlobalValue, and returns the address.
+  virtual void *allocIndirectGV(const GlobalValue *GV,
+                                const uint8_t *Buffer, size_t Size,
+                                unsigned Alignment) = 0;
 
   /// emitByte - This callback is invoked when a byte needs to be written to the
   /// output stream.
@@ -158,7 +146,7 @@ public:
     }
   }
 
-  /// emitAlignment - Move the CurBufferPtr pointer up the the specified
+  /// emitAlignment - Move the CurBufferPtr pointer up to the specified
   /// alignment (saturated to BufferEnd of course).
   void emitAlignment(unsigned Alignment) {
     if (Alignment == 0) Alignment = 1;
@@ -254,7 +242,7 @@ public:
   
   
   /// emitLabel - Emits a label
-  virtual void emitLabel(uint64_t LabelID) = 0;
+  virtual void emitLabel(MCSymbol *Label) = 0;
 
   /// allocateSpace - Allocate a block of space in the current output buffer,
   /// returning null (and setting conditions to indicate buffer overflow) on
@@ -328,10 +316,10 @@ public:
   ///
   virtual uintptr_t getMachineBasicBlockAddress(MachineBasicBlock *MBB) const= 0;
 
-  /// getLabelAddress - Return the address of the specified LabelID, only usable
-  /// after the LabelID has been emitted.
+  /// getLabelAddress - Return the address of the specified Label, only usable
+  /// after the Label has been emitted.
   ///
-  virtual uintptr_t getLabelAddress(uint64_t LabelID) const = 0;
+  virtual uintptr_t getLabelAddress(MCSymbol *Label) const = 0;
   
   /// Specifies the MachineModuleInfo object. This is used for exception handling
   /// purposes.

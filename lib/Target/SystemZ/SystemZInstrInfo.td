@@ -257,7 +257,7 @@ def MOV64rihi32 : RILI<0xEC0, (outs GR64:$dst), (ins i64imm:$src),
                        [(set GR64:$dst, i64hi32:$src)]>;
 }
 
-let canFoldAsLoad = 1, isReMaterializable = 1, mayHaveSideEffects = 1 in {
+let canFoldAsLoad = 1, isReMaterializable = 1 in {
 def MOV32rm  : RXI<0x58,
                    (outs GR32:$dst), (ins rriaddr12:$src),
                    "l\t{$dst, $src}",
@@ -1112,7 +1112,8 @@ def : Pat<(SystemZcall (i64 texternalsym:$dst)), (CALLi texternalsym:$dst)>;
 
 // Arbitrary immediate support.
 def : Pat<(i32 imm:$src),
-          (EXTRACT_SUBREG (MOV64ri32 (i64 imm:$src)), subreg_32bit)>;
+          (EXTRACT_SUBREG (MOV64ri32 (GetI64FromI32 (i32 imm:$src))),
+             subreg_32bit)>;
 
 // Implement in terms of LLIHF/OILF.
 def : Pat<(i64 imm:$imm),

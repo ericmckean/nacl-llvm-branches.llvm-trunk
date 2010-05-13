@@ -21,6 +21,7 @@
 #include "llvm/Assembly/Writer.h"
 #include "llvm/Support/CFG.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include <algorithm>
@@ -56,7 +57,7 @@ bool Loop::isLoopInvariant(Value *V) const {
 /// loop-invariant.
 ///
 bool Loop::isLoopInvariant(Instruction *I) const {
-  return !contains(I->getParent());
+  return !contains(I);
 }
 
 /// makeLoopInvariant - If the given value is an instruciton inside of the
@@ -243,6 +244,11 @@ unsigned Loop::getSmallConstantTripMultiple() const {
         case BinaryOperator::Mul:
           Result = dyn_cast<ConstantInt>(BO->getOperand(1));
           break;
+        case BinaryOperator::Shl:
+          if (ConstantInt *CI = dyn_cast<ConstantInt>(BO->getOperand(1)))
+            if (CI->getValue().getActiveBits() <= 5)
+              return 1u << CI->getZExtValue();
+          break;
         default:
           break;
         }
@@ -257,7 +263,7 @@ unsigned Loop::getSmallConstantTripMultiple() const {
 }
 
 /// isLCSSAForm - Return true if the Loop is in LCSSA form
-bool Loop::isLCSSAForm() const {
+bool Loop::isLCSSAForm(DominatorTree &DT) const {
   // Sort the blocks vector so that we can use binary search to do quick
   // lookups.
   SmallPtrSet<BasicBlock *, 16> LoopBBs(block_begin(), block_end());
@@ -271,9 +277,13 @@ bool Loop::isLCSSAForm() const {
         if (PHINode *P = dyn_cast<PHINode>(*UI))
           UserBB = P->getIncomingBlock(UI);
 
-        // Check the current block, as a fast-path.  Most values are used in
-        // the same block they are defined in.
-        if (UserBB != BB && !LoopBBs.count(UserBB))
+        // Check the current block, as a fast-path, before checking whether
+        // the use is anywhere in the loop.  Most values are used in the same
+        // block they are defined in.  Also, blocks not reachable from the
+        // entry are special; uses in them don't need to go through PHIs.
+        if (UserBB != BB &&
+            !LoopBBs.count(UserBB) &&
+            DT.isReachableFromEntry(UserBB))
           return false;
       }
   }
@@ -311,12 +321,12 @@ bool Loop::hasDedicatedExits() const {
 
 /// getUniqueExitBlocks - Return all unique successor blocks of this loop.
 /// These are the blocks _outside of the current loop_ which are branched to.
-/// This assumes that loop is in canonical form.
+/// This assumes that loop exits are in canonical form.
 ///
 void
 Loop::getUniqueExitBlocks(SmallVectorImpl<BasicBlock *> &ExitBlocks) const {
-  assert(isLoopSimplifyForm() &&
-         "getUniqueExitBlocks assumes the loop is in canonical form!");
+  assert(hasDedicatedExits() &&
+         "getUniqueExitBlocks assumes the loop has canonical form exits!");
 
   // Sort the blocks vector so that we can use binary search to do quick
   // lookups.
@@ -378,6 +388,10 @@ BasicBlock *Loop::getUniqueExitBlock() const {
   if (UniqueExitBlocks.size() == 1)
     return UniqueExitBlocks[0];
   return 0;
+}
+
+void Loop::dump() const {
+  print(dbgs());
 }
 
 //===----------------------------------------------------------------------===//

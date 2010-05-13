@@ -81,7 +81,7 @@ namespace {
       MachineBasicBlock::iterator MBBI;
       bool Merged;
       MemOpQueueEntry(int o, int p, MachineBasicBlock::iterator i)
-        : Offset(o), Position(p), MBBI(i), Merged(false) {};
+        : Offset(o), Position(p), MBBI(i), Merged(false) {}
     };
     typedef SmallVector<MemOpQueueEntry,8> MemOpQueue;
     typedef MemOpQueue::iterator MemOpQueueIter;
@@ -90,6 +90,20 @@ namespace {
                   int Offset, unsigned Base, bool BaseKill, int Opcode,
                   ARMCC::CondCodes Pred, unsigned PredReg, unsigned Scratch,
                   DebugLoc dl, SmallVector<std::pair<unsigned, bool>, 8> &Regs);
+    void MergeOpsUpdate(MachineBasicBlock &MBB,
+                        MemOpQueue &MemOps,
+                        unsigned memOpsBegin,
+                        unsigned memOpsEnd,
+                        unsigned insertAfter,
+                        int Offset,
+                        unsigned Base,
+                        bool BaseKill,
+                        int Opcode,
+                        ARMCC::CondCodes Pred,
+                        unsigned PredReg,
+                        unsigned Scratch,
+                        DebugLoc dl,
+                        SmallVector<MachineBasicBlock::iterator, 4> &Merges);
     void MergeLDR_STR(MachineBasicBlock &MBB, unsigned SIndex, unsigned Base,
                       int Opcode, unsigned Size,
                       ARMCC::CondCodes Pred, unsigned PredReg,
@@ -243,12 +257,72 @@ ARMLoadStoreOpt::MergeOps(MachineBasicBlock &MBB,
         .addReg(Base, getKillRegState(BaseKill))
         .addImm(ARM_AM::getAM5Opc(Mode, false, isDPR ? NumRegs<<1 : NumRegs))
         .addImm(Pred).addReg(PredReg);
-  MIB.addReg(0); // Add optional writeback (0 for now).
   for (unsigned i = 0; i != NumRegs; ++i)
     MIB = MIB.addReg(Regs[i].first, getDefRegState(isDef)
                      | getKillRegState(Regs[i].second));
 
   return true;
+}
+
+// MergeOpsUpdate - call MergeOps and update MemOps and merges accordingly on
+// success.
+void ARMLoadStoreOpt::
+MergeOpsUpdate(MachineBasicBlock &MBB,
+               MemOpQueue &memOps,
+               unsigned memOpsBegin,
+               unsigned memOpsEnd,
+               unsigned insertAfter,
+               int Offset,
+               unsigned Base,
+               bool BaseKill,
+               int Opcode,
+               ARMCC::CondCodes Pred,
+               unsigned PredReg,
+               unsigned Scratch,
+               DebugLoc dl,
+               SmallVector<MachineBasicBlock::iterator, 4> &Merges) {
+  // First calculate which of the registers should be killed by the merged
+  // instruction.
+  SmallVector<std::pair<unsigned, bool>, 8> Regs;
+  const unsigned insertPos = memOps[insertAfter].Position;
+  for (unsigned i = memOpsBegin; i < memOpsEnd; ++i) {
+    const MachineOperand &MO = memOps[i].MBBI->getOperand(0);
+    unsigned Reg = MO.getReg();
+    bool isKill = MO.isKill();
+
+    // If we are inserting the merged operation after an unmerged operation that
+    // uses the same register, make sure to transfer any kill flag.
+    for (unsigned j = memOpsEnd, e = memOps.size(); !isKill && j != e; ++j)
+      if (memOps[j].Position<insertPos) {
+        const MachineOperand &MOJ = memOps[j].MBBI->getOperand(0);
+        if (MOJ.getReg() == Reg && MOJ.isKill())
+          isKill = true;
+      }
+
+    Regs.push_back(std::make_pair(Reg, isKill));
+  }
+
+  // Try to do the merge.
+  MachineBasicBlock::iterator Loc = memOps[insertAfter].MBBI;
+  Loc++;
+  if (!MergeOps(MBB, Loc, Offset, Base, BaseKill, Opcode,
+                Pred, PredReg, Scratch, dl, Regs))
+    return;
+
+  // Merge succeeded, update records.
+  Merges.push_back(prior(Loc));
+  for (unsigned i = memOpsBegin; i < memOpsEnd; ++i) {
+    // Remove kill flags from any unmerged memops that come before insertPos.
+    if (Regs[i-memOpsBegin].second)
+      for (unsigned j = memOpsEnd, e = memOps.size(); j != e; ++j)
+        if (memOps[j].Position<insertPos) {
+          MachineOperand &MOJ = memOps[j].MBBI->getOperand(0);
+          if (MOJ.getReg() == Regs[i-memOpsBegin].first && MOJ.isKill())
+            MOJ.setIsKill(false);
+        }
+    MBB.erase(memOps[i].MBBI);
+    memOps[i].Merged = true;
+  }
 }
 
 /// MergeLDR_STR - Merge a number of load / store instructions into one or more
@@ -262,58 +336,43 @@ ARMLoadStoreOpt::MergeLDR_STR(MachineBasicBlock &MBB, unsigned SIndex,
   bool isAM4 = isi32Load(Opcode) || isi32Store(Opcode);
   int Offset = MemOps[SIndex].Offset;
   int SOffset = Offset;
-  unsigned Pos = MemOps[SIndex].Position;
+  unsigned insertAfter = SIndex;
   MachineBasicBlock::iterator Loc = MemOps[SIndex].MBBI;
   DebugLoc dl = Loc->getDebugLoc();
-  unsigned PReg = Loc->getOperand(0).getReg();
-  unsigned PRegNum = ARMRegisterInfo::getRegisterNumbering(PReg);
-  bool isKill = Loc->getOperand(0).isKill();
+  const MachineOperand &PMO = Loc->getOperand(0);
+  unsigned PReg = PMO.getReg();
+  unsigned PRegNum = PMO.isUndef() ? UINT_MAX
+    : ARMRegisterInfo::getRegisterNumbering(PReg);
 
-  SmallVector<std::pair<unsigned,bool>, 8> Regs;
-  Regs.push_back(std::make_pair(PReg, isKill));
   for (unsigned i = SIndex+1, e = MemOps.size(); i != e; ++i) {
     int NewOffset = MemOps[i].Offset;
-    unsigned Reg = MemOps[i].MBBI->getOperand(0).getReg();
-    unsigned RegNum = ARMRegisterInfo::getRegisterNumbering(Reg);
-    isKill = MemOps[i].MBBI->getOperand(0).isKill();
+    const MachineOperand &MO = MemOps[i].MBBI->getOperand(0);
+    unsigned Reg = MO.getReg();
+    unsigned RegNum = MO.isUndef() ? UINT_MAX
+      : ARMRegisterInfo::getRegisterNumbering(Reg);
     // AM4 - register numbers in ascending order.
     // AM5 - consecutive register numbers in ascending order.
-    if (NewOffset == Offset + (int)Size &&
+    if (Reg != ARM::SP &&
+        NewOffset == Offset + (int)Size &&
         ((isAM4 && RegNum > PRegNum) || RegNum == PRegNum+1)) {
       Offset += Size;
-      Regs.push_back(std::make_pair(Reg, isKill));
       PRegNum = RegNum;
     } else {
       // Can't merge this in. Try merge the earlier ones first.
-      if (MergeOps(MBB, ++Loc, SOffset, Base, false, Opcode, Pred, PredReg,
-                   Scratch, dl, Regs)) {
-        Merges.push_back(prior(Loc));
-        for (unsigned j = SIndex; j < i; ++j) {
-          MBB.erase(MemOps[j].MBBI);
-          MemOps[j].Merged = true;
-        }
-      }
+      MergeOpsUpdate(MBB, MemOps, SIndex, i, insertAfter, SOffset,
+                     Base, false, Opcode, Pred, PredReg, Scratch, dl, Merges);
       MergeLDR_STR(MBB, i, Base, Opcode, Size, Pred, PredReg, Scratch,
                    MemOps, Merges);
       return;
     }
 
-    if (MemOps[i].Position > Pos) {
-      Pos = MemOps[i].Position;
-      Loc = MemOps[i].MBBI;
-    }
+    if (MemOps[i].Position > MemOps[insertAfter].Position)
+      insertAfter = i;
   }
 
   bool BaseKill = Loc->findRegisterUseOperandIdx(Base, true) != -1;
-  if (MergeOps(MBB, ++Loc, SOffset, Base, BaseKill, Opcode, Pred, PredReg,
-               Scratch, dl, Regs)) {
-    Merges.push_back(prior(Loc));
-    for (unsigned i = SIndex, e = MemOps.size(); i != e; ++i) {
-      MBB.erase(MemOps[i].MBBI);
-      MemOps[i].Merged = true;
-    }
-  }
-
+  MergeOpsUpdate(MBB, MemOps, SIndex, MemOps.size(), insertAfter, SOffset,
+                 Base, BaseKill, Opcode, Pred, PredReg, Scratch, dl, Merges);
   return;
 }
 
@@ -390,13 +449,28 @@ static inline unsigned getLSMultipleTransferSize(MachineInstr *MI) {
   case ARM::STM:
   case ARM::t2LDM:
   case ARM::t2STM:
-    return (MI->getNumOperands() - 5) * 4;
+    return (MI->getNumOperands() - 4) * 4;
   case ARM::VLDMS:
   case ARM::VSTMS:
   case ARM::VLDMD:
   case ARM::VSTMD:
     return ARM_AM::getAM5Offset(MI->getOperand(1).getImm()) * 4;
   }
+}
+
+static unsigned getUpdatingLSMultipleOpcode(unsigned Opc) {
+  switch (Opc) {
+  case ARM::LDM: return ARM::LDM_UPD;
+  case ARM::STM: return ARM::STM_UPD;
+  case ARM::t2LDM: return ARM::t2LDM_UPD;
+  case ARM::t2STM: return ARM::t2STM_UPD;
+  case ARM::VLDMS: return ARM::VLDMS_UPD;
+  case ARM::VLDMD: return ARM::VLDMD_UPD;
+  case ARM::VSTMS: return ARM::VSTMS_UPD;
+  case ARM::VSTMD: return ARM::VSTMD_UPD;
+  default: llvm_unreachable("Unhandled opcode!");
+  }
+  return 0;
 }
 
 /// MergeBaseUpdateLSMultiple - Fold proceeding/trailing inc/dec of base
@@ -418,117 +492,119 @@ bool ARMLoadStoreOpt::MergeBaseUpdateLSMultiple(MachineBasicBlock &MBB,
                                                MachineBasicBlock::iterator &I) {
   MachineInstr *MI = MBBI;
   unsigned Base = MI->getOperand(0).getReg();
+  bool BaseKill = MI->getOperand(0).isKill();
   unsigned Bytes = getLSMultipleTransferSize(MI);
   unsigned PredReg = 0;
   ARMCC::CondCodes Pred = llvm::getInstrPredicate(MI, PredReg);
   int Opcode = MI->getOpcode();
-  bool isAM4 = Opcode == ARM::LDM || Opcode == ARM::t2LDM ||
-    Opcode == ARM::STM || Opcode == ARM::t2STM;
+  DebugLoc dl = MI->getDebugLoc();
+  bool isAM4 = (Opcode == ARM::LDM || Opcode == ARM::t2LDM ||
+                Opcode == ARM::STM || Opcode == ARM::t2STM);
+
+  bool DoMerge = false;
+  ARM_AM::AMSubMode Mode = ARM_AM::ia;
+  unsigned Offset = 0;
 
   if (isAM4) {
-    if (ARM_AM::getAM4WBFlag(MI->getOperand(1).getImm()))
-      return false;
-
-    // Can't use the updating AM4 sub-mode if the base register is also a dest
+    // Can't use an updating ld/st if the base register is also a dest
     // register. e.g. ldmdb r0!, {r0, r1, r2}. The behavior is undefined.
     for (unsigned i = 3, e = MI->getNumOperands(); i != e; ++i) {
       if (MI->getOperand(i).getReg() == Base)
         return false;
     }
-
-    ARM_AM::AMSubMode Mode = ARM_AM::getAM4SubMode(MI->getOperand(1).getImm());
-    if (MBBI != MBB.begin()) {
-      MachineBasicBlock::iterator PrevMBBI = prior(MBBI);
-      if (Mode == ARM_AM::ia &&
-          isMatchingDecrement(PrevMBBI, Base, Bytes, 0, Pred, PredReg)) {
-        MI->getOperand(1).setImm(ARM_AM::getAM4ModeImm(ARM_AM::db, true));
-        MI->getOperand(4).setReg(Base);
-        MI->getOperand(4).setIsDef();
-        MBB.erase(PrevMBBI);
-        return true;
-      } else if (Mode == ARM_AM::ib &&
-                 isMatchingDecrement(PrevMBBI, Base, Bytes, 0, Pred, PredReg)) {
-        MI->getOperand(1).setImm(ARM_AM::getAM4ModeImm(ARM_AM::da, true));
-        MI->getOperand(4).setReg(Base);  // WB to base
-        MI->getOperand(4).setIsDef();
-        MBB.erase(PrevMBBI);
-        return true;
-      }
-    }
-
-    if (MBBI != MBB.end()) {
-      MachineBasicBlock::iterator NextMBBI = next(MBBI);
-      if ((Mode == ARM_AM::ia || Mode == ARM_AM::ib) &&
-          isMatchingIncrement(NextMBBI, Base, Bytes, 0, Pred, PredReg)) {
-        MI->getOperand(1).setImm(ARM_AM::getAM4ModeImm(Mode, true));
-        MI->getOperand(4).setReg(Base);  // WB to base
-        MI->getOperand(4).setIsDef();
-        if (NextMBBI == I) {
-          Advance = true;
-          ++I;
-        }
-        MBB.erase(NextMBBI);
-        return true;
-      } else if ((Mode == ARM_AM::da || Mode == ARM_AM::db) &&
-                 isMatchingDecrement(NextMBBI, Base, Bytes, 0, Pred, PredReg)) {
-        MI->getOperand(1).setImm(ARM_AM::getAM4ModeImm(Mode, true));
-        MI->getOperand(4).setReg(Base);  // WB to base
-        MI->getOperand(4).setIsDef();
-        if (NextMBBI == I) {
-          Advance = true;
-          ++I;
-        }
-        MBB.erase(NextMBBI);
-        return true;
-      }
-    }
+    assert(!ARM_AM::getAM4WBFlag(MI->getOperand(1).getImm()));
+    Mode = ARM_AM::getAM4SubMode(MI->getOperand(1).getImm());
   } else {
     // VLDM{D|S}, VSTM{D|S} addressing mode 5 ops.
-    if (ARM_AM::getAM5WBFlag(MI->getOperand(1).getImm()))
-      return false;
+    assert(!ARM_AM::getAM5WBFlag(MI->getOperand(1).getImm()));
+    Mode = ARM_AM::getAM5SubMode(MI->getOperand(1).getImm());
+    Offset = ARM_AM::getAM5Offset(MI->getOperand(1).getImm());
+  }
 
-    ARM_AM::AMSubMode Mode = ARM_AM::getAM5SubMode(MI->getOperand(1).getImm());
-    unsigned Offset = ARM_AM::getAM5Offset(MI->getOperand(1).getImm());
-    if (MBBI != MBB.begin()) {
-      MachineBasicBlock::iterator PrevMBBI = prior(MBBI);
+  // Try merging with the previous instruction.
+  if (MBBI != MBB.begin()) {
+    MachineBasicBlock::iterator PrevMBBI = prior(MBBI);
+    if (isAM4) {
       if (Mode == ARM_AM::ia &&
           isMatchingDecrement(PrevMBBI, Base, Bytes, 0, Pred, PredReg)) {
-        MI->getOperand(1).setImm(ARM_AM::getAM5Opc(ARM_AM::db, true, Offset));
-        MI->getOperand(4).setReg(Base);  // WB to base
-        MI->getOperand(4).setIsDef();
-        MBB.erase(PrevMBBI);
-        return true;
+        DoMerge = true;
+        Mode = ARM_AM::db;
+      } else if (isAM4 && Mode == ARM_AM::ib &&
+                 isMatchingDecrement(PrevMBBI, Base, Bytes, 0, Pred, PredReg)) {
+        DoMerge = true;
+        Mode = ARM_AM::da;
+      }
+    } else {
+      if (Mode == ARM_AM::ia &&
+          isMatchingDecrement(PrevMBBI, Base, Bytes, 0, Pred, PredReg)) {
+        Mode = ARM_AM::db;
+        DoMerge = true;
       }
     }
+    if (DoMerge)
+      MBB.erase(PrevMBBI);
+  }
 
-    if (MBBI != MBB.end()) {
-      MachineBasicBlock::iterator NextMBBI = next(MBBI);
+  // Try merging with the next instruction.
+  if (!DoMerge && MBBI != MBB.end()) {
+    MachineBasicBlock::iterator NextMBBI = llvm::next(MBBI);
+    if (isAM4) {
+      if ((Mode == ARM_AM::ia || Mode == ARM_AM::ib) &&
+          isMatchingIncrement(NextMBBI, Base, Bytes, 0, Pred, PredReg)) {
+        DoMerge = true;
+      } else if ((Mode == ARM_AM::da || Mode == ARM_AM::db) &&
+                 isMatchingDecrement(NextMBBI, Base, Bytes, 0, Pred, PredReg)) {
+        DoMerge = true;
+      }
+    } else {
       if (Mode == ARM_AM::ia &&
           isMatchingIncrement(NextMBBI, Base, Bytes, 0, Pred, PredReg)) {
-        MI->getOperand(1).setImm(ARM_AM::getAM5Opc(ARM_AM::ia, true, Offset));
-        MI->getOperand(4).setReg(Base);  // WB to base
-        MI->getOperand(4).setIsDef();
-        if (NextMBBI == I) {
-          Advance = true;
-          ++I;
-        }
-        MBB.erase(NextMBBI);
+        DoMerge = true;
       }
-      return true;
+    }
+    if (DoMerge) {
+      if (NextMBBI == I) {
+        Advance = true;
+        ++I;
+      }
+      MBB.erase(NextMBBI);
     }
   }
 
-  return false;
+  if (!DoMerge)
+    return false;
+
+  unsigned NewOpc = getUpdatingLSMultipleOpcode(Opcode);
+  MachineInstrBuilder MIB = BuildMI(MBB, MBBI, dl, TII->get(NewOpc))
+    .addReg(Base, getDefRegState(true)) // WB base register
+    .addReg(Base, getKillRegState(BaseKill));
+  if (isAM4) {
+    // [t2]LDM_UPD, [t2]STM_UPD
+    MIB.addImm(ARM_AM::getAM4ModeImm(Mode, true))
+      .addImm(Pred).addReg(PredReg);
+  } else {
+    // VLDM[SD}_UPD, VSTM[SD]_UPD
+    MIB.addImm(ARM_AM::getAM5Opc(Mode, true, Offset))
+      .addImm(Pred).addReg(PredReg);
+  }
+  // Transfer the rest of operands.
+  for (unsigned OpNum = 4, e = MI->getNumOperands(); OpNum != e; ++OpNum)
+    MIB.addOperand(MI->getOperand(OpNum));
+  // Transfer memoperands.
+  (*MIB).setMemRefs(MI->memoperands_begin(), MI->memoperands_end());
+
+  MBB.erase(MBBI);
+  return true;
 }
 
 static unsigned getPreIndexedLoadStoreOpcode(unsigned Opc) {
   switch (Opc) {
   case ARM::LDR: return ARM::LDR_PRE;
   case ARM::STR: return ARM::STR_PRE;
-  case ARM::VLDRS: return ARM::VLDMS;
-  case ARM::VLDRD: return ARM::VLDMD;
-  case ARM::VSTRS: return ARM::VSTMS;
-  case ARM::VSTRD: return ARM::VSTMD;
+  case ARM::VLDRS: return ARM::VLDMS_UPD;
+  case ARM::VLDRD: return ARM::VLDMD_UPD;
+  case ARM::VSTRS: return ARM::VSTMS_UPD;
+  case ARM::VSTRD: return ARM::VSTMD_UPD;
   case ARM::t2LDRi8:
   case ARM::t2LDRi12:
     return ARM::t2LDR_PRE;
@@ -544,10 +620,10 @@ static unsigned getPostIndexedLoadStoreOpcode(unsigned Opc) {
   switch (Opc) {
   case ARM::LDR: return ARM::LDR_POST;
   case ARM::STR: return ARM::STR_POST;
-  case ARM::VLDRS: return ARM::VLDMS;
-  case ARM::VLDRD: return ARM::VLDMD;
-  case ARM::VSTRS: return ARM::VSTMS;
-  case ARM::VSTRD: return ARM::VSTMD;
+  case ARM::VLDRS: return ARM::VLDMS_UPD;
+  case ARM::VLDRD: return ARM::VLDMD_UPD;
+  case ARM::VSTRS: return ARM::VSTMS_UPD;
+  case ARM::VSTRD: return ARM::VSTMD_UPD;
   case ARM::t2LDRi8:
   case ARM::t2LDRi12:
     return ARM::t2LDR_POST;
@@ -572,14 +648,14 @@ bool ARMLoadStoreOpt::MergeBaseUpdateLoadStore(MachineBasicBlock &MBB,
   unsigned Bytes = getLSMultipleTransferSize(MI);
   int Opcode = MI->getOpcode();
   DebugLoc dl = MI->getDebugLoc();
-  bool isAM5 = Opcode == ARM::VLDRD || Opcode == ARM::VLDRS ||
-    Opcode == ARM::VSTRD || Opcode == ARM::VSTRS;
-  bool isAM2 = Opcode == ARM::LDR || Opcode == ARM::STR;
+  bool isAM5 = (Opcode == ARM::VLDRD || Opcode == ARM::VLDRS ||
+                Opcode == ARM::VSTRD || Opcode == ARM::VSTRS);
+  bool isAM2 = (Opcode == ARM::LDR || Opcode == ARM::STR);
   if (isAM2 && ARM_AM::getAM2Offset(MI->getOperand(3).getImm()) != 0)
     return false;
-  else if (isAM5 && ARM_AM::getAM5Offset(MI->getOperand(2).getImm()) != 0)
+  if (isAM5 && ARM_AM::getAM5Offset(MI->getOperand(2).getImm()) != 0)
     return false;
-  else if (isT2i32Load(Opcode) || isT2i32Store(Opcode))
+  if (isT2i32Load(Opcode) || isT2i32Store(Opcode))
     if (MI->getOperand(2).getImm() != 0)
       return false;
 
@@ -596,33 +672,35 @@ bool ARMLoadStoreOpt::MergeBaseUpdateLoadStore(MachineBasicBlock &MBB,
   unsigned NewOpc = 0;
   // AM2 - 12 bits, thumb2 - 8 bits.
   unsigned Limit = isAM5 ? 0 : (isAM2 ? 0x1000 : 0x100);
+
+  // Try merging with the previous instruction.
   if (MBBI != MBB.begin()) {
     MachineBasicBlock::iterator PrevMBBI = prior(MBBI);
     if (isMatchingDecrement(PrevMBBI, Base, Bytes, Limit, Pred, PredReg)) {
       DoMerge = true;
       AddSub = ARM_AM::sub;
-      NewOpc = getPreIndexedLoadStoreOpcode(Opcode);
     } else if (!isAM5 &&
                isMatchingIncrement(PrevMBBI, Base, Bytes, Limit,Pred,PredReg)) {
       DoMerge = true;
-      NewOpc = getPreIndexedLoadStoreOpcode(Opcode);
     }
-    if (DoMerge)
+    if (DoMerge) {
+      NewOpc = getPreIndexedLoadStoreOpcode(Opcode);
       MBB.erase(PrevMBBI);
+    }
   }
 
+  // Try merging with the next instruction.
   if (!DoMerge && MBBI != MBB.end()) {
-    MachineBasicBlock::iterator NextMBBI = next(MBBI);
+    MachineBasicBlock::iterator NextMBBI = llvm::next(MBBI);
     if (!isAM5 &&
         isMatchingDecrement(NextMBBI, Base, Bytes, Limit, Pred, PredReg)) {
       DoMerge = true;
       AddSub = ARM_AM::sub;
-      NewOpc = getPostIndexedLoadStoreOpcode(Opcode);
     } else if (isMatchingIncrement(NextMBBI, Base, Bytes, Limit,Pred,PredReg)) {
       DoMerge = true;
-      NewOpc = getPostIndexedLoadStoreOpcode(Opcode);
     }
     if (DoMerge) {
+      NewOpc = getPostIndexedLoadStoreOpcode(Opcode);
       if (NextMBBI == I) {
         Advance = true;
         ++I;
@@ -637,22 +715,25 @@ bool ARMLoadStoreOpt::MergeBaseUpdateLoadStore(MachineBasicBlock &MBB,
   bool isDPR = NewOpc == ARM::VLDMD || NewOpc == ARM::VSTMD;
   unsigned Offset = 0;
   if (isAM5)
-    Offset = ARM_AM::getAM5Opc((AddSub == ARM_AM::sub)
-                               ? ARM_AM::db
-                               : ARM_AM::ia, true, (isDPR ? 2 : 1));
+    Offset = ARM_AM::getAM5Opc(AddSub == ARM_AM::sub ? ARM_AM::db : ARM_AM::ia,
+                               true, (isDPR ? 2 : 1));
   else if (isAM2)
     Offset = ARM_AM::getAM2Opc(AddSub, Bytes, ARM_AM::no_shift);
   else
     Offset = AddSub == ARM_AM::sub ? -Bytes : Bytes;
-  if (isLd) {
-    if (isAM5)
-      // VLDMS, VLDMD
-      BuildMI(MBB, MBBI, dl, TII->get(NewOpc))
-        .addReg(Base, getKillRegState(BaseKill))
-        .addImm(Offset).addImm(Pred).addReg(PredReg)
-        .addReg(Base, getDefRegState(true)) // WB base register
-        .addReg(MI->getOperand(0).getReg(), RegState::Define);
-    else if (isAM2)
+
+  if (isAM5) {
+    // VLDM[SD}_UPD, VSTM[SD]_UPD
+    MachineOperand &MO = MI->getOperand(0);
+    BuildMI(MBB, MBBI, dl, TII->get(NewOpc))
+      .addReg(Base, getDefRegState(true)) // WB base register
+      .addReg(Base, getKillRegState(isLd ? BaseKill : false))
+      .addImm(Offset)
+      .addImm(Pred).addReg(PredReg)
+      .addReg(MO.getReg(), (isLd ? getDefRegState(true) :
+                            getKillRegState(MO.isKill())));
+  } else if (isLd) {
+    if (isAM2)
       // LDR_PRE, LDR_POST,
       BuildMI(MBB, MBBI, dl, TII->get(NewOpc), MI->getOperand(0).getReg())
         .addReg(Base, RegState::Define)
@@ -664,13 +745,7 @@ bool ARMLoadStoreOpt::MergeBaseUpdateLoadStore(MachineBasicBlock &MBB,
         .addReg(Base).addImm(Offset).addImm(Pred).addReg(PredReg);
   } else {
     MachineOperand &MO = MI->getOperand(0);
-    if (isAM5)
-      // VSTMS, VSTMD
-      BuildMI(MBB, MBBI, dl, TII->get(NewOpc)).addReg(Base).addImm(Offset)
-        .addImm(Pred).addReg(PredReg)
-        .addReg(Base, getDefRegState(true)) // WB base register
-        .addReg(MO.getReg(), getKillRegState(MO.isKill()));
-    else if (isAM2)
+    if (isAM2)
       // STR_PRE, STR_POST
       BuildMI(MBB, MBBI, dl, TII->get(NewOpc), Base)
         .addReg(MO.getReg(), getKillRegState(MO.isKill()))
@@ -689,6 +764,31 @@ bool ARMLoadStoreOpt::MergeBaseUpdateLoadStore(MachineBasicBlock &MBB,
 /// isMemoryOp - Returns true if instruction is a memory operations (that this
 /// pass is capable of operating on).
 static bool isMemoryOp(const MachineInstr *MI) {
+  if (MI->hasOneMemOperand()) {
+    const MachineMemOperand *MMO = *MI->memoperands_begin();
+
+    // Don't touch volatile memory accesses - we may be changing their order.
+    if (MMO->isVolatile())
+      return false;
+
+    // Unaligned ldr/str is emulated by some kernels, but unaligned ldm/stm is
+    // not.
+    if (MMO->getAlignment() < 4)
+      return false;
+  }
+
+  // str <undef> could probably be eliminated entirely, but for now we just want
+  // to avoid making a mess of it.
+  // FIXME: Use str <undef> as a wildcard to enable better stm folding.
+  if (MI->getNumOperands() > 0 && MI->getOperand(0).isReg() &&
+      MI->getOperand(0).isUndef())
+    return false;
+
+  // Likewise don't mess with references to undefined addresses.
+  if (MI->getNumOperands() > 1 && MI->getOperand(1).isReg() &&
+      MI->getOperand(1).isUndef())
+    return false;
+
   int Opcode = MI->getOpcode();
   switch (Opcode) {
   default: break;
@@ -833,7 +933,6 @@ bool ARMLoadStoreOpt::FixInvalidRegPairOp(MachineBasicBlock &MBB,
           .addReg(BaseReg, getKillRegState(BaseKill))
           .addImm(ARM_AM::getAM4ModeImm(ARM_AM::ia))
           .addImm(Pred).addReg(PredReg)
-          .addReg(0)
           .addReg(EvenReg, getDefRegState(isLd) | getDeadRegState(EvenDeadKill))
           .addReg(OddReg,  getDefRegState(isLd) | getDeadRegState(OddDeadKill));
         ++NumLDRD2LDM;
@@ -842,7 +941,6 @@ bool ARMLoadStoreOpt::FixInvalidRegPairOp(MachineBasicBlock &MBB,
           .addReg(BaseReg, getKillRegState(BaseKill))
           .addImm(ARM_AM::getAM4ModeImm(ARM_AM::ia))
           .addImm(Pred).addReg(PredReg)
-          .addReg(0)
           .addReg(EvenReg,
                   getKillRegState(EvenDeadKill) | getUndefRegState(EvenUndef))
           .addReg(OddReg,
@@ -874,6 +972,13 @@ bool ARMLoadStoreOpt::FixInvalidRegPairOp(MachineBasicBlock &MBB,
                       BaseReg, BaseKill, BaseUndef, OffReg, OffKill, OffUndef,
                       Pred, PredReg, TII, isT2);
       } else {
+        if (OddReg == EvenReg && EvenDeadKill) {
+          // If the two source operands are the same, the kill marker is probably
+          // on the first one. e.g.
+          // t2STRDi8 %R5<kill>, %R5, %R9<kill>, 0, 14, %reg0
+          EvenDeadKill = false;
+          OddDeadKill = true;
+        }
         InsertLDR_STR(MBB, MBBI, OffImm, isLd, dl, NewOpc,
                       EvenReg, EvenDeadKill, EvenUndef,
                       BaseReg, false, BaseUndef, OffReg, false, OffUndef,
@@ -1079,7 +1184,8 @@ bool ARMLoadStoreOpt::MergeReturnIntoLDM(MachineBasicBlock &MBB) {
   if (MBBI != MBB.begin() &&
       (MBBI->getOpcode() == ARM::BX_RET || MBBI->getOpcode() == ARM::tBX_RET)) {
     MachineInstr *PrevMI = prior(MBBI);
-    if (PrevMI->getOpcode() == ARM::LDM || PrevMI->getOpcode() == ARM::t2LDM) {
+    if (PrevMI->getOpcode() == ARM::LDM_UPD ||
+        PrevMI->getOpcode() == ARM::t2LDM_UPD) {
       MachineOperand &MO = PrevMI->getOperand(PrevMI->getNumOperands()-1);
       if (MO.getReg() != ARM::LR)
         return false;
