@@ -41,6 +41,12 @@
 #include "llvm/Support/ErrorHandling.h"
 using namespace llvm;
 
+// @LOCALMOD-START
+static cl::opt<bool>
+ReserveR15("reserve-r15", cl::Hidden,
+           cl::desc("Reserve R15, making it unavailable as GPR"));
+// @LOCALMOD-END
+
 X86RegisterInfo::X86RegisterInfo(X86TargetMachine &tm,
                                  const TargetInstrInfo &tii)
   : X86GenRegisterInfo(tm.getSubtarget<X86Subtarget>().is64Bit() ?
@@ -431,6 +437,16 @@ BitVector X86RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   Reserved.set(X86::ST5);
   Reserved.set(X86::ST6);
   Reserved.set(X86::ST7);
+
+  // @LOCALMOD-START
+  if (ReserveR15) {
+    Reserved.set(X86::R15);
+    Reserved.set(X86::R15D);
+    Reserved.set(X86::R15W);
+    Reserved.set(X86::R15B);
+  }
+  // @LOCALMOD-END
+
   return Reserved;
 }
 
