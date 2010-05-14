@@ -148,16 +148,23 @@ let isCall = 1 in
                           (outs), (ins i64i32imm_pcrel:$dst, variable_ops),
                           "call{q}\t$dst", []>,
                         Requires<[In64BitMode, NotWin64]>;
-    def CALL64r       : I<0, Pseudo, (outs), (ins GR64:$dst, variable_ops),
-                          "naclcall\t$dst, %r15", [(X86call GR64:$dst)]>,
-                        Requires<[NotWin64]>;
+// @LOCALMOD-START
+    def CALL64r    : I<0, Pseudo, (outs), (ins GR32:$dst, variable_ops),
+                          "naclcall\t$dst, %r15", [(X86call GR32:$dst)]>,
+                        Requires<[NotWin64, In64BitMode]>;
     // def CALL64m       : I<0xFF, MRM2m, (outs), (ins i64mem:$dst, variable_ops),
     //                       "call{q}\t{*}$dst", [(X86call (loadi64 addr:$dst))]>,
     //                     Requires<[NotWin64]>;
                         
     // def FARCALL64   : RI<0xFF, MRM3m, (outs), (ins opaque80mem:$dst),
     //                      "lcall{q}\t{*}$dst", []>;
+// @LOCALMOD-END
   }
+
+// @LOCALMOD-START
+def : Pat<(X86call GR64:$dst),
+          (CALL64r (EXTRACT_SUBREG GR64:$dst, x86_subreg_32bit))>;
+// @LOCALMOD-END
 
   // FIXME: We need to teach codegen about single list of call-clobbered 
   // registers.
@@ -221,13 +228,21 @@ let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1 in
 let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
   def JMP64pcrel32 : I<0xE9, RawFrm, (outs), (ins brtarget:$dst), 
                        "jmp{q}\t$dst", []>;
-  def JMP64r     : I<0xFF, MRM4r, (outs), (ins GR64:$dst), "nacljmp\t$dst, %r15",
-                     [(brind GR64:$dst)]>;
+// @LOCALMOD-START
+  def JMP64r     : I<0xFF, MRM4r, (outs), (ins GR32:$dst),
+                     "nacljmp\t$dst, %r15",
+                     [(brind GR32:$dst)]>;
   // def JMP64m     : I<0xFF, MRM4m, (outs), (ins i64mem:$dst), "jmp{q}\t{*}$dst",
   //                    [(brind (loadi64 addr:$dst))]>;
   def FARJMP64   : RI<0xFF, MRM5m, (outs), (ins opaque80mem:$dst),
                       "ljmp{q}\t{*}$dst", []>;
+// @LOCALMOD-END
 }
+
+// @LOCALMOD-START
+def : Pat<(brind GR64:$dst),
+          (JMP64r (EXTRACT_SUBREG GR64:$dst, x86_subreg_32bit))>;
+// @LOCALMOD-END
 
 //===----------------------------------------------------------------------===//
 // EH Pseudo Instructions
