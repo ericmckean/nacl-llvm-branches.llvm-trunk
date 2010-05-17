@@ -861,8 +861,7 @@ void ARMConstantIslands::UpdateForInsertedWaterBlock(MachineBasicBlock *NewBB) {
 /// account for this change and returns the newly created block.
 MachineBasicBlock *ARMConstantIslands::SplitBlockBeforeInstr(MachineInstr *MI) {
   // @LOCALMOD-start
-  printf("@@@@ ERROR: splitting not yet supported\n");
-  abort();
+  assert(0 && "splitting not yet supported");
   // @LOCALMOD-end
   MachineBasicBlock *OrigBB = MI->getParent();
   MachineFunction &MF = *OrigBB->getParent();
@@ -1283,8 +1282,7 @@ void ARMConstantIslands::CreateNewWater(unsigned CPUserIndex,
     AdjustBBOffsetsAfter(UserMBB, delta);
   } else {
     // @LOCALMOD-START
-    printf("@@@@ ERROR: fix up split bbl not  implemented\n");
-    abort();
+    assert(0 && "fix up split bbl not implemented");
     // @LOCALMOD-END
 
     // What a big block.  Find a place within the block to split it.
@@ -1536,8 +1534,7 @@ bool ARMConstantIslands::FixUpImmediateBr(MachineFunction &MF, ImmBranch &Br) {
 bool
 ARMConstantIslands::FixUpUnconditionalBr(MachineFunction &MF, ImmBranch &Br) {
   // @LOCALMOD-start
-  printf("@@@@ ERROR: fix up uncond br not implemented\n");
-  abort();
+  assert(0 && "fix up uncond br not implemented");
   // @LOCALMOD-end
   MachineInstr *MI = Br.MI;
   MachineBasicBlock *MBB = MI->getParent();
@@ -1563,8 +1560,7 @@ ARMConstantIslands::FixUpUnconditionalBr(MachineFunction &MF, ImmBranch &Br) {
 bool
 ARMConstantIslands::FixUpConditionalBr(MachineFunction &MF, ImmBranch &Br) {
   // @LOCALMOD-start
-  printf("@@@@ ERROR: fix up cond br not implemented\n");
-  abort();
+  assert(0 && "fix up cond br not implemented");
   // @LOCALMOD-end
   MachineInstr *MI = Br.MI;
   MachineBasicBlock *DestBB = MI->getOperand(0).getMBB();
