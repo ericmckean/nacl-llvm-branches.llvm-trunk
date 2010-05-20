@@ -25,6 +25,7 @@ add_llvm_target(ARMCodeGen
   ARMLoadStoreOptimizer.cpp
   ARMMCAsmInfo.cpp
   ARMRegisterInfo.cpp
+  ARMSFIPlacement.cpp
   ARMSubtarget.cpp
   ARMTargetMachine.cpp
   NEONMoveFix.cpp
