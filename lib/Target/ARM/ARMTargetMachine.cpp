@@ -128,6 +128,7 @@ bool ARMBaseTargetMachine::addPreEmitPass(PassManagerBase &PM,
   }
 
   PM.add(createARMConstantIslandPass());
+  PM.add(createARMSFIPlacementPass());
   return true;
 }
 
