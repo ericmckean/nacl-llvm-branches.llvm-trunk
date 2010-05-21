@@ -573,6 +573,11 @@ PseudoInst<(outs), (ins i32imm:$amt, pred:$p), NoItinerary,
            [(ARMcallseq_start timm:$amt)]>;
 }
 
+def SFISTRMASK :
+PseudoInst<(outs GPR:$dst), (ins GPR:$a, pred:$p), NoItinerary,
+           "sfi_store_preamble $dst, $p",
+           []>;
+
 def DWARF_LOC :
 PseudoInst<(outs), (ins i32imm:$line, i32imm:$col, i32imm:$file), NoItinerary,
            ".loc $file, $line, $col",
@@ -913,95 +918,65 @@ def LDRSB_POST: AI3ldsbpo<(outs GPR:$dst, GPR:$base_wb),
 
 // Store
 def STR  : AI2stw<(outs), (ins GPR:$src, addrmode2:$addr), StFrm, IIC_iStorer,
-// @LOCALMOD-START
 // c.f.:  ARMAsmPrinter::printAddrMode2Operand
-//               "str", "\t$src, $addr",
-               "${addr:sfi}str", "\t$src, $addr",
-// @LOCALMOD-END
+               "str", "\t$src, $addr",
                [(store GPR:$src, addrmode2:$addr)]>;
 
 // Stores with truncate
 def STRH : AI3sth<(outs), (ins GPR:$src, addrmode3:$addr), StMiscFrm, IIC_iStorer,
-// @LOCALMOD-START
-//               "strh", "\t$src, $addr",
-               "${addr:sfi}strh", "\t$src, $addr",
-// @LOCALMOD-END
+               "strh", "\t$src, $addr",
                [(truncstorei16 GPR:$src, addrmode3:$addr)]>;
 
 def STRB : AI2stb<(outs), (ins GPR:$src, addrmode2:$addr), StFrm, IIC_iStorer,
-// @LOCALMOD-START
-//               "strb", "\t$src, $addr",
-               "${addr:sfi}strb", "\t$src, $addr",
-// @LOCALMOD-END
+               "strb", "\t$src, $addr",
                [(truncstorei8 GPR:$src, addrmode2:$addr)]>;
 
 // Store doubleword
 let mayStore = 1, hasExtraSrcRegAllocReq = 1 in
 def STRD : AI3std<(outs), (ins GPR:$src1, GPR:$src2, addrmode3:$addr),
                StMiscFrm, IIC_iStorer,
-// @LOCALMOD-START
-//               "strd", "\t$src1, $addr", []>, Requires<[IsARM, HasV5TE]>;
-               "${addr:sfi}strd", "\t$src1, $addr", []>, Requires<[IsARM, HasV5TE]>;
-// @LOCALMOD-END
+               "strd", "\t$src1, $addr", []>, Requires<[IsARM, HasV5TE]>;
 
 // Indexed stores
 def STR_PRE  : AI2stwpr<(outs GPR:$base_wb),
                      (ins GPR:$src, GPR:$base, am2offset:$offset), 
                      StFrm, IIC_iStoreru,
-// @LOCALMOD-START
-//                    "str", "\t$src, [$base, $offset]!", "$base = $base_wb",
-                    "${offset:sfi}str", "\t$src, [$base, $offset]!", "$base = $base_wb",
-// @LOCALMOD-END
+                    "str", "\t$src, [$base, $offset]!", "$base = $base_wb",
                     [(set GPR:$base_wb,
                       (pre_store GPR:$src, GPR:$base, am2offset:$offset))]>;
 
 def STR_POST : AI2stwpo<(outs GPR:$base_wb),
                      (ins GPR:$src, GPR:$base,am2offset:$offset), 
                      StFrm, IIC_iStoreru,
-// @LOCALMOD-START
-//                    "str", "\t$src, [$base], $offset", "$base = $base_wb",
-                    "${offset:sfi}str", "\t$src, [$base], $offset", "$base = $base_wb",
-// @LOCALMOD-END
+                    "str", "\t$src, [$base], $offset", "$base = $base_wb",
                     [(set GPR:$base_wb,
                       (post_store GPR:$src, GPR:$base, am2offset:$offset))]>;
 
 def STRH_PRE : AI3sthpr<(outs GPR:$base_wb),
                      (ins GPR:$src, GPR:$base,am3offset:$offset), 
                      StMiscFrm, IIC_iStoreru,
-// @LOCALMOD-START
-//                     "strh", "\t$src, [$base, $offset]!", "$base = $base_wb",
-                     "${offset:sfi}strh", "\t$src, [$base, $offset]!", "$base = $base_wb",
-// @LOCALMOD-END
+                     "strh", "\t$src, [$base, $offset]!", "$base = $base_wb",
                     [(set GPR:$base_wb,
                       (pre_truncsti16 GPR:$src, GPR:$base,am3offset:$offset))]>;
 
 def STRH_POST: AI3sthpo<(outs GPR:$base_wb),
                      (ins GPR:$src, GPR:$base,am3offset:$offset), 
                      StMiscFrm, IIC_iStoreru,
-// @LOCALMOD-START
-//                     "strh", "\t$src, [$base], $offset", "$base = $base_wb",
-                     "${offset:sfi}strh", "\t$src, [$base], $offset", "$base = $base_wb",
-// @LOCALMOD-END
+                     "strh", "\t$src, [$base], $offset", "$base = $base_wb",
                     [(set GPR:$base_wb, (post_truncsti16 GPR:$src,
                                          GPR:$base, am3offset:$offset))]>;
 
 def STRB_PRE : AI2stbpr<(outs GPR:$base_wb),
                      (ins GPR:$src, GPR:$base,am2offset:$offset), 
                      StFrm, IIC_iStoreru,
-// @LOCALMOD-START
-//                     "strb", "\t$src, [$base, $offset]!", "$base = $base_wb",
-                     "${offset:sfi}strb", "\t$src, [$base, $offset]!", "$base = $base_wb",
-// @LOCALMOD-END
+                     "strb", "\t$src, [$base, $offset]!", "$base = $base_wb",
                     [(set GPR:$base_wb, (pre_truncsti8 GPR:$src,
                                          GPR:$base, am2offset:$offset))]>;
 
 def STRB_POST: AI2stbpo<(outs GPR:$base_wb),
                      (ins GPR:$src, GPR:$base,am2offset:$offset), 
                      StFrm, IIC_iStoreru,
-// @LOCALMOD-START
-//                     "strb", "\t$src, [$base], $offset", "$base = $base_wb",
-                     "${offset:sfi}strb", "\t$src, [$base], $offset", "$base = $base_wb",
-// @LOCALMOD-END
+                     "strb", "\t$src, [$base], $offset", "$base = $base_wb",
                     [(set GPR:$base_wb, (post_truncsti8 GPR:$src,
                                          GPR:$base, am2offset:$offset))]>;
 

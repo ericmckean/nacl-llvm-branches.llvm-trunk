@@ -105,6 +105,7 @@ FunctionPass *createARMObjectCodeEmitterPass(ARMBaseTargetMachine &TM,
 FunctionPass *createARMLoadStoreOptimizationPass(bool PreAlloc = false);
 FunctionPass *createARMExpandPseudoPass();
 FunctionPass *createARMConstantIslandPass();
+FunctionPass *createARMSFIPlacementPass();
 FunctionPass *createNEONPreAllocPass();
 FunctionPass *createNEONMoveFixPass();
 FunctionPass *createThumb2ITBlockPass();
