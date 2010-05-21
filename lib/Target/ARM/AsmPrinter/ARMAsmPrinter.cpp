@@ -106,23 +106,6 @@ namespace {
     void printSORegOperand(const MachineInstr *MI, int OpNum);
     void printAddrMode2Operand(const MachineInstr *MI, int OpNum);
 
-    // @LOCALMOD-START
-    // NOTE: we force the extra Modifier argument in the .td file
-    void printAddrModeHelper(const MachineInstr *MI,
-                             int base,
-                             int pred,
-                             const char* Modifier);
-
-    void printAddrMode2Operand(const MachineInstr *MI, int OpNo,
-                               const char* Modifier);
-    void printAddrMode3Operand(const MachineInstr *MI, int OpNo,
-                               const char* Modifier);
-
-    void printAddrMode2OffsetOperand(const MachineInstr *MI, int OpNo,
-                                     const char* Modifier);
-    void printAddrMode3OffsetOperand(const MachineInstr *MI, int OpNo,
-                                     const char* Modifier);
-    // @LOCALMOD-END
     void printAddrMode2OffsetOperand(const MachineInstr *MI, int OpNum);
     void printAddrMode3Operand(const MachineInstr *MI, int OpNum);
     void printAddrMode3OffsetOperand(const MachineInstr *MI, int OpNum);
@@ -599,65 +582,6 @@ void ARMAsmPrinter::printAddrMode2Operand(const MachineInstr *MI, int Op) {
   O << "]";
 }
 
-// @LOCALMOD-START
-
-// This hack prepends a line of the form:
-// sfi_store <basereg>, <pr>
-// before sandboxed store instructions
-void ARMAsmPrinter::printAddrModeHelper(const MachineInstr *MI,
-                                        int base,
-                                        int pred,
-                                        const char* Modifier) {
-  assert(0 == strcmp("sfi", Modifier));
-
-  const char *base_reg = getRegisterName(MI->getOperand(base).getReg());
-  // NOTE: sfi_store_preamble is aware of sp
-  O << "sfi_store_preamble " << base_reg << ", ";
-  printPredicateOperand(MI, pred);
-  O << "\n\t";
-}
-
-void ARMAsmPrinter::printAddrMode2Operand(const MachineInstr *MI, int Op,
-                                          const char *Modifier) {
-  if (!FlagSfiStore) return;
-
-  printAddrModeHelper(MI, Op, Op + 3, Modifier);
-
-  const MachineOperand &MO2 = MI->getOperand(Op+1);
-  if (MO2.getReg()) {
-    O << "BAD BAD BAD FORBIDDEN ADDR MODE\n";
-    assert(0);
-  }
-}
-
-void ARMAsmPrinter::printAddrMode3Operand(const MachineInstr *MI, int Op,
-                                          const char *Modifier) {
-  if (!FlagSfiStore) return;
-
-  printAddrModeHelper(MI, Op, Op + 3, Modifier);
-
-  const MachineOperand &MO2 = MI->getOperand(Op+1);
-  if (MO2.getReg()) {
-    O << "BAD BAD BAD FORBIDDEN ADDR MODE\n";
-    assert(0);
-  }
-}
-
-void ARMAsmPrinter::printAddrMode2OffsetOperand(const MachineInstr *MI,
-                                                int Op,
-                                                const char *Modifier) {
-  if (!FlagSfiStore) return;
-  printAddrModeHelper(MI, Op - 1, Op + 2, Modifier);
-}
-
-void ARMAsmPrinter::printAddrMode3OffsetOperand(const MachineInstr *MI,
-                                                int Op,
-                                                const char *Modifier) {
-  if (!FlagSfiStore) return;
-  printAddrModeHelper(MI, Op - 1, Op + 2, Modifier);
-}
-// @LOCALMOD-END
-
 void ARMAsmPrinter::printAddrMode2OffsetOperand(const MachineInstr *MI, int Op){
   const MachineOperand &MO1 = MI->getOperand(Op);
   const MachineOperand &MO2 = MI->getOperand(Op+1);
@@ -774,10 +698,7 @@ void ARMAsmPrinter::printAddrMode5Operand(const MachineInstr *MI, int Op,
     return;
   }
   //@LOCALMOD-START
-   else if (Modifier && strcmp(Modifier, "sfi") == 0) {
-     printAddrModeHelper(MI, Op, Op + 2, Modifier);
-     return;
-   } else if (Modifier && strcmp(Modifier, "basereg") == 0) {
+   else if (Modifier && strcmp(Modifier, "basereg") == 0) {
      O << getRegisterName(MO1.getReg());
      return;
    }
