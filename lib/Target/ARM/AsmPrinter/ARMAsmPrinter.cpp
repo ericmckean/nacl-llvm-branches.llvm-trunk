@@ -1339,6 +1339,12 @@ void ARMAsmPrinter::EmitStartOfAsmFile(Module &M) {
       "\n\n";
 
     O <<
+      "\t.macro sfi_data_tst reg\n"
+      "\ttst \\reg, #0xc0000000\n"
+      "\t.endm\n"
+      "\n\n";
+
+    O <<
       "\t.macro sfi_code_mask reg cond=\n"
       "\tbic\\cond \\reg, \\reg, #0xc000000f\n"
       "\t.endm\n"
@@ -1382,11 +1388,23 @@ void ARMAsmPrinter::EmitStartOfAsmFile(Module &M) {
       "\tsfi_data_mask \\reg, \\cond\n"
       "\t.endm\n"
       "\n\n";
+
+    O <<
+      "\t.macro sfi_cstore_preamble reg\n"
+      "\tsfi_nop_if_at_bundle_end\n"
+      "\tsfi_data_tst \\reg\n"
+      "\t.endm\n"
+      "\n\n";
   } else {
     O <<
-    "\t.macro sfi_store_preamble reg cond\n"
-    "\t.endm\n"
-    "\n\n";
+      "\t.macro sfi_store_preamble reg cond\n"
+      "\t.endm\n"
+      "\n\n";
+
+    O <<
+      "\t.macro sfi_cstore_preamble reg cond\n"
+      "\t.endm\n"
+      "\n\n";
   }
 
   const char* kPreds[] = {
