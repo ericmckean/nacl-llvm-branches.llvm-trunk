@@ -860,9 +860,6 @@ void ARMConstantIslands::UpdateForInsertedWaterBlock(MachineBasicBlock *NewBB) {
 /// an unconditional branch.  Update data structures and renumber blocks to
 /// account for this change and returns the newly created block.
 MachineBasicBlock *ARMConstantIslands::SplitBlockBeforeInstr(MachineInstr *MI) {
-  // @LOCALMOD-start
-  assert(0 && "splitting not yet supported");
-  // @LOCALMOD-end
   MachineBasicBlock *OrigBB = MI->getParent();
   MachineFunction &MF = *OrigBB->getParent();
 
@@ -928,9 +925,12 @@ MachineBasicBlock *ARMConstantIslands::SplitBlockBeforeInstr(MachineInstr *MI) {
   // contain a constpool_entry or tablejump.)
   unsigned NewBBSize = 0;
   for (MachineBasicBlock::iterator I = NewBB->begin(), E = NewBB->end();
-       I != E; ++I)
+       I != E; ++I) {
+    // @LOCALMOD-START
+    NewBBSize += GetFudge(I, NewBBSize, false, false, 0);
+    // @LOCALMOD-END
     NewBBSize += TII->GetInstSizeInBytes(I);
-
+  }
   unsigned OrigBBI = OrigBB->getNumber();
   unsigned NewBBI = NewBB->getNumber();
   // Set the size of NewBB in BBSizes.
@@ -1281,10 +1281,6 @@ void ARMConstantIslands::CreateNewWater(unsigned CPUserIndex,
     BBSizes[UserMBB->getNumber()] += delta;
     AdjustBBOffsetsAfter(UserMBB, delta);
   } else {
-    // @LOCALMOD-START
-    assert(0 && "fix up split bbl not implemented");
-    // @LOCALMOD-END
-
     // What a big block.  Find a place within the block to split it.
     // This is a little tricky on Thumb1 since instructions are 2 bytes
     // and constant pool entries are 4 bytes: if instruction I references
@@ -1301,7 +1297,15 @@ void ARMConstantIslands::CreateNewWater(unsigned CPUserIndex,
     // The 4 in the following is for the unconditional branch we'll be
     // inserting (allows for long branch on Thumb1).  Alignment of the
     // island is handled inside OffsetIsInRange.
-    unsigned BaseInsertOffset = UserOffset + U.MaxDisp -4;
+     // @LOCALMOD-START
+     unsigned BaseInsertOffset = UserOffset - 4;
+     if (FlagSfiCpFudge) {
+       BaseInsertOffset += U.MaxDisp * FlagSfiCpFudgePercent / 100;
+     } else {
+       BaseInsertOffset += U.MaxDisp;
+     }
+     // @LOCALMOD-END
+     
     // This could point off the end of the block if we've already got
     // constant pool entries following this block; only the last one is
     // in the water list.  Back past any possible branches (allow for a
@@ -1314,10 +1318,17 @@ void ARMConstantIslands::CreateNewWater(unsigned CPUserIndex,
     MachineBasicBlock::iterator MI = UserMI;
     ++MI;
     unsigned CPUIndex = CPUserIndex+1;
+    // @LOCALMOD: TODO: GetInstSizeInBytes() should be replaced with
+    //                  our estimator
     for (unsigned Offset = UserOffset+TII->GetInstSizeInBytes(UserMI);
          Offset < BaseInsertOffset;
-         Offset += TII->GetInstSizeInBytes(MI),
-            MI = next(MI)) {
+         // @LOCALMOD-START
+         Offset +=  GetFudge(MI, Offset, false, false, false) +
+                           TII->GetInstSizeInBytes(MI),
+        // @LOCALMOD-END 
+         MI = next(MI)) {
+      
+      assert(MI != UserMBB->end() && "getting out of range"); // @LOCALMOD
       if (CPUIndex < CPUsers.size() && CPUsers[CPUIndex].MI == MI) {
         CPUser &U = CPUsers[CPUIndex];
         if (!OffsetIsInRange(Offset, EndInsertOffset,
