@@ -578,6 +578,12 @@ PseudoInst<(outs GPR:$dst), (ins GPR:$a, pred:$p), NoItinerary,
            "sfi_store_preamble $dst, $p",
            []>;
 
+let Defs = [CPSR] in
+def SFISTRTST :
+PseudoInst<(outs GPR:$dst), (ins GPR:$a), NoItinerary,
+           "sfi_cstore_preamble $dst",
+           []>;
+
 def DWARF_LOC :
 PseudoInst<(outs), (ins i32imm:$line, i32imm:$col, i32imm:$file), NoItinerary,
            ".loc $file, $line, $col",

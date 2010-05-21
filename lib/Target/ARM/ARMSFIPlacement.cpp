@@ -39,10 +39,10 @@ namespace {
 
   private:
     bool PlaceMBB(MachineBasicBlock &MBB);
-    void InsertBicMask(MachineBasicBlock &MBB,
-                       MachineBasicBlock::iterator MBBI,
-                       MachineInstr &MI,
-                       int AddrOperand);
+    void IsolateStore(MachineBasicBlock &MBB,
+                      MachineBasicBlock::iterator MBBI,
+                      MachineInstr &MI,
+                      int AddrOperand);
   };
   char ARMSFIPlacement::ID = 0;
 }
@@ -50,23 +50,39 @@ namespace {
 static ARMCC::CondCodes GetPredicate(MachineInstr &MI) {
   int PIdx = MI.findFirstPredOperandIdx();
   if (PIdx != -1) {
-      return (ARMCC::CondCodes)MI.getOperand(PIdx).getImm();
+    return (ARMCC::CondCodes)MI.getOperand(PIdx).getImm();
   } else {
     return ARMCC::AL;
   }
 }
 
 /*
- * Inserts a single BIC-based mask instruction immediately before the given
- * instruction/iterator position.
+ * Isolates a store instruction by inserting an appropriate mask or check
+ * operation before it.
  */
-void ARMSFIPlacement::InsertBicMask(MachineBasicBlock &MBB,
-                                    MachineBasicBlock::iterator MBBI,
-                                    MachineInstr &MI,
-                                    int AddrOperand) {
+void ARMSFIPlacement::IsolateStore(MachineBasicBlock &MBB,
+                                   MachineBasicBlock::iterator MBBI,
+                                   MachineInstr &MI,
+                                   int AddrOperand) {
   ARMCC::CondCodes Pred = GetPredicate(MI);
-
   MachineOperand &Addr = MI.getOperand(AddrOperand);
+
+  if (!TII->isPredicated(&MI)) {
+    /*
+     * For unconditional stores, we can use a faster sandboxing sequence
+     * by predicating the store -- assuming we *can* predicate the store.
+     */
+    SmallVector<MachineOperand, 2> PredOperands;
+    PredOperands.push_back(MachineOperand::CreateImm((int64_t) ARMCC::EQ));
+    PredOperands.push_back(MachineOperand::CreateReg(ARM::CPSR, false));
+    if (TII->PredicateInstruction(&MI, PredOperands)) {
+      BuildMI(MBB, MBBI, MI.getDebugLoc(),
+              TII->get(ARM::SFISTRTST))
+        .addOperand(Addr)   // rD
+        .addReg(0);         // apparently unused source register?
+      return;
+    }
+  }
 
   BuildMI(MBB, MBBI, MI.getDebugLoc(),
           TII->get(ARM::SFISTRMASK))
@@ -92,7 +108,7 @@ void ARMSFIPlacement::InsertBicMask(MachineBasicBlock &MBB,
    */
 }
 
-bool IsDangerousStore(const MachineInstr &MI, int *AddrOperand) {
+static bool IsDangerousStore(const MachineInstr &MI, int *AddrOperand) {
   unsigned Opcode = MI.getOpcode();
   switch (Opcode) {
   default: return false;
@@ -142,7 +158,7 @@ bool ARMSFIPlacement::PlaceMBB(MachineBasicBlock &MBB) {
 
     int AddrOperand;
     if (IsDangerousStore(MI, &AddrOperand)) {
-      InsertBicMask(MBB, MBBI, MI, AddrOperand);
+      IsolateStore(MBB, MBBI, MI, AddrOperand);
       Modified = true;
     }
   }
