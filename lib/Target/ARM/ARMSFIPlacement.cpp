@@ -47,6 +47,15 @@ namespace {
   char ARMSFIPlacement::ID = 0;
 }
 
+static ARMCC::CondCodes GetPredicate(MachineInstr &MI) {
+  int PIdx = MI.findFirstPredOperandIdx();
+  if (PIdx != -1) {
+      return (ARMCC::CondCodes)MI.getOperand(PIdx).getImm();
+  } else {
+    return ARMCC::AL;
+  }
+}
+
 /*
  * Inserts a single BIC-based mask instruction immediately before the given
  * instruction/iterator position.
@@ -55,10 +64,7 @@ void ARMSFIPlacement::InsertBicMask(MachineBasicBlock &MBB,
                                     MachineBasicBlock::iterator MBBI,
                                     MachineInstr &MI,
                                     int AddrOperand) {
-  int PIdx = MI.findFirstPredOperandIdx();
-  ARMCC::CondCodes Pred =
-      PIdx != -1 ? (ARMCC::CondCodes)MI.getOperand(PIdx).getImm()
-                 : ARMCC::AL;
+  ARMCC::CondCodes Pred = GetPredicate(MI);
 
   MachineOperand &Addr = MI.getOperand(AddrOperand);
 
@@ -74,6 +80,7 @@ void ARMSFIPlacement::InsertBicMask(MachineBasicBlock &MBB,
    * following, but with alignment enforced.
    * TODO(cbiffle): move alignment into this function, use the code below.
    *
+   *  // bic<cc> Addr, Addr, #0xC0000000
    *  BuildMI(MBB, MBBI, MI.getDebugLoc(),
    *          TII->get(ARM::BICri))
    *    .addOperand(Addr)        // rD
@@ -85,49 +92,52 @@ void ARMSFIPlacement::InsertBicMask(MachineBasicBlock &MBB,
    */
 }
 
+bool IsStoreRequiringMask(const MachineInstr &MI, int *AddrOperand) {
+  unsigned Opcode = MI.getOpcode();
+  switch (Opcode) {
+  default: return false;
+
+  // Instructions with base address register in position 0...
+  case ARM::VSTMD:
+  case ARM::VSTMS:
+    *AddrOperand = 0;
+    return true;
+
+  // Instructions with base address register in position 1...
+  case ARM::STR:
+  case ARM::STRB:
+  case ARM::STRH:
+  case ARM::VSTRS:
+  case ARM::VSTRD:
+    *AddrOperand = 1;
+    return true;
+
+  // Instructions with base address register in position 2...
+  case ARM::STR_PRE:
+  case ARM::STR_POST:
+  case ARM::STRB_PRE:
+  case ARM::STRB_POST:
+  case ARM::STRH_PRE:
+  case ARM::STRH_POST:
+  case ARM::STRD:
+    *AddrOperand = 2;
+    return true;
+  }
+}
 
 bool ARMSFIPlacement::PlaceMBB(MachineBasicBlock &MBB) {
   bool Modified = false;
 
-  MachineBasicBlock::iterator MBBI = MBB.begin(), E = MBB.end();
-  while (MBBI != E) {
+  for (MachineBasicBlock::iterator MBBI = MBB.begin(), E = MBB.end();
+       MBBI != E;
+       MBBI = next(MBBI)) {
     MachineInstr &MI = *MBBI;
-    MachineBasicBlock::iterator NMBBI = next(MBBI);
 
-    unsigned Opcode = MI.getOpcode();
-    switch (Opcode) {
-    default: break;
-
-    // Instructions with base address register in position 0...
-    case ARM::VSTMD:
-    case ARM::VSTMS:
-      InsertBicMask(MBB, MBBI, MI, 0);
+    int AddrOperand;
+    if (IsStoreRequiringMask(MI, &AddrOperand)) {
+      InsertBicMask(MBB, MBBI, MI, AddrOperand);
       Modified = true;
-      break;
-    // Instructions with base address register in position 1...
-    case ARM::STR:
-    case ARM::STRB:
-    case ARM::STRH:
-    case ARM::VSTRS:
-    case ARM::VSTRD:
-      InsertBicMask(MBB, MBBI, MI, 1);
-      Modified = true;
-      break;
-
-    // Instructions with base address register in position 2...
-    case ARM::STR_PRE:
-    case ARM::STR_POST:
-    case ARM::STRB_PRE:
-    case ARM::STRB_POST:
-    case ARM::STRH_PRE:
-    case ARM::STRH_POST:
-    case ARM::STRD:
-      InsertBicMask(MBB, MBBI, MI, 2);
-      Modified = true;
-      break;
     }
-
-    MBBI = NMBBI;
   }
 
   return Modified;
