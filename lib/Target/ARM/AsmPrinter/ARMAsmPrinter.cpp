@@ -1378,10 +1378,8 @@ void ARMAsmPrinter::EmitStartOfAsmFile(Module &M) {
 
     O <<
       "\t.macro sfi_store_preamble reg cond\n"
-      "\t.if \\reg != sp\n"
       "\tsfi_nop_if_at_bundle_end\n"
       "\tsfi_data_mask \\reg, \\cond\n"
-      "\t.endif\n"
       "\t.endm\n"
       "\n\n";
   } else {

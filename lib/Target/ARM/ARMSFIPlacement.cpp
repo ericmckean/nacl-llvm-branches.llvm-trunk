@@ -92,7 +92,7 @@ void ARMSFIPlacement::InsertBicMask(MachineBasicBlock &MBB,
    */
 }
 
-bool IsStoreRequiringMask(const MachineInstr &MI, int *AddrOperand) {
+bool IsDangerousStore(const MachineInstr &MI, int *AddrOperand) {
   unsigned Opcode = MI.getOpcode();
   switch (Opcode) {
   default: return false;
@@ -101,7 +101,7 @@ bool IsStoreRequiringMask(const MachineInstr &MI, int *AddrOperand) {
   case ARM::VSTMD:
   case ARM::VSTMS:
     *AddrOperand = 0;
-    return true;
+    break;
 
   // Instructions with base address register in position 1...
   case ARM::STR:
@@ -110,7 +110,7 @@ bool IsStoreRequiringMask(const MachineInstr &MI, int *AddrOperand) {
   case ARM::VSTRS:
   case ARM::VSTRD:
     *AddrOperand = 1;
-    return true;
+    break;
 
   // Instructions with base address register in position 2...
   case ARM::STR_PRE:
@@ -121,8 +121,15 @@ bool IsStoreRequiringMask(const MachineInstr &MI, int *AddrOperand) {
   case ARM::STRH_POST:
   case ARM::STRD:
     *AddrOperand = 2;
-    return true;
+    break;
   }
+
+  if (MI.getOperand(*AddrOperand).getReg() == ARM::SP) {
+    // The contents of SP do not require masking.
+    return false;
+  }
+
+  return true;
 }
 
 bool ARMSFIPlacement::PlaceMBB(MachineBasicBlock &MBB) {
@@ -134,7 +141,7 @@ bool ARMSFIPlacement::PlaceMBB(MachineBasicBlock &MBB) {
     MachineInstr &MI = *MBBI;
 
     int AddrOperand;
-    if (IsStoreRequiringMask(MI, &AddrOperand)) {
+    if (IsDangerousStore(MI, &AddrOperand)) {
       InsertBicMask(MBB, MBBI, MI, AddrOperand);
       Modified = true;
     }
