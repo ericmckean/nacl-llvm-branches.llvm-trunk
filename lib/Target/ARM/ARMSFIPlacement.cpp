@@ -19,6 +19,7 @@
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 
+#include <set>
 #include <stdio.h>
 
 using namespace llvm;
@@ -31,6 +32,7 @@ namespace {
 
     const TargetInstrInfo *TII;
 
+    virtual void getAnalysisUsage(AnalysisUsage &AU) const;
     virtual bool runOnMachineFunction(MachineFunction &Fn);
 
     virtual const char *getPassName() const {
@@ -42,7 +44,8 @@ namespace {
     void IsolateStore(MachineBasicBlock &MBB,
                       MachineBasicBlock::iterator MBBI,
                       MachineInstr &MI,
-                      int AddrOperand);
+                      int AddrOperand,
+                      bool CPSRLive);
   };
   char ARMSFIPlacement::ID = 0;
 }
@@ -56,6 +59,11 @@ static ARMCC::CondCodes GetPredicate(MachineInstr &MI) {
   }
 }
 
+void ARMSFIPlacement::getAnalysisUsage(AnalysisUsage &AU) const {
+  AU.setPreservesCFG();
+  MachineFunctionPass::getAnalysisUsage(AU);
+}
+
 /*
  * Isolates a store instruction by inserting an appropriate mask or check
  * operation before it.
@@ -63,11 +71,12 @@ static ARMCC::CondCodes GetPredicate(MachineInstr &MI) {
 void ARMSFIPlacement::IsolateStore(MachineBasicBlock &MBB,
                                    MachineBasicBlock::iterator MBBI,
                                    MachineInstr &MI,
-                                   int AddrOperand) {
+                                   int AddrOperand,
+                                   bool CPSRLive) {
   ARMCC::CondCodes Pred = GetPredicate(MI);
   MachineOperand &Addr = MI.getOperand(AddrOperand);
 
-  if (!TII->isPredicated(&MI)) {
+  if (!TII->isPredicated(&MI) && !CPSRLive) {
     /*
      * For unconditional stores, we can use a faster sandboxing sequence
      * by predicating the store -- assuming we *can* predicate the store.
@@ -149,16 +158,54 @@ static bool IsDangerousStore(const MachineInstr &MI, int *AddrOperand) {
 }
 
 bool ARMSFIPlacement::PlaceMBB(MachineBasicBlock &MBB) {
-  bool Modified = false;
+  /*
+   * This is a simple local reverse-dataflow analysis to determine where CPSR
+   * is live.  We cannot use the conditional store sequence anywhere that CPSR
+   * is live, or we'd affect correctness.  The existing liveness analysis passes
+   * barf when applied pre-emit, after allocation, so we must do it ourselves.
+   */ 
 
+  bool CPSRLive = false;
+  // CPSR is live-out if any successor lists it as live-in.
+  for (MachineBasicBlock::const_succ_iterator SI = MBB.succ_begin(),
+                                              E = MBB.succ_end();
+       SI != E;
+       ++SI) {
+    const MachineBasicBlock *Succ = *SI;
+    CPSRLive |= Succ->isLiveIn(ARM::CPSR);
+  }
+
+  // Given that, record which instructions should not be altered to trash CPSR:
+  std::set<const MachineInstr *> InstrsWhereCPSRLives;
+  for (MachineBasicBlock::const_reverse_iterator MBBI = MBB.rbegin(),
+                                                 E = MBB.rend();
+       MBBI != E;
+       ++MBBI) {
+    const MachineInstr &MI = *MBBI;
+    // Check for kills first.
+    if (MI.modifiesRegister(ARM::CPSR)) CPSRLive = false;
+    // Then check for uses.
+    if (MI.readsRegister(ARM::CPSR)) CPSRLive = true;
+
+    if (CPSRLive) InstrsWhereCPSRLives.insert(&MI);
+  }
+
+  // Sanity check:
+  assert(CPSRLive == MBB.isLiveIn(ARM::CPSR)
+         && "CPSR Liveness analysis does not match cached live-in result.");
+
+  // Now: find and sandbox stores.
+  bool Modified = false;
   for (MachineBasicBlock::iterator MBBI = MBB.begin(), E = MBB.end();
        MBBI != E;
-       MBBI = next(MBBI)) {
+       ++MBBI) {
     MachineInstr &MI = *MBBI;
 
     int AddrOperand;
     if (IsDangerousStore(MI, &AddrOperand)) {
-      IsolateStore(MBB, MBBI, MI, AddrOperand);
+      bool CPSRLive =
+          (InstrsWhereCPSRLives.find(&MI) != InstrsWhereCPSRLives.end());
+      IsolateStore(MBB, MBBI, MI, AddrOperand, CPSRLive);
       Modified = true;
     }
   }
