@@ -41,10 +41,10 @@ namespace {
 
   private:
     bool PlaceMBB(MachineBasicBlock &MBB);
-    void IsolateStore(MachineBasicBlock &MBB,
+    void SandboxStore(MachineBasicBlock &MBB,
                       MachineBasicBlock::iterator MBBI,
                       MachineInstr &MI,
-                      int AddrOperand,
+                      int AddrIdx,
                       bool CPSRLive);
   };
   char ARMSFIPlacement::ID = 0;
@@ -60,37 +60,49 @@ static ARMCC::CondCodes GetPredicate(MachineInstr &MI) {
 }
 
 void ARMSFIPlacement::getAnalysisUsage(AnalysisUsage &AU) const {
+  // Slight (possibly unnecessary) efficiency tweak:
+  // Promise not to modify the CFG.
   AU.setPreservesCFG();
   MachineFunctionPass::getAnalysisUsage(AU);
 }
 
 /*
- * Isolates a store instruction by inserting an appropriate mask or check
+ * Sandboxes a store instruction by inserting an appropriate mask or check
  * operation before it.
  */
-void ARMSFIPlacement::IsolateStore(MachineBasicBlock &MBB,
+void ARMSFIPlacement::SandboxStore(MachineBasicBlock &MBB,
                                    MachineBasicBlock::iterator MBBI,
                                    MachineInstr &MI,
-                                   int AddrOperand,
+                                   int AddrIdx,
                                    bool CPSRLive) {
   ARMCC::CondCodes Pred = GetPredicate(MI);
-  MachineOperand &Addr = MI.getOperand(AddrOperand);
+  MachineOperand &Addr = MI.getOperand(AddrIdx);
 
   if (!TII->isPredicated(&MI) && !CPSRLive) {
     /*
-     * For unconditional stores, we can use a faster sandboxing sequence
-     * by predicating the store -- assuming we *can* predicate the store.
+     * For unconditional stores where CPSR is not in use, we can use a faster
+     * sandboxing sequence by predicating the store -- assuming we *can*
+     * predicate the store.
+     */
+
+    /*
+     * ARM predicate operands use two actual MachineOperands: an immediate
+     * holding the predicate condition, and a register referencing the flags.
      */
     SmallVector<MachineOperand, 2> PredOperands;
     PredOperands.push_back(MachineOperand::CreateImm((int64_t) ARMCC::EQ));
     PredOperands.push_back(MachineOperand::CreateReg(ARM::CPSR, false));
+
+    // Attempt to rewrite the instruction into its predicated equivalent.
     if (TII->PredicateInstruction(&MI, PredOperands)) {
+      // Instruction can be predicated -- use the new sandbox.
       BuildMI(MBB, MBBI, MI.getDebugLoc(),
               TII->get(ARM::SFISTRTST))
         .addOperand(Addr)   // rD
         .addReg(0);         // apparently unused source register?
       return;
     }
+    // Otherwise, fall through to the old sandbox.
   }
 
   BuildMI(MBB, MBBI, MI.getDebugLoc(),
@@ -117,7 +129,7 @@ void ARMSFIPlacement::IsolateStore(MachineBasicBlock &MBB,
    */
 }
 
-static bool IsDangerousStore(const MachineInstr &MI, int *AddrOperand) {
+static bool IsDangerousStore(const MachineInstr &MI, int *AddrIdx) {
   unsigned Opcode = MI.getOpcode();
   switch (Opcode) {
   default: return false;
@@ -125,7 +137,7 @@ static bool IsDangerousStore(const MachineInstr &MI, int *AddrOperand) {
   // Instructions with base address register in position 0...
   case ARM::VSTMD:
   case ARM::VSTMS:
-    *AddrOperand = 0;
+    *AddrIdx = 0;
     break;
 
   // Instructions with base address register in position 1...
@@ -134,7 +146,7 @@ static bool IsDangerousStore(const MachineInstr &MI, int *AddrOperand) {
   case ARM::STRH:
   case ARM::VSTRS:
   case ARM::VSTRD:
-    *AddrOperand = 1;
+    *AddrIdx = 1;
     break;
 
   // Instructions with base address register in position 2...
@@ -145,16 +157,28 @@ static bool IsDangerousStore(const MachineInstr &MI, int *AddrOperand) {
   case ARM::STRH_PRE:
   case ARM::STRH_POST:
   case ARM::STRD:
-    *AddrOperand = 2;
+    *AddrIdx = 2;
     break;
   }
 
-  if (MI.getOperand(*AddrOperand).getReg() == ARM::SP) {
+  if (MI.getOperand(*AddrIdx).getReg() == ARM::SP) {
     // The contents of SP do not require masking.
     return false;
   }
 
   return true;
+}
+
+static bool IsCPSRLiveOut(const MachineBasicBlock &MBB) {
+  // CPSR is live-out if any successor lists it as live-in.
+  for (MachineBasicBlock::const_succ_iterator SI = MBB.succ_begin(),
+                                              E = MBB.succ_end();
+       SI != E;
+       ++SI) {
+    const MachineBasicBlock *Succ = *SI;
+    if (Succ->isLiveIn(ARM::CPSR)) return true;
+  }
+  return false;
 }
 
 bool ARMSFIPlacement::PlaceMBB(MachineBasicBlock &MBB) {
@@ -165,15 +189,7 @@ bool ARMSFIPlacement::PlaceMBB(MachineBasicBlock &MBB) {
    * barf when applied pre-emit, after allocation, so we must do it ourselves.
    */ 
 
-  bool CPSRLive = false;
-  // CPSR is live-out if any successor lists it as live-in.
-  for (MachineBasicBlock::const_succ_iterator SI = MBB.succ_begin(),
-                                              E = MBB.succ_end();
-       SI != E;
-       ++SI) {
-    const MachineBasicBlock *Succ = *SI;
-    CPSRLive |= Succ->isLiveIn(ARM::CPSR);
-  }
+  bool CPSRLive = IsCPSRLiveOut(MBB);
 
   // Given that, record which instructions should not be altered to trash CPSR:
   std::set<const MachineInstr *> InstrsWhereCPSRLives;
@@ -201,11 +217,11 @@ bool ARMSFIPlacement::PlaceMBB(MachineBasicBlock &MBB) {
        ++MBBI) {
     MachineInstr &MI = *MBBI;
 
-    int AddrOperand;
-    if (IsDangerousStore(MI, &AddrOperand)) {
+    int AddrIdx;
+    if (IsDangerousStore(MI, &AddrIdx)) {
       bool CPSRLive =
           (InstrsWhereCPSRLives.find(&MI) != InstrsWhereCPSRLives.end());
-      IsolateStore(MBB, MBBI, MI, AddrOperand, CPSRLive);
+      SandboxStore(MBB, MBBI, MI, AddrIdx, CPSRLive);
       Modified = true;
     }
   }
