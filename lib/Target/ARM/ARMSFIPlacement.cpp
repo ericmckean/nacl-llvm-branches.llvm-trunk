@@ -46,6 +46,7 @@ namespace {
                       MachineInstr &MI,
                       int AddrIdx,
                       bool CPSRLive);
+    bool TryPredicating(MachineInstr &MI, ARMCC::CondCodes);
   };
   char ARMSFIPlacement::ID = 0;
 }
@@ -66,6 +67,23 @@ void ARMSFIPlacement::getAnalysisUsage(AnalysisUsage &AU) const {
   MachineFunctionPass::getAnalysisUsage(AU);
 }
 
+bool ARMSFIPlacement::TryPredicating(MachineInstr &MI, ARMCC::CondCodes Pred) {
+  // Can't predicate if it's already predicated.
+  // TODO(cbiffle): actually we can, if the conditions match.
+  if (TII->isPredicated(&MI)) return false;
+
+  /*
+   * ARM predicate operands use two actual MachineOperands: an immediate
+   * holding the predicate condition, and a register referencing the flags.
+   */
+  SmallVector<MachineOperand, 2> PredOperands;
+  PredOperands.push_back(MachineOperand::CreateImm((int64_t) Pred));
+  PredOperands.push_back(MachineOperand::CreateReg(ARM::CPSR, false));
+
+  // This attempts to rewrite, but some instructions can't be predicated.
+  return TII->PredicateInstruction(&MI, PredOperands);
+}
+
 /*
  * Sandboxes a store instruction by inserting an appropriate mask or check
  * operation before it.
@@ -75,58 +93,46 @@ void ARMSFIPlacement::SandboxStore(MachineBasicBlock &MBB,
                                    MachineInstr &MI,
                                    int AddrIdx,
                                    bool CPSRLive) {
-  ARMCC::CondCodes Pred = GetPredicate(MI);
   MachineOperand &Addr = MI.getOperand(AddrIdx);
 
-  if (!TII->isPredicated(&MI) && !CPSRLive) {
+  if (!CPSRLive && TryPredicating(MI, ARMCC::EQ)) {
     /*
      * For unconditional stores where CPSR is not in use, we can use a faster
      * sandboxing sequence by predicating the store -- assuming we *can*
      * predicate the store.
      */
 
+    // Instruction can be predicated -- use the new sandbox.
+    BuildMI(MBB, MBBI, MI.getDebugLoc(),
+            TII->get(ARM::SFISTRTST))
+      .addOperand(Addr)   // rD
+      .addReg(0);         // apparently unused source register?
+  } else {
+    // Use the older BIC sandbox, which is universal, but incurs a stall.
+    ARMCC::CondCodes Pred = GetPredicate(MI);
+    BuildMI(MBB, MBBI, MI.getDebugLoc(),
+            TII->get(ARM::SFISTRMASK))
+      .addOperand(Addr)        // rD
+      .addReg(0)               // apparently unused source register?
+      .addImm((int64_t) Pred)  // predicate condition
+      .addReg(ARM::CPSR);      // predicate source register (CPSR)
+
     /*
-     * ARM predicate operands use two actual MachineOperands: an immediate
-     * holding the predicate condition, and a register referencing the flags.
+     * This pseudo-instruction is intended to generate something resembling the
+     * following, but with alignment enforced.
+     * TODO(cbiffle): move alignment into this function, use the code below.
+     *
+     *  // bic<cc> Addr, Addr, #0xC0000000
+     *  BuildMI(MBB, MBBI, MI.getDebugLoc(),
+     *          TII->get(ARM::BICri))
+     *    .addOperand(Addr)        // rD
+     *    .addOperand(Addr)        // rN
+     *    .addImm(0xC0000000)      // imm
+     *    .addImm((int64_t) Pred)  // predicate condition
+     *    .addReg(ARM::CPSR)       // predicate source register (CPSR)
+     *    .addReg(0);              // flag output register (0 == no flags)
      */
-    SmallVector<MachineOperand, 2> PredOperands;
-    PredOperands.push_back(MachineOperand::CreateImm((int64_t) ARMCC::EQ));
-    PredOperands.push_back(MachineOperand::CreateReg(ARM::CPSR, false));
-
-    // Attempt to rewrite the instruction into its predicated equivalent.
-    if (TII->PredicateInstruction(&MI, PredOperands)) {
-      // Instruction can be predicated -- use the new sandbox.
-      BuildMI(MBB, MBBI, MI.getDebugLoc(),
-              TII->get(ARM::SFISTRTST))
-        .addOperand(Addr)   // rD
-        .addReg(0);         // apparently unused source register?
-      return;
-    }
-    // Otherwise, fall through to the old sandbox.
   }
-
-  BuildMI(MBB, MBBI, MI.getDebugLoc(),
-          TII->get(ARM::SFISTRMASK))
-    .addOperand(Addr)        // rD
-    .addReg(0)               // apparently unused source register?
-    .addImm((int64_t) Pred)  // predicate condition
-    .addReg(ARM::CPSR);      // predicate source register (CPSR)
-
-  /*
-   * This pseudo-instruction is intended to generate something resembling the
-   * following, but with alignment enforced.
-   * TODO(cbiffle): move alignment into this function, use the code below.
-   *
-   *  // bic<cc> Addr, Addr, #0xC0000000
-   *  BuildMI(MBB, MBBI, MI.getDebugLoc(),
-   *          TII->get(ARM::BICri))
-   *    .addOperand(Addr)        // rD
-   *    .addOperand(Addr)        // rN
-   *    .addImm(0xC0000000)      // imm
-   *    .addImm((int64_t) Pred)  // predicate condition
-   *    .addReg(ARM::CPSR)       // predicate source register (CPSR)
-   *    .addReg(0);              // flag output register (0 == no flags)
-   */
 }
 
 static bool IsDangerousStore(const MachineInstr &MI, int *AddrIdx) {
@@ -233,7 +239,8 @@ bool ARMSFIPlacement::runOnMachineFunction(MachineFunction &MF) {
   TII = MF.getTarget().getInstrInfo();
 
   bool Modified = false;
-  for (MachineFunction::iterator MFI = MF.begin(), E = MF.end(); MFI != E;
+  for (MachineFunction::iterator MFI = MF.begin(), E = MF.end();
+       MFI != E;
        ++MFI)
     Modified |= PlaceMBB(*MFI);
   return Modified;
