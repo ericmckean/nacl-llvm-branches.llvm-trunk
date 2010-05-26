@@ -164,6 +164,15 @@ ARMBaseRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
     ARM::D11, ARM::D10, ARM::D9,  ARM::D8,
     0
   };
+
+  // @LOCALMOD-START
+  // NOTE: this should not be necessary, but there seems to be a bug
+  //       that will occasionally save/restore r9 even if the register
+  //       allocator is not using it.
+  extern  cl::opt<bool> ReserveR9;
+  if (ReserveR9) return DarwinCalleeSavedRegs;
+  // @LOCALMOD-END
+
   return STI.isTargetDarwin() ? DarwinCalleeSavedRegs : CalleeSavedRegs;
 }
 
