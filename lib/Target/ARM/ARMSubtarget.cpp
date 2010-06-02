@@ -19,7 +19,7 @@
 #include "llvm/ADT/SmallVector.h"
 using namespace llvm;
 
-static cl::opt<bool>
+cl::opt<bool>  // @LOCALMOD
 ReserveR9("arm-reserve-r9", cl::Hidden,
           cl::desc("Reserve R9, making it unavailable as GPR"));
 static cl::opt<bool>
