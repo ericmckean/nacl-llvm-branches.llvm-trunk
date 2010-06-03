@@ -169,6 +169,20 @@ bool X86TargetMachine::addPostRegAlloc(PassManagerBase &PM,
   return true;  // -print-machineinstr should print after this.
 }
 
+// @LOCALMOD-START
+namespace llvm {
+extern FunctionPass* createX86NaClRewritePass();
+}
+
+bool X86TargetMachine::addPreEmitPass(PassManagerBase &PM,
+                                      CodeGenOpt::Level OptLevel) {
+
+  PM.add(createX86NaClRewritePass());
+  return true;
+}
+
+// @LOCALMOD-END
+
 bool X86TargetMachine::addCodeEmitter(PassManagerBase &PM,
                                       CodeGenOpt::Level OptLevel,
                                       JITCodeEmitter &JCE) {

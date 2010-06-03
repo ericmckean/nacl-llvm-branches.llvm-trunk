@@ -107,6 +107,27 @@ def extloadi64i32  : PatFrag<(ops node:$ptr), (i64 (extloadi32 node:$ptr))>;
 // Instruction list...
 //
 
+// @LOCALMOD-START
+let Defs = [RSP, EFLAGS], Uses = [RSP] in {
+def NACL_ADD_SP : I<0, Pseudo, (outs GR64:$dst), 
+                      (ins GR64:$src1, i64i32imm:$src2),
+                      "naclasp{q}\t{$src2, %r15|%r15, $src2}",
+                      [(set GR64:$dst, (add GR64:$src1, i64immSExt32:$src2)),
+                       (implicit EFLAGS)]>;
+
+
+
+def NACL_SUB_SP   : I<0, Pseudo, (outs GR64:$dst), 
+                      (ins GR64:$src1, i64i32imm:$src2),
+                      "naclasp{q}\t{$src2, %r15|%r15, $src2}",
+                      [(set GR64:$dst, (add GR64:$src1, i64immSExt32:$src2)),
+                       (implicit EFLAGS)]>;
+
+}
+
+// @LOCALMOD-END
+
+
 // ADJCALLSTACKDOWN/UP implicitly use/def RSP because they may be expanded into
 // a stack adjustment and the codegen must know that they may modify the stack
 // pointer before prolog-epilog rewriting occurs.
