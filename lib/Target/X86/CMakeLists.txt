@@ -28,6 +28,7 @@ set(sources
   X86MCAsmInfo.cpp
   X86MCCodeEmitter.cpp 
   X86MCTargetExpr.cpp
+  X86NaClRewritePass.cpp
   X86RegisterInfo.cpp
   X86Subtarget.cpp
   X86TargetMachine.cpp
