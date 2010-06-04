@@ -43,6 +43,7 @@ using namespace llvm;
 
 STATISTIC(NumLoadMoved, "Number of loads moved below TokenFactor");
 
+
 //===----------------------------------------------------------------------===//
 //                      Pattern Matcher Implementation
 //===----------------------------------------------------------------------===//
@@ -54,13 +55,17 @@ namespace {
   struct X86ISelAddressMode {
     enum {
       RegBase,
-      FrameIndexBase
+      FrameIndexBase,
+      NaclReserved // @LOCALMOD
     } BaseType;
 
+    
+   private: // @LOCALMOD
     struct {            // This is really a union, discriminated by BaseType!
       SDValue Reg;
       int FrameIndex;
     } Base;
+   public: // @LOCALMOD
 
     unsigned Scale;
     SDValue IndexReg; 
@@ -97,11 +102,29 @@ namespace {
         return RegNode->getReg() == X86::RIP;
       return false;
     }
-    
+
     void setBaseReg(SDValue Reg) {
       BaseType = RegBase;
       Base.Reg = Reg;
     }
+
+    // @LOCALMOD-START
+    SDValue  getBaseReg() {
+      // apparently, this is violated
+      //assert (BaseType == RegBase);
+      return Base.Reg;
+    }
+
+    int  getBaseFrameIndex() {
+      assert (BaseType == FrameIndexBase);
+      return Base.FrameIndex;
+    }
+
+    void setBaseFrameIndex(int index) {
+      BaseType = FrameIndexBase;
+      Base.FrameIndex = index;
+    }
+    // @LOCALMOD-END
 
     void dump() {
       dbgs() << "X86ISelAddressMode " << this << '\n';
@@ -219,8 +242,8 @@ namespace {
                                    SDValue &Scale, SDValue &Index,
                                    SDValue &Disp, SDValue &Segment) {
       Base  = (AM.BaseType == X86ISelAddressMode::FrameIndexBase) ?
-        CurDAG->getTargetFrameIndex(AM.Base.FrameIndex, TLI.getPointerTy()) :
-        AM.Base.Reg;
+              CurDAG->getTargetFrameIndex(AM.getBaseFrameIndex(), TLI.getPointerTy()) :
+              AM.getBaseReg();
       Scale = getI8Imm(AM.Scale);
       Index = AM.IndexReg;
       // These are 32-bit even in 64-bit mode since RIP relative offset
@@ -282,6 +305,16 @@ namespace {
     const X86InstrInfo *getInstrInfo() {
       return getTargetMachine().getInstrInfo();
     }
+
+    // @LOCALMO-START
+    bool RestrictUseOfBaseReg() {
+      if (!getTargetMachine().getSubtarget<X86Subtarget>().is64Bit()) return false;
+      // TODO: we should have another flag controling this
+      return true;
+    }
+    // @LOCALMO-END
+
+
   };
 }
 
@@ -553,8 +586,7 @@ bool X86DAGToDAGISel::MatchSegmentBaseAddress(SDValue N,
 
 bool X86DAGToDAGISel::MatchLoad(SDValue N, X86ISelAddressMode &AM) {
   // @LOCALMOD-START
-  // NOTE: the tls segment reg is NOT zero for nacl
-  return true;   
+  // TODO: needs more work
   // @LOCALMOD-END
 
   // This optimization is valid because the GNU TLS model defines that
@@ -659,15 +691,18 @@ bool X86DAGToDAGISel::MatchAddress(SDValue N, X86ISelAddressMode &AM) {
   if (MatchAddressRecursively(N, AM, 0))
     return true;
 
+
+  if (!RestrictUseOfBaseReg()) {   // @LOCALMOD
   // Post-processing: Convert lea(,%reg,2) to lea(%reg,%reg), which has
   // a smaller encoding and avoids a scaled-index.
   if (AM.Scale == 2 &&
       AM.BaseType == X86ISelAddressMode::RegBase &&
-      AM.Base.Reg.getNode() == 0) {
-    AM.Base.Reg = AM.IndexReg;
+      AM.getBaseReg().getNode() == 0) {
+    AM.setBaseReg(AM.IndexReg);
     AM.Scale = 1;
   }
-
+  } // @LOCALMOD
+  
   // Post-processing: Convert foo to foo(%rip), even in non-PIC mode,
   // because it has a smaller encoding.
   // TODO: Which other code models can use this?
@@ -675,11 +710,11 @@ bool X86DAGToDAGISel::MatchAddress(SDValue N, X86ISelAddressMode &AM) {
       Subtarget->is64Bit() &&
       AM.Scale == 1 &&
       AM.BaseType == X86ISelAddressMode::RegBase &&
-      AM.Base.Reg.getNode() == 0 &&
+      AM.getBaseReg().getNode() == 0 &&
       AM.IndexReg.getNode() == 0 &&
       AM.SymbolFlags == X86II::MO_NO_FLAG &&
       AM.hasSymbolicDisplacement())
-    AM.Base.Reg = CurDAG->getRegister(X86::RIP, MVT::i64);
+    AM.setBaseReg(CurDAG->getRegister(X86::RIP, MVT::i64));
 
   return false;
 }
@@ -749,9 +784,8 @@ bool X86DAGToDAGISel::MatchAddressRecursively(SDValue N, X86ISelAddressMode &AM,
 
   case ISD::FrameIndex:
     if (AM.BaseType == X86ISelAddressMode::RegBase
-        && AM.Base.Reg.getNode() == 0) {
-      AM.BaseType = X86ISelAddressMode::FrameIndexBase;
-      AM.Base.FrameIndex = cast<FrameIndexSDNode>(N)->getIndex();
+        && AM.getBaseReg().getNode() == 0) {
+      AM.setBaseFrameIndex(cast<FrameIndexSDNode>(N)->getIndex());
       return false;
     }
     break;
@@ -801,9 +835,10 @@ bool X86DAGToDAGISel::MatchAddressRecursively(SDValue N, X86ISelAddressMode &AM,
     // FALL THROUGH
   case ISD::MUL:
   case X86ISD::MUL_IMM:
+   if (!RestrictUseOfBaseReg()) { // @LOCALMOD
     // X*[3,5,9] -> X+X*[2,4,8]
     if (AM.BaseType == X86ISelAddressMode::RegBase &&
-        AM.Base.Reg.getNode() == 0 &&
+        AM.getBaseReg().getNode() == 0 &&
         AM.IndexReg.getNode() == 0) {
       if (ConstantSDNode
             *CN = dyn_cast<ConstantSDNode>(N.getNode()->getOperand(1)))
@@ -834,10 +869,12 @@ bool X86DAGToDAGISel::MatchAddressRecursively(SDValue N, X86ISelAddressMode &AM,
             Reg = N.getNode()->getOperand(0);
           }
 
-          AM.IndexReg = AM.Base.Reg = Reg;
+          AM.IndexReg = Reg;
+          AM.setBaseReg(Reg);
           return false;
         }
     }
+   } // @LOCALMOD
     break;
 
   case ISD::SUB: {
@@ -874,8 +911,8 @@ bool X86DAGToDAGISel::MatchAddressRecursively(SDValue N, X86ISelAddressMode &AM,
     // If the base is a register with multiple uses, this
     // transformation may save a mov.
     if ((AM.BaseType == X86ISelAddressMode::RegBase &&
-         AM.Base.Reg.getNode() &&
-         !AM.Base.Reg.getNode()->hasOneUse()) ||
+         AM.getBaseReg().getNode() &&
+         !AM.getBaseReg().getNode()->hasOneUse()) ||
         AM.BaseType == X86ISelAddressMode::FrameIndexBase)
       --Cost;
     // If the folded LHS was interesting, this transformation saves
@@ -921,17 +958,19 @@ bool X86DAGToDAGISel::MatchAddressRecursively(SDValue N, X86ISelAddressMode &AM,
       return false;
     AM = Backup;
 
+    if (!RestrictUseOfBaseReg()) { // @LOCALMOD
     // If we couldn't fold both operands into the address at the same time,
     // see if we can just put each operand into a register and fold at least
     // the add.
     if (AM.BaseType == X86ISelAddressMode::RegBase &&
-        !AM.Base.Reg.getNode() &&
+        !AM.getBaseReg().getNode() &&
         !AM.IndexReg.getNode()) {
-      AM.Base.Reg = N.getNode()->getOperand(0);
+      AM.setBaseReg(N.getNode()->getOperand(0));
       AM.IndexReg = N.getNode()->getOperand(1);
       AM.Scale = 1;
       return false;
     }
+    } // @LOCALMOD
     break;
   }
 
@@ -1085,8 +1124,16 @@ bool X86DAGToDAGISel::MatchAddressRecursively(SDValue N, X86ISelAddressMode &AM,
 /// MatchAddressBase - Helper for MatchAddress. Add the specified node to the
 /// specified addressing mode without any further recursion.
 bool X86DAGToDAGISel::MatchAddressBase(SDValue N, X86ISelAddressMode &AM) {
-  // Is the base register already occupied?
-  if (AM.BaseType != X86ISelAddressMode::RegBase || AM.Base.Reg.getNode()) {
+  if (RestrictUseOfBaseReg()) { // @LOCALMOD
+    if (AM.IndexReg.getNode() == 0) {
+      AM.IndexReg = N;
+      AM.Scale = 1;
+      return false;
+    }
+    return true;
+  } // @LOCALMOD
+// Is the base register already occupied?
+  if (AM.BaseType != X86ISelAddressMode::RegBase || AM.getBaseReg().getNode()) {
     // If so, check to see if the scale index register is set.
     if (AM.IndexReg.getNode() == 0) {
       AM.IndexReg = N;
@@ -1099,8 +1146,7 @@ bool X86DAGToDAGISel::MatchAddressBase(SDValue N, X86ISelAddressMode &AM) {
   }
 
   // Default, generate it as a register.
-  AM.BaseType = X86ISelAddressMode::RegBase;
-  AM.Base.Reg = N;
+  AM.setBaseReg(N);
   return false;
 }
 
@@ -1115,11 +1161,13 @@ bool X86DAGToDAGISel::SelectAddr(SDNode *Op, SDValue N, SDValue &Base,
     return false;
 
   EVT VT = N.getValueType();
+  
+  // @LOCALMOD: TODO this writes base reg and needs to be investigated
   if (AM.BaseType == X86ISelAddressMode::RegBase) {
-    if (!AM.Base.Reg.getNode())
-      AM.Base.Reg = CurDAG->getRegister(0, VT);
+    if (!AM.getBaseReg().getNode())
+      AM.setBaseReg(CurDAG->getRegister(0, VT));
   }
-
+  
   if (!AM.IndexReg.getNode())
     AM.IndexReg = CurDAG->getRegister(0, VT);
 
@@ -1193,10 +1241,13 @@ bool X86DAGToDAGISel::SelectLEAAddr(SDNode *Op, SDValue N,
   EVT VT = N.getValueType();
   unsigned Complexity = 0;
   if (AM.BaseType == X86ISelAddressMode::RegBase)
-    if (AM.Base.Reg.getNode())
+    // @LOCALMOD: TODO: revisit this hack
+    // if (AM.getBaseReg().getNode() || 1) // @LOCALMOD
+          if (AM.getBaseReg().getNode()) // @LOCALMOD
       Complexity = 1;
-    else
-      AM.Base.Reg = CurDAG->getRegister(0, VT);
+    else 
+      AM.setBaseReg(CurDAG->getRegister(0, VT));
+    
   else if (AM.BaseType == X86ISelAddressMode::FrameIndexBase)
     Complexity = 4;
 
@@ -1224,7 +1275,7 @@ bool X86DAGToDAGISel::SelectLEAAddr(SDNode *Op, SDValue N,
       Complexity += 2;
   }
 
-  if (AM.Disp && (AM.Base.Reg.getNode() || AM.IndexReg.getNode()))
+  if (AM.Disp && (AM.getBaseReg().getNode() || AM.IndexReg.getNode()))
     Complexity++;
 
   // If it isn't worth using an LEA, reject it.
@@ -1246,7 +1297,8 @@ bool X86DAGToDAGISel::SelectTLSADDRAddr(SDNode *Op, SDValue N, SDValue &Base,
   X86ISelAddressMode AM;
   AM.GV = GA->getGlobal();
   AM.Disp += GA->getOffset();
-  AM.Base.Reg = CurDAG->getRegister(0, N.getValueType());
+  // @LOCALMOD: TODO: this needs investigation
+  AM.setBaseReg(CurDAG->getRegister(0, N.getValueType()));
   AM.SymbolFlags = GA->getTargetFlags();
 
   if (N.getValueType() == MVT::i32) {
