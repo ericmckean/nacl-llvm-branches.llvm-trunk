@@ -323,12 +323,18 @@ X86RegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
   };
 
   static const unsigned CalleeSavedRegs64Bit[] = {
-    X86::RBX, X86::R12, X86::R13, X86::R14, X86::R15, X86::RBP, 0
+    X86::RBX, X86::R12, X86::R13, X86::R14,
+    // @LOCALMOD
+    // X86::R15,
+    X86::RBP, 0
   };
 
   static const unsigned CalleeSavedRegs64EHRet[] = {
     X86::RAX, X86::RDX, X86::RBX, X86::R12,
-    X86::R13, X86::R14, X86::R15, X86::RBP, 0
+    X86::R13, X86::R14,
+    // @LOCALMOD
+    // X86::R15,
+    X86::RBP, 0
   };
 
   static const unsigned CalleeSavedRegsWin64[] = {
@@ -439,11 +445,17 @@ BitVector X86RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   Reserved.set(X86::ST7);
 
   // @LOCALMOD-START
-  if (ReserveR15) {
+  // TODO(robertm): really use flag
+  const X86Subtarget& Subtarget = MF.getTarget().getSubtarget<X86Subtarget>();
+  if (Subtarget.is64Bit() && (ReserveR15 || 1)) {
     Reserved.set(X86::R15);
     Reserved.set(X86::R15D);
     Reserved.set(X86::R15W);
     Reserved.set(X86::R15B);
+    Reserved.set(X86::RBP);
+    Reserved.set(X86::EBP);
+    Reserved.set(X86::BP);
+    Reserved.set(X86::BPL);
   }
   // @LOCALMOD-END
 
