@@ -55,8 +55,7 @@ namespace {
   struct X86ISelAddressMode {
     enum {
       RegBase,
-      FrameIndexBase,
-      NaclReserved // @LOCALMOD
+      FrameIndexBase
     } BaseType;
 
     
@@ -587,6 +586,7 @@ bool X86DAGToDAGISel::MatchSegmentBaseAddress(SDValue N,
 bool X86DAGToDAGISel::MatchLoad(SDValue N, X86ISelAddressMode &AM) {
   // @LOCALMOD-START
   // TODO: needs more work
+  return true;
   // @LOCALMOD-END
 
   // This optimization is valid because the GNU TLS model defines that
