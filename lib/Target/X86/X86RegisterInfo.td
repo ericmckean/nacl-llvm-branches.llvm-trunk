@@ -225,6 +225,10 @@ let Namespace = "X86" in {
   def RCR6 : Register<"rcr6">;
   def RCR7 : Register<"rcr7">;
   def RCR8 : Register<"rcr8">; 
+
+  // Status flags register
+  def PSEUDO_NACL_SEG : Register<"nacl">; // @LOCALMOD
+
 }
 
 
