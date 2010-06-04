@@ -61,6 +61,7 @@ static bool IsStackChange(MachineInstr &MI) {
 static bool IsStore(MachineInstr &MI) {
   return MI.getDesc().mayStore();
 #if 0
+  // NOTE: for reference, but incomplete
   const unsigned Opcode = MI.getOpcode();
   switch (Opcode) {
    default:
@@ -86,6 +87,7 @@ static bool IsStore(MachineInstr &MI) {
 static bool IsLoad(MachineInstr &MI) {
   return MI.getDesc().mayLoad();
 #if 0
+  // NOTE: for reference, but incomplete
   const unsigned Opcode = MI.getOpcode();
   switch (Opcode) {
    default:
@@ -106,6 +108,19 @@ static bool IsLoad(MachineInstr &MI) {
   }
 #endif
 }
+
+
+static bool IsPushPop(MachineInstr &MI) {
+  const unsigned Opcode = MI.getOpcode();
+  switch (Opcode) {
+   default:
+    return false;
+   case X86::PUSH64r:
+   case X86::POP64r:
+    return true;
+  }
+}
+
 
 #define CASE(src, dst)  case X86:: src: return X86:: dst
 static int Get32BitRegFor64BitReg(int reg64) {
@@ -189,6 +204,11 @@ static bool IsSandboxedStackChange(MachineInstr &MI) {
    case X86::NACL_ADD_SP:
    case X86::NACL_SUB_SP:
     return true;
+
+   // trivially sandboxed
+   case X86::PUSH64r:
+   case X86::POP64r:
+    return true;
   }
 }
 
@@ -227,17 +247,20 @@ void X86NaClRewritePass::PassLighweightValidator(MachineBasicBlock &MBB) {
       }
 
       if (IsIndirectControlFlowChange(MI)) {
+        // TODO(robertm): add proper test
         errs() << "@VALIDATOR: BAD INDIRECT JUMP\n\n";
         DumpInstructionVerbose(MI);
       }
 
       if (IsFunctionCall(MI)) {
+        // TODO(robertm): add proper test
         errs() << "@VALIDATOR: BAD FUNCTION CALL\n\n";
         DumpInstructionVerbose(MI);
       }
 
 
       if (IsStore(MI) ){
+        // TODO(robertm): add proper test
         errs() << "@VALIDATOR: STORE\n\n";
         DumpInstructionVerbose(MI);
       }
@@ -261,26 +284,13 @@ bool X86NaClRewritePass::PassSandboxingStack(MachineBasicBlock &MBB) {
 
     MachineInstr &MI = *MBBI;
 
-    if (IsStackChange(MI)) {
+    if (IsStackChange(MI) && !IsSandboxedStackChange(MI)) {
       const unsigned Opcode = MI.getOpcode();
       switch (Opcode) {
        default:
         errs() << "@PassSandboxingStack UNEXPEXTED STACK CHANGE\n\n";
         DumpInstructionVerbose(MI);
         assert(0);
-
-       case X86::NACL_SUB_SP:
-       case X86::NACL_ADD_SP:
-        // these are our sandboxed versions and hence OK
-        // not sure why we see them again here
-        break;
-
-       case X86::PUSH64r:
-       case X86::POP64r:
-        errs() << "@PassSandboxingStack STACK CHANGE NYI\n\n";
-        DumpInstructionVerbose(MI);
-        Modified = true;
-        break;
 
        case X86::ADD64ri8:
         if (verbose) {
@@ -322,11 +332,18 @@ static bool MassageMemoryOp(MachineInstr &MI, int Op, bool doBase, bool doIndex,
   bool Modified = false;
   assert(isMem(&MI, Op));
 
+  const MachineOperand &IndexReg  = MI.getOperand(Op + 2);
+
+  // neither base nor index reg is rsp
+  bool isStackAccess = MI.getOperand(Op + 2).getReg() == X86::RSP ||
+                       MI.getOperand(Op + 0).getReg() == X86::RSP;
+
   // sneak in r15 as the base if possible
   // TODO: if a base reg is present, check whether it is a permissible reg
   if (doBase) {
     const MachineOperand &BaseReg  = MI.getOperand(Op + 0);
-    if(!BaseReg.getReg()) {
+    const MachineOperand &IndexReg  = MI.getOperand(Op + 2);
+    if (!isStackAccess && !BaseReg.getReg()) {
       const_cast<MachineOperand&>(BaseReg).setReg((int)X86::R15);
       Modified = true;
     }
@@ -344,7 +361,7 @@ static bool MassageMemoryOp(MachineInstr &MI, int Op, bool doBase, bool doIndex,
 
   if (doSeg) {
     const MachineOperand &SegmentReg = MI.getOperand(Op + 4);
-    if(!SegmentReg.getReg()) {
+    if (!isStackAccess && !SegmentReg.getReg()) {
       const_cast<MachineOperand&>(SegmentReg).setReg(X86::PSEUDO_NACL_SEG);
       Modified = true;
 
@@ -353,10 +370,11 @@ static bool MassageMemoryOp(MachineInstr &MI, int Op, bool doBase, bool doIndex,
   return Modified;
 }
 
+
 bool X86NaClRewritePass::PassSandboxingMassageLoadStore(MachineBasicBlock &MBB) {
   bool Modified = false;
   // TODO: disable this once we are more confident
-  bool verbose = 1;
+  bool verbose = 0;
 
 
   for (MachineBasicBlock::iterator MBBI = MBB.begin(), E = MBB.end();
@@ -365,7 +383,7 @@ bool X86NaClRewritePass::PassSandboxingMassageLoadStore(MachineBasicBlock &MBB) 
 
     MachineInstr &MI = *MBBI;
 
-    if (IsStore(MI)) {
+    if (IsStore(MI) && !IsPushPop(MI)) {
       if (!isMem(&MI, 0)) {
         errs() << "@PassSandboxingMassageLoadStore: UNEXPECTED memory operand location\n";
         DumpInstructionVerbose(MI);
@@ -380,14 +398,14 @@ bool X86NaClRewritePass::PassSandboxingMassageLoadStore(MachineBasicBlock &MBB) 
       }
     }
 
-    if (IsLoad(MI)) {
+    if (IsLoad(MI)&& !IsPushPop(MI)) {
       if (!isMem(&MI, 0)) {
         errs() << "@PassSandboxingMassageLoadStore: UNEXPECTED memory operand location\n";
         DumpInstructionVerbose(MI);
       } else {
         if (MassageMemoryOp(MI, 0, true, false, false)) {
           if (verbose) {
-            errs() << "@PassSandboxingMassageLoadStore after massage";
+            errs() << "@PassSandboxingMassageLoadStore after massage\n";
             DumpInstructionVerbose(MI);
 
           }

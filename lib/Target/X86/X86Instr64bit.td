@@ -119,7 +119,7 @@ def NACL_ADD_SP : I<0, Pseudo, (outs GR64:$dst),
 
 def NACL_SUB_SP   : I<0, Pseudo, (outs GR64:$dst), 
                       (ins GR64:$src1, i64i32imm:$src2),
-                      "naclasp{q}\t{$src2, %r15|%r15, $src2}",
+                      "naclssp{q}\t{$src2, %r15|%r15, $src2}",
                       [(set GR64:$dst, (add GR64:$src1, i64immSExt32:$src2)),
                        (implicit EFLAGS)]>;
 
