@@ -109,15 +109,13 @@ def extloadi64i32  : PatFrag<(ops node:$ptr), (i64 (extloadi32 node:$ptr))>;
 
 // @LOCALMOD-START
 let Defs = [RSP, EFLAGS], Uses = [RSP] in {
-def NACL_ADD_SP : I<0, Pseudo, (outs GR64:$dst), 
+    def NACL_ADD_SP : I<0, Pseudo, (outs GR64:$dst), 
                       (ins GR64:$src1, i64i32imm:$src2),
                       "naclasp{q}\t{$src2, %r15|%r15, $src2}",
                       [(set GR64:$dst, (add GR64:$src1, i64immSExt32:$src2)),
                        (implicit EFLAGS)]>;
 
-
-
-def NACL_SUB_SP   : I<0, Pseudo, (outs GR64:$dst), 
+   def NACL_SUB_SP   : I<0, Pseudo, (outs GR64:$dst), 
                       (ins GR64:$src1, i64i32imm:$src2),
                       "naclssp{q}\t{$src2, %r15|%r15, $src2}",
                       [(set GR64:$dst, (add GR64:$src1, i64immSExt32:$src2)),
@@ -125,6 +123,39 @@ def NACL_SUB_SP   : I<0, Pseudo, (outs GR64:$dst),
 
 }
 
+let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
+    def NACL_CALL64r    : I<0, Pseudo, (outs), (ins GR64:$dst, variable_ops),
+                          "naclcall\t$dst, %r15", []>;
+}
+
+// TODO: indicate that we clobber rcx
+let isTerminator = 1, isReturn = 1, isBarrier = 1,
+    hasCtrlDep = 1, FPForm = SpecialFP, FPFormBits = SpecialFP.Value in {
+
+  def NACL_RET64    : I<0, Pseudo, (outs), (ins variable_ops),
+                     "pop %rcx\n\tnacljmp %ecx, %r15", []>;
+}
+
+
+let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1 in
+  let Defs = [RAX, RCX, RDX, RSI, RDI, R8, R9, R10, R11,
+              FP0, FP1, FP2, FP3, FP4, FP5, FP6, ST0, ST1,
+              MM0, MM1, MM2, MM3, MM4, MM5, MM6, MM7,
+              XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
+              XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15, EFLAGS],
+      Uses = [RSP] in {
+
+  def NACL_TAILJMPr64 : I<0, Pseudo, (outs), (ins GR64_TC:$dst, variable_ops),
+                     "nacljmp\t$dst,%r15  # TAILCALL", []>;
+
+}
+
+let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
+  def NACL_JMP64r     : I<0, Pseudo, (outs), (ins GR64:$dst),
+                     "nacljmp\t$dst, %r15",
+                     []>;
+
+}
 // @LOCALMOD-END
 
 
@@ -169,10 +200,12 @@ let isCall = 1 in
                           (outs), (ins i64i32imm_pcrel:$dst, variable_ops),
                           "call{q}\t$dst", []>,
                         Requires<[In64BitMode, NotWin64]>;
+
+    def CALL64r    : I<0xFF, MRM2r, (outs), (ins GR64:$dst, variable_ops),
+                          "call{q}\t{*}$dst", [(X86call GR64:$dst)]>,
+                        Requires<[NotWin64]>;
+
 // @LOCALMOD-START
-    def CALL64r    : I<0, Pseudo, (outs), (ins GR32:$dst, variable_ops),
-                          "naclcall\t$dst, %r15", [(X86call GR32:$dst)]>,
-                        Requires<[NotWin64, In64BitMode]>;
     // def CALL64m       : I<0xFF, MRM2m, (outs), (ins i64mem:$dst, variable_ops),
     //                       "call{q}\t{*}$dst", [(X86call (loadi64 addr:$dst))]>,
     //                     Requires<[NotWin64]>;
@@ -182,10 +215,6 @@ let isCall = 1 in
 // @LOCALMOD-END
   }
 
-// @LOCALMOD-START
-def : Pat<(X86call GR64:$dst),
-          (CALL64r (EXTRACT_SUBREG GR64:$dst, x86_subreg_32bit))>;
-// @LOCALMOD-END
 
   // FIXME: We need to teach codegen about single list of call-clobbered 
   // registers.
@@ -230,16 +259,11 @@ let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1 in
                        (ins i64mem_TC:$dst, i32imm:$offset, variable_ops),
                        "#TC_RETURN $dst $offset", []>;
 
-  def NACLRET    : I<0, Pseudo, (outs), (ins variable_ops),
-                     "pop %rcx\n\tnacljmp %ecx, %r15",
-                     [(X86retflag 0)]>,
-                     Requires<[In64BitMode]>;
-
   def TAILJMPd64 : Ii32<0xE9, RawFrm, (outs),
                                       (ins i64i32imm_pcrel:$dst, variable_ops),
                    "jmp\t$dst  # TAILCALL", []>;
-  def TAILJMPr64 : I<0, Pseudo, (outs), (ins GR64_TC:$dst, variable_ops),
-                     "nacljmp\t$dst,%r15  # TAILCALL", []>;
+  def TAILJMPr64 : I<0xFF, MRM4r, (outs), (ins GR64_TC:$dst, variable_ops),
+                     "jmp{q}\t{*}$dst  # TAILCALL", []>;
 
    def TAILJMPm64 : I<0xFF, MRM4m, (outs), (ins i64mem_TC:$dst, variable_ops),
                       "jmp{q}\t{*}$dst  # TAILCALL", []>;
@@ -249,21 +273,16 @@ let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1 in
 let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
   def JMP64pcrel32 : I<0xE9, RawFrm, (outs), (ins brtarget:$dst), 
                        "jmp{q}\t$dst", []>;
+
+  def JMP64r     : I<0xFF, MRM4r, (outs), (ins GR64:$dst), "jmp{q}\t{*}$dst",
+                     [(brind GR64:$dst)]>;
 // @LOCALMOD-START
-  def JMP64r     : I<0xFF, MRM4r, (outs), (ins GR32:$dst),
-                     "nacljmp\t$dst, %r15",
-                     [(brind GR32:$dst)]>;
   // def JMP64m     : I<0xFF, MRM4m, (outs), (ins i64mem:$dst), "jmp{q}\t{*}$dst",
   //                    [(brind (loadi64 addr:$dst))]>;
-  def FARJMP64   : RI<0xFF, MRM5m, (outs), (ins opaque80mem:$dst),
-                      "ljmp{q}\t{*}$dst", []>;
+  //  def FARJMP64   : RI<0xFF, MRM5m, (outs), (ins opaque80mem:$dst),
+  //                    "ljmp{q}\t{*}$dst", []>;
 // @LOCALMOD-END
 }
-
-// @LOCALMOD-START
-def : Pat<(brind GR64:$dst),
-          (JMP64r (EXTRACT_SUBREG GR64:$dst, x86_subreg_32bit))>;
-// @LOCALMOD-END
 
 //===----------------------------------------------------------------------===//
 // EH Pseudo Instructions

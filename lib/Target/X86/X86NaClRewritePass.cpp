@@ -42,6 +42,7 @@ namespace {
 
   private:
     bool PassSandboxingStack(MachineBasicBlock &MBB);
+    bool PassSandboxingControlFlow(MachineBasicBlock &MBB, bool is64bit);
     bool PassSandboxingMassageLoadStore(MachineBasicBlock &MBB);
     void PassLighweightValidator(MachineBasicBlock &MBB);
   };
@@ -157,6 +158,25 @@ static bool IsIndirectControlFlowChange(MachineInstr &MI) {
 
    // Returns
    case X86::RET:
+    return true;
+
+    // Indirect Jumps
+   case X86::JMP32r:
+   case X86::JMP64r:
+    return true;
+
+   case X86::CALL32r:
+   case X86::CALL64r:
+   case X86::TAILJMPr64:
+   case X86::TAILJMPr:
+    return true;
+
+    // Probably overkill - we do not expect these
+   case X86::FARJMP16i:
+   case X86::FARJMP32i:
+   case X86::FARJMP16m:
+   case X86::FARJMP32m:
+
    case X86::RETI:
    case X86::TCRETURNdi:
    case X86::TCRETURNri:
@@ -169,18 +189,6 @@ static bool IsIndirectControlFlowChange(MachineInstr &MI) {
     return true;
 
 
-    // Indirect Jumps
-   case X86::JMP32r:
-    //case X86::JMP32m:  // already banned in the td file
-    return true;
-    // Probably overkill - we do not expect these
-   case X86::FARJMP16i:
-   case X86::FARJMP32i:
-   case X86::FARJMP16m:
-   case X86::FARJMP32m:
-    return true;
-   case X86::CALL32r:
-    return true;
   }
 }
 
@@ -213,7 +221,7 @@ static bool IsSandboxedStackChange(MachineInstr &MI) {
 }
 
 
-static bool DumpInstructionVerbose(MachineInstr &MI) {
+static void DumpInstructionVerbose(MachineInstr &MI) {
   errs() << MI;
   errs() << MI.getNumOperands() << " operands:" << "\n";
   for (unsigned i = 0; i < MI.getNumOperands(); ++i) {
@@ -259,7 +267,7 @@ void X86NaClRewritePass::PassLighweightValidator(MachineBasicBlock &MBB) {
       }
 
 
-      if (IsStore(MI) ){
+      if (IsStore(MI) && !IsPushPop(MI) ){
         // TODO(robertm): add proper test
         errs() << "@VALIDATOR: STORE\n\n";
         DumpInstructionVerbose(MI);
@@ -293,6 +301,7 @@ bool X86NaClRewritePass::PassSandboxingStack(MachineBasicBlock &MBB) {
         assert(0);
 
        case X86::ADD64ri8:
+       case X86::ADD64ri32:
         if (verbose) {
           errs() << "@PassSandboxingStack: BEFORE\n";
           DumpInstructionVerbose(MI);
@@ -306,6 +315,7 @@ bool X86NaClRewritePass::PassSandboxingStack(MachineBasicBlock &MBB) {
         break;
 
        case X86::SUB64ri8:
+       case X86::SUB64ri32:
         if (verbose) {
           errs() << "@PassSandboxingStack: BEFORE\n";
           DumpInstructionVerbose(MI);
@@ -332,8 +342,6 @@ static bool MassageMemoryOp(MachineInstr &MI, int Op, bool doBase, bool doIndex,
   bool Modified = false;
   assert(isMem(&MI, Op));
 
-  const MachineOperand &IndexReg  = MI.getOperand(Op + 2);
-
   // neither base nor index reg is rsp
   bool isStackAccess = MI.getOperand(Op + 2).getReg() == X86::RSP ||
                        MI.getOperand(Op + 0).getReg() == X86::RSP;
@@ -342,7 +350,6 @@ static bool MassageMemoryOp(MachineInstr &MI, int Op, bool doBase, bool doIndex,
   // TODO: if a base reg is present, check whether it is a permissible reg
   if (doBase) {
     const MachineOperand &BaseReg  = MI.getOperand(Op + 0);
-    const MachineOperand &IndexReg  = MI.getOperand(Op + 2);
     if (!isStackAccess && !BaseReg.getReg()) {
       const_cast<MachineOperand&>(BaseReg).setReg((int)X86::R15);
       Modified = true;
@@ -417,22 +424,96 @@ bool X86NaClRewritePass::PassSandboxingMassageLoadStore(MachineBasicBlock &MBB) 
   return Modified;
 }
 
+/*
+ * Sandboxes stack changes (64 bit only)
+ */
+
+bool X86NaClRewritePass::PassSandboxingControlFlow(MachineBasicBlock &MBB,
+                                                   bool is64Bit) {
+  bool Modified = false;
+  const TargetInstrInfo* TII = MBB.getParent()->getTarget().getInstrInfo();
+
+  for (MachineBasicBlock::iterator MBBI = MBB.begin(), E = MBB.end();
+       MBBI != E;
+       ++MBBI) {
+
+    MachineInstr &MI = *MBBI;
+
+    if (!IsIndirectControlFlowChange(MI)) continue;
+
+    const unsigned Opcode = MI.getOpcode();
+    switch (Opcode) {
+     default:
+      errs() << "@PassSandboxingStack UNEXPECTED CONTROL FLOW CHANGE\n\n";
+      DumpInstructionVerbose(MI);
+      assert(0);
+     case X86::CALL32r:
+      MI.setDesc(TII->get(X86::NACL_CALL32r));
+      Modified = true;
+      break;
+
+     case X86::JMP32r:
+      MI.setDesc(TII->get(X86::NACL_JMP32r));
+      Modified = true;
+      break;
+
+     case X86::TAILJMPr:
+      MI.setDesc(TII->get(X86::NACL_TAILJMPr));
+      Modified = true;
+      break;
+
+     case X86::RET:
+      if (is64Bit) {
+        MI.setDesc(TII->get(X86::NACL_RET64));
+      } else {
+        MI.setDesc(TII->get(X86::NACL_RET32));
+      }
+      Modified = true;
+      break;
+
+     case X86::JMP64r:
+     case X86::CALL64r: {
+      MI.setDesc(TII->get(X86::NACL_CALL64r));
+      const MachineOperand &IndexReg  = MI.getOperand(0);
+      const int reg32bit = Get32BitRegFor64BitReg(IndexReg.getReg());
+      assert (reg32bit > 0);
+      const_cast<MachineOperand&>(IndexReg).setReg(reg32bit);
+      Modified = true;
+      break;
+     }
+
+#if 0
+      // We have not yet encountered this one
+     case X86::TAILJMPr64:
+      MI.setDesc(TII->get(X86::NACL_TAILJMPr64));
+      Modified = true;
+      break;
+#endif
+    }
+  }
+  return Modified;
+}
+
 
 bool X86NaClRewritePass::runOnMachineFunction(MachineFunction &MF) {
-  const TargetMachine &TM = MF.getTarget();
-
   bool Modified = false;
+
+  const TargetMachine &TM = MF.getTarget();
+  const bool is64bit = TM.getSubtarget<X86Subtarget>().is64Bit();
+
   for (MachineFunction::iterator MFI = MF.begin(), E = MF.end();
        MFI != E;
        ++MFI) {
-    // TODO: this should be controlled by a command line flag
-    if (TM.getSubtarget<X86Subtarget>().is64Bit()) {
+    // TODO: the passes should be controllable by a command line flag
+    if (is64bit) {
       Modified |= PassSandboxingStack(*MFI);
       Modified |= PassSandboxingMassageLoadStore(*MFI);
     }
 
+    Modified |= PassSandboxingControlFlow(*MFI, is64bit);
     PassLighweightValidator(*MFI);
   }
+
   return Modified;
 }
 
