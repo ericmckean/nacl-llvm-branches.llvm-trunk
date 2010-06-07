@@ -1163,7 +1163,8 @@ void X86RegisterInfo::emitEpilogue(MachineFunction &MF,
   default:
     llvm_unreachable("Can only insert epilog into returning blocks");
   case X86::RET:
-  case X86::NACLRET:
+  case X86::NACL_RET64:
+  case X86::NACL_RET32:
   case X86::RETI:
   case X86::TCRETURNdi:
   case X86::TCRETURNri:
