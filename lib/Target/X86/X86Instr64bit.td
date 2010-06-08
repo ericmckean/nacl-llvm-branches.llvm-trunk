@@ -135,7 +135,8 @@ let isCall = 1 in
       Uses = [RSP] in {
       
     def NACL_CALL64r    : I<0, Pseudo, (outs), (ins GR64:$dst, variable_ops),
-                          "naclcall\t$dst, %r15", []>;
+                          "naclcall\t$dst, %r15", 
+			  []>;
 }
 
 // TODO: indicate that we clobber rcx
@@ -156,7 +157,8 @@ let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1 in
       Uses = [RSP] in {
 
   def NACL_TAILJMPr64 : I<0, Pseudo, (outs), (ins GR64_TC:$dst, variable_ops),
-                     "nacljmp\t$dst,%r15  # TAILCALL", []>;
+                     "nacljmp\t$dst,%r15  # TAILCALL", 
+		     []>;
 
 }
 
@@ -166,6 +168,13 @@ let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
                      []>;
 
 }
+
+// TODO: indicate that we clobber rcx
+def NACL_POP_RBP   : I<0, Pseudo,
+                   (outs GR64:$reg), (ins), 
+		   "pop\t%rcx\n\t naclrestbp\t%ecx, %r15", 
+		   []>;
+
 // @LOCALMOD-END
 
 
