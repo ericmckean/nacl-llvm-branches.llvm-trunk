@@ -569,8 +569,12 @@ ifdef LOADABLE_MODULE
 endif
 
 ifdef SHARED_LIBRARY
+ifneq ($(HOST_OS),Darwin)
+  LD.Flags += $(RPATH) -Wl,'$$ORIGIN'
+else
 ifneq ($(DARWIN_MAJVERS),4)
   LD.Flags += $(RPATH) -Wl,$(LibDir)
+endif
 endif
 endif
 
@@ -1062,7 +1066,12 @@ install-local::
 uninstall-local::
 	$(Echo) Uninstall circumvented with NO_INSTALL
 else
+
+ifdef LOADABLE_MODULE
+DestSharedLib = $(PROJ_libdir)/$(LIBRARYNAME)$(SHLIBEXT)
+else
 DestSharedLib = $(PROJ_libdir)/lib$(LIBRARYNAME)$(SHLIBEXT)
+endif
 
 install-local:: $(DestSharedLib)
 
