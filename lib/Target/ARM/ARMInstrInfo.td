@@ -573,16 +573,39 @@ PseudoInst<(outs), (ins i32imm:$amt, pred:$p), NoItinerary,
            [(ARMcallseq_start timm:$amt)]>;
 }
 
-def SFISTRMASK :
+// @LOCALMOD-START
+def SFI_GUARD_STORE :
 PseudoInst<(outs GPR:$dst), (ins GPR:$a, pred:$p), NoItinerary,
            "sfi_store_preamble $dst, $p",
            []>;
 
 let Defs = [CPSR] in
-def SFISTRTST :
+def SFI_GUARD_STORE_TST :
 PseudoInst<(outs GPR:$dst), (ins GPR:$a), NoItinerary,
            "sfi_cstore_preamble $dst",
            []>;
+
+def SFI_GUARD_INDIRECT_CALL :
+PseudoInst<(outs GPR:$dst), (ins GPR:$a, pred:$p), NoItinerary,
+           "sfi_indirect_call_preamble $dst, $p",
+           []>;
+
+def SFI_GUARD_INDIRECT_JMP :
+PseudoInst<(outs GPR:$dst), (ins GPR:$a, pred:$p), NoItinerary,
+           "sfi_indirect_jump_preamble $dst, $p",
+           []>;
+
+def SFI_GUARD_CALL :
+PseudoInst<(outs), (ins pred:$p), NoItinerary,
+           "sfi_call_preamble $p",
+           []>;
+
+// NOTE: the BX_RET instruction hardcodes lr as well
+def SFI_GUARD_RETURN :
+PseudoInst<(outs), (ins pred:$p), NoItinerary,
+           "sfi_return_preamble lr, $p",
+           []>;
+// @LOCALMOD-END
 
 def DWARF_LOC :
 PseudoInst<(outs), (ins i32imm:$line, i32imm:$col, i32imm:$file), NoItinerary,
@@ -661,12 +684,8 @@ def LEApcrelJT : AXI1<0x0, (outs GPR:$dst),
 //
 
 let isReturn = 1, isTerminator = 1, isBarrier = 1 in
-// @LOCALMOD-START
   def BX_RET : AI<(outs), (ins), BrMiscFrm, IIC_Br, 
-//                  "bx", "\tlr", [(ARMretflag)]> {
-                  "sfi_bx", "\tlr", [(ARMretflag)]> {
-
-// @LOCALMOD-END
+                  "bx", "\tlr", [(ARMretflag)]> {
   let Inst{7-4}   = 0b0001;
   let Inst{19-8}  = 0b111111111111;
   let Inst{27-20} = 0b00010010;
@@ -674,11 +693,7 @@ let isReturn = 1, isTerminator = 1, isBarrier = 1 in
 
 // Indirect branches
 let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
-    // @LOCALMOD-START
-    //  def BRIND : AXI<(outs), (ins GPR:$dst), BrMiscFrm, IIC_Br, "bx\t$dst",
-    def BRIND : AXI<(outs), (ins GPR:$dst), BrMiscFrm, IIC_Br,
-    "sfi_indirect_jump_preamble $dst\n\tbx\t$dst",
-    // @LOCALMOD-END
+    def BRIND : AXI<(outs), (ins GPR:$dst), BrMiscFrm, IIC_Br, "bx\t$dst",
                   [(brind GPR:$dst)]> {
     let Inst{7-4}   = 0b0001;
     let Inst{19-8}  = 0b111111111111;
@@ -702,29 +717,20 @@ let isCall = 1,
           D16, D17, D18, D19, D20, D21, D22, D23,
           D24, D25, D26, D27, D28, D29, D30, D31, CPSR, FPSCR] in {
   def BL  : ABXI<0b1011, (outs), (ins i32imm:$func, variable_ops),
-// @LOCALMOD-START
-//                IIC_Br, "bl\t${func:call}",
-                IIC_Br, "sfi_call_preamble\n\tbl\t${func:call}",
-// @LOCALMOD-END
+                IIC_Br, "bl\t${func:call}",
                 [(ARMcall tglobaladdr:$func)]>,
             Requires<[IsARM, IsNotDarwin]> {
     let Inst{31-28} = 0b1110;
   }
 
   def BL_pred : ABI<0b1011, (outs), (ins i32imm:$func, variable_ops),
-// @LOCALMOD-START
-//                   IIC_Br, "bl", "\t${func:call}",
-                   IIC_Br, "sfi_call_preamble\n\tbl", "\t${func:call}",
-// @LOCALMOD-END
+                   IIC_Br, "bl", "\t${func:call}",
                    [(ARMcall_pred tglobaladdr:$func)]>,
                 Requires<[IsARM, IsNotDarwin]>;
 
   // ARMv5T and above
   def BLX : AXI<(outs), (ins GPR:$func, variable_ops), BrMiscFrm,
-// @LOCALMOD-START
-//                IIC_Br, "blx\t$func",
-                IIC_Br, "sfi_indirect_call_preamble $func\n\tblx\t$func",
-// @LOCALMOD-END
+                IIC_Br, "blx\t$func",
                 [(ARMcall GPR:$func)]>,
             Requires<[IsARM, HasV5T, IsNotDarwin]> {
     let Inst{7-4}   = 0b0011;
@@ -734,11 +740,7 @@ let isCall = 1,
 
   // ARMv4T
   def BX : ABXIx2<(outs), (ins GPR:$func, variable_ops),
-// @LOCALMOD-START
-//                  IIC_Br, "mov\tlr, pc\n\tbx\t$func",
-// TODO(robertm): this does not quite work
-                  IIC_Br, "sfi_call_preamble\n\tmov\tlr, pc\n\tbx\t$func",
-// @LOCALMOD-END
+                  IIC_Br, "mov\tlr, pc\n\tbx\t$func",
                   [(ARMcall_nolink GPR:$func)]>,
            Requires<[IsARM, IsNotDarwin]> {
     let Inst{7-4}   = 0b0001;
@@ -754,28 +756,19 @@ let isCall = 1,
           D16, D17, D18, D19, D20, D21, D22, D23,
           D24, D25, D26, D27, D28, D29, D30, D31, CPSR, FPSCR] in {
   def BLr9  : ABXI<0b1011, (outs), (ins i32imm:$func, variable_ops),
-// @LOCALMOD-START
-//                IIC_Br, "bl\t${func:call}",
-                IIC_Br, "sfi_call_preamble\n\tbl\t${func:call}",
-// @LOCALMOD-END
+                IIC_Br, "bl\t${func:call}",
                 [(ARMcall tglobaladdr:$func)]>, Requires<[IsARM, IsDarwin]> {
     let Inst{31-28} = 0b1110;
   }
 
   def BLr9_pred : ABI<0b1011, (outs), (ins i32imm:$func, variable_ops),
-// @LOCALMOD-START
-//                   IIC_Br, "bl", "\t${func:call}",
-                   IIC_Br, "sfi_call_preamble\n\tbl", "\t${func:call}",
-// @LOCALMOD-END
+                   IIC_Br, "bl", "\t${func:call}",
                    [(ARMcall_pred tglobaladdr:$func)]>,
                   Requires<[IsARM, IsDarwin]>;
 
   // ARMv5T and above
   def BLXr9 : AXI<(outs), (ins GPR:$func, variable_ops), BrMiscFrm,
-// @LOCALMOD-START
-//                IIC_Br, "blx\t$func",
-                IIC_Br, "sfi_indirect_call_preamble $func\n\tblx\t$func",
-// @LOCALMOD-END
+                IIC_Br, "blx\t$func",
                 [(ARMcall GPR:$func)]>, Requires<[IsARM, HasV5T, IsDarwin]> {
     let Inst{7-4}   = 0b0011;
     let Inst{19-8}  = 0b111111111111;
@@ -784,11 +777,7 @@ let isCall = 1,
 
   // ARMv4T
   def BXr9 : ABXIx2<(outs), (ins GPR:$func, variable_ops),
-// @LOCALMOD-START
-//                  IIC_Br, "mov\tlr, pc\n\tbx\t$func",
-// TODO(robertm): this does not quite work
-                  IIC_Br, "sfi_call_preamble\n\tmov\tlr, pc\n\tbx\t$func",
-// @LOCALMOD-END
+                  IIC_Br, "mov\tlr, pc\n\tbx\t$func",
                   [(ARMcall_nolink GPR:$func)]>, Requires<[IsARM, IsDarwin]> {
     let Inst{7-4}   = 0b0001;
     let Inst{19-8}  = 0b111111111111;
@@ -1617,10 +1606,7 @@ def MOVCCi : AI1<0b1101, (outs GPR:$dst),
 let isCall = 1,
   Defs = [R0, R12, LR, CPSR] in {
   def TPsoft : ABXI<0b1011, (outs), (ins), IIC_Br,
-// @LOCALMOD-START
-//               "bl\t__aeabi_read_tp",
-               "sfi_call_preamble\n\tbl\t__aeabi_read_tp",
-// @LOCALMOD-END
+               "bl\t__aeabi_read_tp",
                [(set R0, ARMthread_pointer)]>;
 }
 

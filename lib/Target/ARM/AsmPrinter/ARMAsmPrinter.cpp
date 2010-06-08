@@ -57,6 +57,15 @@ using namespace llvm;
 
 // @LOCALMOD
 cl::opt<bool> FlagSfiZeroMask("sfi-zero-mask");
+
+extern cl::opt<bool> FlagSfiStore;
+extern cl::opt<bool> FlagSfiStack;
+extern cl::opt<bool> FlagSfiBranch;
+cl::opt<bool> FlagSfiData("sfi-data",
+                        cl::desc("use illegal at data bundle beginning"));
+// @LOCALMOD-END
+
+
 // @LOCALMOD
 
 STATISTIC(EmittedInsts, "Number of machine instrs printed");
@@ -243,14 +252,6 @@ namespace {
     }
   };
 } // end of anonymous namespace
-
-// @LOCALMOD-START
-extern cl::opt<bool> FlagSfiStore;
-extern cl::opt<bool> FlagSfiStack;
-extern cl::opt<bool> FlagSfiBranch;
-cl::opt<bool> FlagSfiData("sfi-data",
-                        cl::desc("use illegal at data bundle beginning"));
-// @LOCALMOD-END
 
 
 #include "ARMGenAsmWriter.inc"
@@ -1317,7 +1318,6 @@ void ARMAsmPrinter::EmitStartOfAsmFile(Module &M) {
     "\n\n";
 
   O << " @ ========================================\n";
-
   if (FlagSfiZeroMask) {
     O <<
       "\t.macro sfi_data_mask reg cond\n"
@@ -1354,30 +1354,35 @@ void ARMAsmPrinter::EmitStartOfAsmFile(Module &M) {
   O << " @ ========================================\n";
   if (FlagSfiBranch) {
     O <<
-      "\t.macro sfi_call_preamble\n"
+      "\t.macro sfi_call_preamble cond=\n"
       "\tsfi_nops_to_force_slot3\n"
       "\t.endm\n"
       "\n\n";
 
     O <<
-      "\t.macro sfi_return_alignment_and_code_mask reg cond=\n"
+      "\t.macro sfi_return_preamble reg cond=\n"
       "\tsfi_nop_if_at_bundle_end\n"
       "\tsfi_code_mask \\reg \\cond\n"
       "\t.endm\n"
       "\n\n";
-
-  } else {
+    
+    // This is used just before "bx rx"
     O <<
-      "\t.macro sfi_call_preamble\n"
+      "\t.macro sfi_indirect_jump_preamble link cond=\n"
+      "\tsfi_nop_if_at_bundle_end\n"
+      "\tsfi_code_mask \\link \\cond\n"
       "\t.endm\n"
       "\n\n";
 
+    // This is use just before "blx rx"
     O <<
-      "\t.macro sfi_return_alignment_and_code_mask reg cond=\n"
+      "\t.macro sfi_indirect_call_preamble link cond=\n"
+      "\tsfi_nops_to_force_slot2\n"
+      "\tsfi_code_mask \\link \\cond\n"
       "\t.endm\n"
       "\n\n";
+
   }
-
 
   if (FlagSfiStore) {
     O << " @ ========================================\n";
@@ -1485,50 +1490,10 @@ void ARMAsmPrinter::EmitStartOfAsmFile(Module &M) {
     }
 
   } // FlagSfiStack
-
-
-  O << " @ ========================================\n";
-
-  O <<
-    "\t.macro sfi_bx link\n"
-    "\tsfi_return_alignment_and_code_mask \\link\n"
-    "\tbx \\link\n"
-    "\t.endm\n"
-    "\n\n";
-
-
-  for (int p=0; kPreds[p] != NULL; ++ p) {
-    O <<
-      "\t.macro sfi_bx" << kPreds[p] << " link\n"
-      "\tsfi_return_alignment_and_code_mask \\link " << kPreds[p] << "\n"
-      "\tbx" << kPreds[p] << " \\link\n"
-      "\t.endm\n"
-      "\n\n";
-  }
-
-
-  O << " @ ========================================\n";
-
-  // This is use just before "mov pc, rx"
-  // TODO: make it possible to turn this off
-  O <<
-    "\t.macro sfi_indirect_jump_preamble link\n"
-    "\tsfi_nop_if_at_bundle_end\n"
-    "\tsfi_code_mask \\link\n"
-    "\t.endm\n"
-    "\n\n";
-
-  // This is use just before "blx rx"
-  // TODO: make it possible to turn this off
-  O <<
-    "\t.macro sfi_indirect_call_preamble link\n"
-    "\tsfi_nops_to_force_slot2\n"
-    "\tsfi_code_mask \\link\n"
-    "\t.endm\n"
-    "\n\n";
-
+  
   O << " @ ========================================\n";
   O << "\t.text\n";
+
 
   // @LOCALMOD-END
 
