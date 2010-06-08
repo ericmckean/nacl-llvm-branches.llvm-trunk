@@ -22,8 +22,10 @@
 #include "llvm/Support/CommandLine.h" // @LOCALMOD
 using namespace llvm;
 
-extern cl::opt<bool> FlagSfiStore; // @LOCALMOD
-
+// @LOCALMOD-START
+extern cl::opt<bool> FlagSfiStore;
+extern cl::opt<bool> FlagSfiBranch;
+// @LOCALMOD-END
 
 static const MCAsmInfo *createMCAsmInfo(const Target &T, StringRef TT) {
   Triple TheTriple(TT);
@@ -133,9 +135,11 @@ bool ARMBaseTargetMachine::addPreEmitPass(PassManagerBase &PM,
 
   PM.add(createARMConstantIslandPass());
 
-  if (FlagSfiStore) {
+  // @LOCALMOD-START
+  if (FlagSfiStore || FlagSfiBranch) {
     PM.add(createARMSFIPlacementPass());
   }
+  // @LOCALMOD-END
 
   return true;
 }
@@ -199,4 +203,3 @@ bool ARMBaseTargetMachine::addSimpleCodeEmitter(PassManagerBase &PM,
   PM.add(createARMObjectCodeEmitterPass(*this, OCE));
   return false;
 }
-
