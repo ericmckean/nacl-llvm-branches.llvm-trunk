@@ -1534,6 +1534,14 @@ X86TargetLowering::LowerFormalArguments(SDValue Chain,
       Fn->getName() == "main")
     FuncInfo->setForceFramePointer(true);
 
+
+  // @LOCALMOD-START
+  const TargetMachine &TM = MF.getTarget();
+  if (TM.getSubtarget<X86Subtarget>().is64Bit()) {
+    FuncInfo->setForceFramePointer(true);
+  }
+  // @LOCALMOD-END
+  
   MachineFrameInfo *MFI = MF.getFrameInfo();
   bool Is64Bit = Subtarget->is64Bit();
   bool IsWin64 = Subtarget->isTargetWin64();
