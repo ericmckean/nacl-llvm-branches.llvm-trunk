@@ -26,6 +26,7 @@ add_llvm_target(ARMCodeGen
   ARMMCAsmInfo.cpp
   ARMRegisterInfo.cpp
   ARMSFIPlacement.cpp
+  ARMSFIBranch.cpp
   ARMSubtarget.cpp
   ARMTargetMachine.cpp
   NEONMoveFix.cpp

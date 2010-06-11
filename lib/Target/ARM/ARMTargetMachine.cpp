@@ -136,9 +136,10 @@ bool ARMBaseTargetMachine::addPreEmitPass(PassManagerBase &PM,
   PM.add(createARMConstantIslandPass());
 
   // @LOCALMOD-START
-  if (FlagSfiStore || FlagSfiBranch) {
+  if (FlagSfiStore)
     PM.add(createARMSFIPlacementPass());
-  }
+  if (FlagSfiBranch)
+    PM.add(createARMSFIBranchPass());
   // @LOCALMOD-END
 
   return true;

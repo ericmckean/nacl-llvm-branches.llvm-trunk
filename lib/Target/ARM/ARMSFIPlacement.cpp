@@ -50,9 +50,7 @@ namespace {
     }
 
   private:
-    bool PlaceMBB(MachineBasicBlock &MBB);
-    bool PassStoreSandboxing(MachineBasicBlock &MBB);
-    bool PassBranchSandboxing(MachineBasicBlock &MBB);
+    bool SandboxStoresInBlock(MachineBasicBlock &MBB);
     void SandboxStore(MachineBasicBlock &MBB,
                       MachineBasicBlock::iterator MBBI,
                       MachineInstr &MI,
@@ -147,59 +145,6 @@ void ARMSFIPlacement::SandboxStore(MachineBasicBlock &MBB,
   }
 }
 
-
-static bool IsDirectCall(const MachineInstr &MI) {
-  switch (MI.getOpcode()) {
-   default: return false;
-
-   case ARM::BLr9:
-   case ARM::BLr9_pred:
-    assert(0 && "This should not have happend. We do not support usage of r9.");
-    return true;
-
-   case ARM::BL:
-   case ARM::BL_pred:
-   case ARM::TPsoft:
-    return true;
-  }
-}
-
-
-static bool IsIndirectCall(const MachineInstr &MI) {
-  switch (MI.getOpcode()) {
-   default: return false;
-
-   case ARM::BLXr9:
-    assert(0 && "we do not support usage of r9");
-
-   case ARM::BLX:
-    return true;
-  }
-}
-
-
-static bool IsIndirectJump(const MachineInstr &MI) {
-  switch (MI.getOpcode()) {
-   default: return false;
-
-   case ARM::BRIND:
-    return true;
-  }
-}
-
-
-static bool IsReturn(const MachineInstr &MI) {
-  switch (MI.getOpcode()) {
-   default: return false;
-
-   case ARM::BX_RET:
-    return true;
-  }
-}
-
-
-
-
 static bool IsDangerousStore(const MachineInstr &MI, int *AddrIdx) {
   unsigned Opcode = MI.getOpcode();
   switch (Opcode) {
@@ -252,7 +197,7 @@ static bool IsCPSRLiveOut(const MachineBasicBlock &MBB) {
   return false;
 }
 
-bool ARMSFIPlacement::PassStoreSandboxing(MachineBasicBlock &MBB) {
+bool ARMSFIPlacement::SandboxStoresInBlock(MachineBasicBlock &MBB) {
   /*
    * This is a simple local reverse-dataflow analysis to determine where CPSR
    * is live.  We cannot use the conditional store sequence anywhere that CPSR
@@ -300,73 +245,6 @@ bool ARMSFIPlacement::PassStoreSandboxing(MachineBasicBlock &MBB) {
   return Modified;
 }
 
-bool ARMSFIPlacement::PassBranchSandboxing(MachineBasicBlock &MBB) {
-  bool Modified = false;
-
-  for (MachineBasicBlock::iterator MBBI = MBB.begin(), E = MBB.end();
-       MBBI != E;
-       ++MBBI) {
-    MachineInstr &MI = *MBBI;
-
-    if (IsReturn(MI)) {
-      ARMCC::CondCodes Pred = GetPredicate(MI);
-      BuildMI(MBB, MBBI, MI.getDebugLoc(),
-              TII->get(ARM::SFI_GUARD_RETURN))
-        .addImm((int64_t) Pred)  // predicate condition
-        .addReg(ARM::CPSR);      // predicate source register (CPSR)
-      Modified = true;
-    }
-
-    if (IsIndirectJump(MI)) {
-      MachineOperand &Addr = MI.getOperand(0);
-      ARMCC::CondCodes Pred = GetPredicate(MI);
-      BuildMI(MBB, MBBI, MI.getDebugLoc(),
-              TII->get(ARM::SFI_GUARD_INDIRECT_JMP))
-        .addOperand(Addr)        // rD
-        .addReg(0)               // apparently unused source register?
-        .addImm((int64_t) Pred)  // predicate condition
-        .addReg(ARM::CPSR);      // predicate source register (CPSR)
-      Modified = true;
-    }
-
-    if (IsDirectCall(MI)) {
-      ARMCC::CondCodes Pred = GetPredicate(MI);
-      BuildMI(MBB, MBBI, MI.getDebugLoc(),
-              TII->get(ARM::SFI_GUARD_CALL))
-        .addImm((int64_t) Pred)  // predicate condition
-        .addReg(ARM::CPSR);      // predicate source register (CPSR)
-      Modified = true;
-    }
-
-    if (IsIndirectCall(MI)) {
-      MachineOperand &Addr = MI.getOperand(0);
-      ARMCC::CondCodes Pred = GetPredicate(MI);
-      BuildMI(MBB, MBBI, MI.getDebugLoc(),
-              TII->get(ARM::SFI_GUARD_INDIRECT_CALL))
-        .addOperand(Addr)        // rD
-        .addReg(0)               // apparently unused source register?
-        .addImm((int64_t) Pred)  // predicate condition
-        .addReg(ARM::CPSR);      // predicate source register (CPSR)
-        Modified = true;
-    }
-  }
-
-  return Modified;
-}
-
-bool ARMSFIPlacement::PlaceMBB(MachineBasicBlock &MBB) {
-  bool Modified = false;
-  if (FlagSfiStore) {
-    Modified |= PassStoreSandboxing(MBB);
-  }
-
-  if (FlagSfiBranch) {
-    Modified |= PassBranchSandboxing(MBB);
-  }
-  return Modified;
-}
-
-
 bool ARMSFIPlacement::runOnMachineFunction(MachineFunction &MF) {
   TII = MF.getTarget().getInstrInfo();
 
@@ -374,7 +252,7 @@ bool ARMSFIPlacement::runOnMachineFunction(MachineFunction &MF) {
   for (MachineFunction::iterator MFI = MF.begin(), E = MF.end();
        MFI != E;
        ++MFI)
-    Modified |= PlaceMBB(*MFI);
+    Modified |= SandboxStoresInBlock(*MFI);
   return Modified;
 }
 

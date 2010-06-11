@@ -106,6 +106,7 @@ FunctionPass *createARMLoadStoreOptimizationPass(bool PreAlloc = false);
 FunctionPass *createARMExpandPseudoPass();
 FunctionPass *createARMConstantIslandPass();
 FunctionPass *createARMSFIPlacementPass();
+FunctionPass *createARMSFIBranchPass();
 FunctionPass *createNEONPreAllocPass();
 FunctionPass *createNEONMoveFixPass();
 FunctionPass *createThumb2ITBlockPass();
