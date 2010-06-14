@@ -52,7 +52,11 @@ namespace {
   };
 
   char X86NaClRewritePass::ID = 0;
+
 }
+
+static void DumpInstructionVerbose(const MachineInstr &MI);
+
 
 // Note: this is a little adhoc and needs more work
 static bool IsStackChange(MachineInstr &MI) {
@@ -114,20 +118,46 @@ static bool IsLoad(MachineInstr &MI) {
 #endif
 }
 
-static unsigned FindMemoryOperand(const MachineInstr &MI,
-                                  bool &found, bool &multiple) {
+static unsigned FindMemoryOperand(const MachineInstr &MI, bool &found) {
   unsigned numOps = MI.getNumOperands();
   unsigned memPos = 0;
-  for (unsigned i = 0; i < numOps; ++i) {
-    if (isMem(&MI, i)) {
-      if (!found) {
-        memPos = i;
-        found = true;
-      } else {
-        multiple = true;
-      }
+
+  found = false;
+  if (numOps == 0) {
+    return 0;
+  }
+
+  // Typical Store
+  if (isMem(&MI, 0)) {
+    found = true;
+    if (X86AddrNumOperands < (signed)numOps
+        && isMem(&MI, X86AddrNumOperands)) {
+      dbgs() << "FindMemoryOperand multiple memory ops\n";
+      DumpInstructionVerbose(MI);
+      assert(false);
+    }
+    return 0;
+  }
+
+  // Typical Load
+  if (MI.getOperand(0).isReg()) {
+    if (numOps > 1 && isMem(&MI, 1)) {
+      found = true;
+      return 1;
     }
   }
+
+  // Typical Arithmetic
+  if (numOps > 2 && MI.getOperand(0).isReg() && MI.getOperand(1).isReg()) {
+    if (isMem(&MI, 2)) {
+      found = true;
+      return 2;
+    }
+  }
+
+  DumpInstructionVerbose(MI);
+  assert(false && "FindMemoryOperand unknown case!");
+
   return memPos;
 }
 
@@ -295,7 +325,7 @@ static bool IsSandboxedStackChange(MachineInstr &MI) {
 }
 
 
-static void DumpInstructionVerbose(MachineInstr &MI) {
+static void DumpInstructionVerbose(const MachineInstr &MI) {
   dbgs() << MI;
   dbgs() << MI.getNumOperands() << " operands:" << "\n";
   for (unsigned i = 0; i < MI.getNumOperands(); ++i) {
@@ -496,17 +526,11 @@ bool X86NaClRewritePass::PassSandboxingMassageLoadStore(MachineBasicBlock &MBB) 
     if (IsPushPop(MI))
       continue;
 
-    bool found = false;
-    bool multiple = false;
-    unsigned memOperand = FindMemoryOperand(MI, found, multiple);
-
     if (IsStore(MI)) {
+      bool found = false;
+      unsigned memOperand = FindMemoryOperand(MI, found);
       if (found) {
         dbgs() << "Massage Store Operand# " << memOperand << "\n";
-        if (multiple) {
-          dbgs() << "Massage Multiple Mem Operands (choosing first)\n";
-          DumpInstructionVerbose(MI);
-        }
         if (MassageMemoryOp(MI, memOperand, true, true, true)) {
           if (verbose) {
             dbgs() << "@PassSandboxingMassageLoadStore after massage";
@@ -521,12 +545,10 @@ bool X86NaClRewritePass::PassSandboxingMassageLoadStore(MachineBasicBlock &MBB) 
     }
 
     if (IsLoad(MI)) {
+      bool found = false;
+      unsigned memOperand = FindMemoryOperand(MI, found);
       if (found) {
         dbgs() << "Massage Load Operand# " << memOperand << "\n";
-        if (multiple) {
-          dbgs() << "Massage Multiple Mem Operands (choosing first)\n";
-          DumpInstructionVerbose(MI);
-        }
         if (MassageMemoryOp(MI, memOperand, true, true, false)) {
             if (verbose) {
               dbgs() << "@PassSandboxingMassageLoadStore after massage\n";
