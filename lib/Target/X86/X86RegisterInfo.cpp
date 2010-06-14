@@ -276,12 +276,18 @@ X86RegisterInfo::getPointerRegClass(unsigned Kind) const {
   switch (Kind) {
   default: llvm_unreachable("Unexpected Kind in getPointerRegClass!");
   case 0: // Normal GPRs.
-    if (TM.getSubtarget<X86Subtarget>().is64Bit())
-      return &X86::GR64RegClass;
+    // @LOCALMOD-START
+// Don't use 64-bit regs for pointers, since pointers are 32-bits for PNaCl
+//     if (TM.getSubtarget<X86Subtarget>().is64Bit())
+//       return &X86::GR64RegClass;
+    // @LOCALMOD-END
     return &X86::GR32RegClass;
   case 1: // Normal GRPs except the stack pointer (for encoding reasons).
-    if (TM.getSubtarget<X86Subtarget>().is64Bit())
-      return &X86::GR64_NOSPRegClass;
+    // @LOCALMOD-START
+// Don't use 64-bit regs for pointers, since pointers are 32-bits for PNaCl
+//     if (TM.getSubtarget<X86Subtarget>().is64Bit())
+//       return &X86::GR64_NOSPRegClass;
+    // @LOCALMOD-END
     return &X86::GR32_NOSPRegClass;
   }
 }
