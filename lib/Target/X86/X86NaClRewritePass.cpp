@@ -114,6 +114,23 @@ static bool IsLoad(MachineInstr &MI) {
 #endif
 }
 
+static unsigned FindMemoryOperand(const MachineInstr &MI,
+                                  bool &found, bool &multiple) {
+  unsigned numOps = MI.getNumOperands();
+  unsigned memPos = 0;
+  for (unsigned i = 0; i < numOps; ++i) {
+    if (isMem(&MI, i)) {
+      if (!found) {
+        memPos = i;
+        found = true;
+      } else {
+        multiple = true;
+      }
+    }
+  }
+  return memPos;
+}
+
 
 static bool IsPushPop(MachineInstr &MI) {
   const unsigned Opcode = MI.getOpcode();
@@ -128,15 +145,12 @@ static bool IsPushPop(MachineInstr &MI) {
 
 
 static bool is32BitReg(unsigned reg) {
-  // TODO(jvoung): instead of this hack, get TargetRegisterInfo,
-  // and check the register class.
-  return true;
+  return (X86::GR32RegClass.contains(reg));
 }
 
 static bool is64BitReg(unsigned reg) {
-  // TODO(jvoung): instead of this hack, get TargetRegisterInfo,
-  // and check the register class.
-  return true;
+  dbgs() << "num64Regs: " << X86::GR64RegClass.getNumRegs() << "\n";
+  return (X86::GR64RegClass.contains(reg));
 }
 
 #define CASE(src, dst)  case X86:: src: return X86:: dst
@@ -177,7 +191,7 @@ static unsigned Get32BitRegFor64BitReg(unsigned reg64) {
 static unsigned Get64BitRegFor32BitReg(unsigned reg32) {
   switch(reg32) {
     default: {
-      if (is64BitReg(reg32)) {
+      if (is32BitReg(reg32)) {
         dbgs() << "Missed 32bit reg case in Get64BitRegFor32BitReg:"
                << reg32 << "\n";
       } else {
@@ -314,18 +328,16 @@ void X86NaClRewritePass::PassLighweightValidator(MachineBasicBlock &MBB,
 
       if (IsIndirectControlFlowChange(MI)) {
         // TODO(robertm): add proper test
-        dbgs() << "@VALIDATOR: BAD INDIRECT JUMP\n\n";
+        dbgs() << "@VALIDATOR: BAD 64-bit INDIRECT JUMP\n\n";
         DumpInstructionVerbose(MI);
       }
 
       if (IsFunctionCall(MI)) {
         // TODO(robertm): add proper test
-        dbgs() << "@VALIDATOR: BAD FUNCTION CALL\n\n";
-        unsigned Opcode = MI.getOpcode();
-        dbgs() << "Opcode is 32bit call (for x86-64) " << Opcode
-               << " vs X86::CALL32r / CALLpcrel32 "
-               << X86::CALL32r << " / " << X86::CALLpcrel32 << "\n";
-        DumpInstructionVerbose(MI);
+        // for now, we are restricting 64-bit to 32-bit regs
+        // so we do get 32-bit calls
+        dbgs() << "@VALIDATOR: BAD 64-bit FUNCTION CALL\n\n";
+        //DumpInstructionVerbose(MI);
       }
 
       if (IsStore(MI) && !IsPushPop(MI) ) {
@@ -479,50 +491,52 @@ bool X86NaClRewritePass::PassSandboxingMassageLoadStore(MachineBasicBlock &MBB) 
   for (MachineBasicBlock::iterator MBBI = MBB.begin(), E = MBB.end();
        MBBI != E;
        ++MBBI) {
-
     MachineInstr &MI = *MBBI;
 
-    if (IsStore(MI) && !IsPushPop(MI)) {
-      if (!isMem(&MI, 0)) {
-        dbgs() << "@PassSandboxingMassageLoadStore: UNEXPECTED memory operand location\n";
-        DumpInstructionVerbose(MI);
-      } else {
-        if (MassageMemoryOp(MI, 0, true, true, true)) {
+    if (IsPushPop(MI))
+      continue;
+
+    bool found = false;
+    bool multiple = false;
+    unsigned memOperand = FindMemoryOperand(MI, found, multiple);
+
+    if (IsStore(MI)) {
+      if (found) {
+        dbgs() << "Massage Store Operand# " << memOperand << "\n";
+        if (multiple) {
+          dbgs() << "Massage Multiple Mem Operands (choosing first)\n";
+          DumpInstructionVerbose(MI);
+        }
+        if (MassageMemoryOp(MI, memOperand, true, true, true)) {
           if (verbose) {
             dbgs() << "@PassSandboxingMassageLoadStore after massage";
             DumpInstructionVerbose(MI);
           }
         }
         Modified = true;
+      } else {
+        dbgs() << "@PassSandboxingMassageLoadStore: UNEXPECTED memory operand location\n";
+        DumpInstructionVerbose(MI);
       }
     }
 
-    if (IsLoad(MI)&& !IsPushPop(MI)) {
-      // Is dest Mem??? Load mem 2 mem???
-      if (!isMem(&MI, 0)) {
-        // Is one of the srcs Mem???
-        if (isMem(&MI, 1)) {
-          dbgs() << "Yay operand 1 is memory operand location\n";
-          if (MassageMemoryOp(MI, 1, true, true, false)) {
+    if (IsLoad(MI)) {
+      if (found) {
+        dbgs() << "Massage Load Operand# " << memOperand << "\n";
+        if (multiple) {
+          dbgs() << "Massage Multiple Mem Operands (choosing first)\n";
+          DumpInstructionVerbose(MI);
+        }
+        if (MassageMemoryOp(MI, memOperand, true, true, false)) {
             if (verbose) {
               dbgs() << "@PassSandboxingMassageLoadStore after massage\n";
               DumpInstructionVerbose(MI);
             }
             Modified = true;
           }
-          continue;
-        }
+      } else {
         dbgs() << "@PassSandboxingMassageLoadStore: UNEXPECTED memory operand location\n";
         DumpInstructionVerbose(MI);
-      } else {
-        if (MassageMemoryOp(MI, 0, true, true, false)) {
-          if (verbose) {
-            dbgs() << "@PassSandboxingMassageLoadStore after massage\n";
-            DumpInstructionVerbose(MI);
-
-          }
-          Modified = true;
-        }
       }
     }
   }
@@ -550,10 +564,10 @@ bool X86NaClRewritePass::PassSandboxingPopRbp(MachineBasicBlock &MBB,
   return Modified;
 }
 
+
 /*
  * Sandboxes stack changes (64 bit only)
  */
-
 bool X86NaClRewritePass::PassSandboxingControlFlow(MachineBasicBlock &MBB,
                                                    const TargetInstrInfo* TII,
                                                    bool is64Bit) {
@@ -575,9 +589,8 @@ bool X86NaClRewritePass::PassSandboxingControlFlow(MachineBasicBlock &MBB,
       assert(0);
      case X86::CALL32r:
        if (is64Bit) {
-         // use CALL64r anyway, with a 32 bit reg (so that rzp is inserted)
-         // TODO Change opcode and desc all in one shot???
-         dbgs() << "Switching CALL32r to NACL_CALL64r\n";
+         // use NACL_CALL64r when in 64bit mode (so that rzp is inserted)
+         DEBUG(dbgs() << "Switching CALL32r to NACL_CALL64r\n");
          MI.setDesc(TII->get(X86::NACL_CALL64r));
          assert (is32BitReg(MI.getOperand(0).getReg())
                  && "CALL32r w/ non-32bit reg");
@@ -589,8 +602,8 @@ bool X86NaClRewritePass::PassSandboxingControlFlow(MachineBasicBlock &MBB,
 
      case X86::JMP32r:
        if (is64Bit) {
-         // use JMP64r anyway (so that rzp is inserted)
-         dbgs() << "Switching JMP32r to NACL_JMP64r\n";
+         // use NACL_JMP64r when in 64bit mode (so that rzp is inserted)
+         DEBUG(dbgs() << "Switching JMP32r to NACL_JMP64r\n");
          MI.setDesc(TII->get(X86::NACL_JMP64r));
          assert (is32BitReg(MI.getOperand(0).getReg()) &&
                  "JMP32r w/ non-32bit reg");
@@ -617,18 +630,18 @@ bool X86NaClRewritePass::PassSandboxingControlFlow(MachineBasicBlock &MBB,
      case X86::JMP64r:{
        MI.setDesc(TII->get(X86::NACL_JMP64r));
        const MachineOperand &IndexReg  = MI.getOperand(0);
-       const unsigned reg32bit = Get32BitRegFor64BitReg(IndexReg.getReg());
-       assert (reg32bit > 0);
-       const_cast<MachineOperand&>(IndexReg).setReg(reg32bit);
+       const unsigned reg32 = Get32BitRegFor64BitReg(IndexReg.getReg());
+       assert (reg32 > 0);
+       const_cast<MachineOperand&>(IndexReg).setReg(reg32);
        Modified = true;
        break;
      }
      case X86::CALL64r: {
       MI.setDesc(TII->get(X86::NACL_CALL64r));
       const MachineOperand &IndexReg  = MI.getOperand(0);
-      const unsigned reg32bit = Get32BitRegFor64BitReg(IndexReg.getReg());
-      assert (reg32bit > 0);
-      const_cast<MachineOperand&>(IndexReg).setReg(reg32bit);
+      const unsigned reg32 = Get32BitRegFor64BitReg(IndexReg.getReg());
+      assert (reg32 > 0);
+      const_cast<MachineOperand&>(IndexReg).setReg(reg32);
       Modified = true;
       break;
      }
@@ -653,7 +666,6 @@ bool X86NaClRewritePass::runOnMachineFunction(MachineFunction &MF) {
   const TargetInstrInfo* TII = TM.getInstrInfo();
 
   const bool is64bit = TM.getSubtarget<X86Subtarget>().is64Bit();
-
   for (MachineFunction::iterator MFI = MF.begin(), E = MF.end();
        MFI != E;
        ++MFI) {
