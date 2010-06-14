@@ -538,9 +538,6 @@ let isCall = 1 in
   // before calls from potentially appearing dead. Uses for argument
   // registers are added manually.
   let Defs = [EAX, ECX, EDX,
-//@ LOCALMOD-START
-              ESI, EDI, R8D, R9D, R10D, R11D, // if x64 is forced to use 32-bit
-//@ LOCALMOD-END
               FP0, FP1, FP2, FP3, FP4, FP5, FP6, ST0,
               MM0, MM1, MM2, MM3, MM4, MM5, MM6, MM7,
               XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
@@ -554,9 +551,6 @@ def NACL_CALL32r     : I<0, Pseudo, (outs), (ins GR32:$dst, variable_ops),
 
 let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1 in
   let Defs = [EAX, ECX, EDX,
-//@ LOCALMOD-START
-              ESI, EDI, R8D, R9D, R10D, R11D, // if x64 is forced to use 32-bit
-//@ LOCALMOD-END
               FP0, FP1, FP2, FP3, FP4, FP5, FP6, ST0,
               MM0, MM1, MM2, MM3, MM4, MM5, MM6, MM7,
               XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
