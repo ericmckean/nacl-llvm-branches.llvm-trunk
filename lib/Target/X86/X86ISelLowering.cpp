@@ -137,7 +137,11 @@ X86TargetLowering::X86TargetLowering(X86TargetMachine &TM)
   Subtarget = &TM.getSubtarget<X86Subtarget>();
   X86ScalarSSEf64 = Subtarget->hasSSE2();
   X86ScalarSSEf32 = Subtarget->hasSSE1();
-  X86StackPtr = Subtarget->is64Bit() ? X86::RSP : X86::ESP;
+  // LOCALMOD
+  //X86StackPtr = Subtarget->is64Bit() ? X86::RSP : X86::ESP;
+  X86StackPtr = X86::ESP;
+  //X86StackPtrTy = Subtarget->is64Bit() ? MVT::i64 : MVT::i32;
+  X86StackPtrTy = MVT::i32;
 
   RegInfo = TM.getRegisterInfo();
   TD = getTargetData();
@@ -1773,8 +1777,10 @@ X86TargetLowering::LowerMemOpCallTo(SDValue Chain,
                                     ISD::ArgFlagsTy Flags) {
   const unsigned FirstStackArgOffset = (Subtarget->isTargetWin64() ? 32 : 0);
   unsigned LocMemOffset = FirstStackArgOffset + VA.getLocMemOffset();
-  SDValue PtrOff = DAG.getIntPtrConstant(LocMemOffset);
-  PtrOff = DAG.getNode(ISD::ADD, dl, getPointerTy(), StackPtr, PtrOff);
+  // LOCALMOD-START
+  SDValue PtrOff = DAG.getConstant(LocMemOffset, X86StackPtrTy, false);
+  PtrOff = DAG.getNode(ISD::ADD, dl, X86StackPtrTy, StackPtr, PtrOff);
+  // LOCALMOD-END
   if (Flags.isByVal()) {
     return CreateCopyOfByValArgument(Arg, PtrOff, Chain, Flags, DAG, dl);
   }
@@ -1938,7 +1944,8 @@ X86TargetLowering::LowerCall(SDValue Chain, SDValue Callee,
     } else if (!IsSibcall && (!isTailCall || isByVal)) {
       assert(VA.isMemLoc());
       if (StackPtr.getNode() == 0)
-        StackPtr = DAG.getCopyFromReg(Chain, dl, X86StackPtr, getPointerTy());
+        // @LOCALMOD
+        StackPtr = DAG.getCopyFromReg(Chain, dl, X86StackPtr, X86StackPtrTy);
       MemOpChains.push_back(LowerMemOpCallTo(Chain, StackPtr, Arg,
                                              dl, DAG, VA, Flags));
     }
@@ -2047,10 +2054,11 @@ X86TargetLowering::LowerCall(SDValue Chain, SDValue Callee,
           // Copy relative to framepointer.
           SDValue Source = DAG.getIntPtrConstant(VA.getLocMemOffset());
           if (StackPtr.getNode() == 0)
+            // @LOCALMOD-START
             StackPtr = DAG.getCopyFromReg(Chain, dl, X86StackPtr,
-                                          getPointerTy());
-          Source = DAG.getNode(ISD::ADD, dl, getPointerTy(), StackPtr, Source);
-
+                                          X86StackPtrTy);
+          Source = DAG.getNode(ISD::ADD, dl, X86StackPtrTy, StackPtr, Source);
+          // @LOCALMOD-END
           MemOpChains2.push_back(CreateCopyOfByValArgument(Source, FIN,
                                                            ArgChain,
                                                            Flags, DAG, dl));
@@ -6466,7 +6474,8 @@ X86TargetLowering::LowerDYNAMIC_STACKALLOC(SDValue Op,
   SDValue Flag;
 
   EVT IntPtr = getPointerTy();
-  EVT SPTy = Subtarget->is64Bit() ? MVT::i64 : MVT::i32;
+  // LOCALMOD
+  EVT SPTy = X86StackPtrTy;
 
   Chain = DAG.getCopyToReg(Chain, dl, X86::EAX, Size, Flag);
   Flag = Chain.getValue(1);

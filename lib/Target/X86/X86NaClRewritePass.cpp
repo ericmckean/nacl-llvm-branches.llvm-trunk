@@ -188,10 +188,13 @@ static unsigned Get32BitRegFor64BitReg(unsigned reg64) {
   switch(reg64) {
     default: {
       if (is64BitReg(reg64)) {
-        dbgs() << "Missed 64bit reg case in Get32BitRegFor64BitReg "
+        dbgs() << "Missed 64bit reg case in Get32BitRegFor64BitReg: "
                << reg64 << "\n";
+      } else if (is32BitReg(reg32)) {
+        dbgs() << "Get 32bit reg given 32bit reg\n";
+        return reg32;
       } else {
-        dbgs() << "Get 32bit Reg for 64bit reg, not given 64bit reg"
+        dbgs() << "Get 32bit Reg for 64bit reg, not given 64bit reg "
                << reg64 << "\n";
       }
       return 0;
@@ -222,13 +225,16 @@ static unsigned Get64BitRegFor32BitReg(unsigned reg32) {
   switch(reg32) {
     default: {
       if (is32BitReg(reg32)) {
-        dbgs() << "Missed 32bit reg case in Get64BitRegFor32BitReg:"
+        dbgs() << "Missed 32bit reg case in Get64BitRegFor32BitReg: "
                << reg32 << "\n";
+      } else if (is64BitReg(reg32)) {
+        dbgs() << "Get 64bit reg given 64bit reg\n";
+        return reg32;
       } else {
-        dbgs() << "Get 64bit Reg for 32bit reg, not given 32bit reg"
+        dbgs() << "Get 64bit Reg for 32bit reg, not given 32bit reg "
                << reg32 << "\n";
-        return 0;
       }
+      return 0;
     }
 
   CASE(EAX,RAX);
@@ -375,7 +381,8 @@ void X86NaClRewritePass::PassLighweightValidator(MachineBasicBlock &MBB,
         const unsigned reg = BaseReg.getReg();
         if (reg != X86::RSP &&
             reg != X86::RBP &&
-            reg != X86::R15) {
+            reg != X86::R15 &&
+            reg != X86::RIP) {
           // TODO(robertm): add proper test
           dbgs() << "@VALIDATOR: STORE WITH BAD BASE\n\n";
           DumpInstructionVerbose(MI);
@@ -443,64 +450,60 @@ bool X86NaClRewritePass::PassSandboxingStack(MachineBasicBlock &MBB,
   return Modified;
 }
 
+
 /*
  * Sandboxes loads and stores via extra MachineOperand &BaseRegMachineOperand &BaseRegMachineOperand &BaseRegMachineOperand &BaseRegbase reg (64 bit only)
  */
-
 static bool MassageMemoryOp(MachineInstr &MI, int Op,
                             bool doBase, bool doIndex, bool doSeg) {
   bool Modified = false;
   assert(isMem(&MI, Op));
+  MachineOperand &BaseReg  = MI.getOperand(Op + 0);
+  MachineOperand &IndexReg  = MI.getOperand(Op + 2);
+  MachineOperand &SegmentReg = MI.getOperand(Op + 4);
 
-  // don't do anything if a safe register base is used
-  if (MI.getOperand(Op + 2).getReg() == X86::RSP ||
-      MI.getOperand(Op + 0).getReg() == X86::RSP ||
-      MI.getOperand(Op + 2).getReg() == X86::RIP ||
-      MI.getOperand(Op + 0).getReg() == X86::RIP ||
-      MI.getOperand(Op + 2).getReg() == X86::RBP ||
-      MI.getOperand(Op + 0).getReg() == X86::RBP)
-    return false;
+  // We need to make sure the index is using a 64-bit reg.
+  if (doIndex){
+    const unsigned reg64bit = Get64BitRegFor32BitReg(IndexReg.getReg());
+    if (reg64bit) {
+      IndexReg.setReg(reg64bit);
+
+      DEBUG(dbgs() << "MassageMemoryOp doIndex on (64 vs 32) "
+            << reg64bit << " vs " << IndexReg.getReg() << "\n");
+
+      DEBUG(DumpInstructionVerbose(MI));
+
+      Modified = true;
+    }
+  }
+
+  bool isIndexAbsolute = (IndexReg.getReg() == X86::RSP ||
+                          IndexReg.getReg() == X86::RBP ||
+                          IndexReg.getReg() == X86::RIP);
 
   // sneak in r15 as the base if possible
   // TODO: if a base reg is present, check whether it is a permissible reg
   if (doBase) {
-    const MachineOperand &BaseReg  = MI.getOperand(Op + 0);
-    if (!BaseReg.getReg()) {
-      const_cast<MachineOperand&>(BaseReg).setReg((int)X86::R15);
+    if (!isIndexAbsolute && !BaseReg.getReg()) {
+      BaseReg.setReg(X86::R15);
 
       DEBUG(dbgs() << "MassageMemoryOp doBase\n");
       DEBUG(DumpInstructionVerbose(MI));
-
       Modified = true;
     }
   }
 
-  // We do need to make sure the index is using a 64-bit reg for the
-  // nacl: pseudo-prefix
-  // (or can we just omit the nacl: pseudo-prefix if it's a 32-bit reg?)
-  if (doIndex){
-    const MachineOperand &IndexReg  = MI.getOperand(Op + 2);
-    //const unsigned reg32bit = Get32BitRegFor64BitReg(IndexReg.getReg());
-    unsigned origIndexReg = IndexReg.getReg();
-    const unsigned reg64bit = Get64BitRegFor32BitReg(origIndexReg);
-    //    if (reg32bit) {
-    if (reg64bit) {
-      //const_cast<MachineOperand&>(IndexReg).setReg(reg32bit);
-      const_cast<MachineOperand&>(IndexReg).setReg(reg64bit);
+  if (isIndexAbsolute)
+    assert(BaseReg.getReg() == 0 &&
+           "Unexpected base register with absolute index");
 
-      DEBUG(dbgs() << "MassageMemoryOp doIndex on (64 vs 32) "
-            << reg64bit << " vs " << origIndexReg << "\n");
-
-      DEBUG(DumpInstructionVerbose(MI));
-
-      Modified = true;
-    }
-  }
+  // Is the index something we control / not present?
+  // Otherwise, we need to clear the upper 32bits...
+  bool isIndexSafe = IndexReg.getReg() == 0 || isIndexAbsolute;
 
   if (doSeg) {
-    const MachineOperand &SegmentReg = MI.getOperand(Op + 4);
-    if (!SegmentReg.getReg()) {
-      const_cast<MachineOperand&>(SegmentReg).setReg(X86::PSEUDO_NACL_SEG);
+    if (!isIndexSafe && !SegmentReg.getReg()) {
+      SegmentReg.setReg(X86::PSEUDO_NACL_SEG);
 
       DEBUG(dbgs() << "MassageMemoryOp doSeg\n");
       DEBUG(DumpInstructionVerbose(MI));
