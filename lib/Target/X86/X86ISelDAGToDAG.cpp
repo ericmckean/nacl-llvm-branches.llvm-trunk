@@ -307,9 +307,7 @@ namespace {
 
     // @LOCALMO-START
     bool RestrictUseOfBaseReg() {
-      if (!getTargetMachine().getSubtarget<X86Subtarget>().is64Bit()) return false;
-      // TODO: we should have another flag controling this
-      return true;
+      return Subtarget->isTargetNativeClient() && Subtarget->is64Bit();
     }
     // @LOCALMO-END
 
@@ -456,11 +454,8 @@ void X86DAGToDAGISel::PreprocessISelDAG() {
        E = CurDAG->allnodes_end(); I != E; ) {
     SDNode *N = I++;  // Preincrement iterator to avoid invalidation issues.
 
-// @LOCALMOD-START
-// We can't fold load + call, so the optimization below would break the DAG.
-#if 0 
-// @LOCALMOD-END
     if (OptLevel != CodeGenOpt::None &&
+        !Subtarget->isTargetNativeClient() &&  // @LOCALMOD:Cannot fold load/call
         (N->getOpcode() == X86ISD::CALL ||
          N->getOpcode() == X86ISD::TC_RETURN)) {
       /// Also try moving call address load from outside callseq_start to just
@@ -491,9 +486,6 @@ void X86DAGToDAGISel::PreprocessISelDAG() {
       ++NumLoadMoved;
       continue;
     }
-// @LOCALMOD-START
-#endif
-// @LOCALMOD-END
   
     // Lower fpround and fpextend nodes that target the FP stack to be store and
     // load to the stack.  This is a gross hack.  We would like to simply mark

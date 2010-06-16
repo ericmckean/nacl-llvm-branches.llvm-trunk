@@ -107,77 +107,6 @@ def extloadi64i32  : PatFrag<(ops node:$ptr), (i64 (extloadi32 node:$ptr))>;
 // Instruction list...
 //
 
-// @LOCALMOD-START
-let Defs = [RSP, EFLAGS], Uses = [RSP] in {
-    def NACL_ADD_SP : I<0, Pseudo, (outs GR64:$dst), 
-                      (ins GR64:$src1, i64i32imm:$src2),
-                      "naclasp{q}\t{$src2, %r15|%r15, $src2}",
-                      [(set GR64:$dst, (add GR64:$src1, i64immSExt32:$src2)),
-                       (implicit EFLAGS)]>;
-
-   def NACL_SUB_SP   : I<0, Pseudo, (outs GR64:$dst), 
-                      (ins GR64:$src1, i64i32imm:$src2),
-                      "naclssp{q}\t{$src2, %r15|%r15, $src2}",
-                      [(set GR64:$dst, (add GR64:$src1, i64immSExt32:$src2)),
-                       (implicit EFLAGS)]>;
-
-}
-let isCall = 1 in
-  // All calls clobber the non-callee saved registers. RSP is marked as
-  // a use to prevent stack-pointer assignments that appear immediately
-  // before calls from potentially appearing dead. Uses for argument
-  // registers are added manually.
-  let Defs = [RAX, RCX, RDX, RSI, RDI, R8, R9, R10, R11,
-              FP0, FP1, FP2, FP3, FP4, FP5, FP6, ST0, ST1,
-              MM0, MM1, MM2, MM3, MM4, MM5, MM6, MM7,
-              XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
-              XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15, EFLAGS],
-      Uses = [RSP] in {
-      
-    def NACL_CALL64r    : I<0, Pseudo, (outs), (ins GR64:$dst, variable_ops),
-                          "naclcall\t$dst, %r15", 
-			  []>;
-}
-
-// TODO: indicate that we clobber rcx
-let isTerminator = 1, isReturn = 1, isBarrier = 1,
-    hasCtrlDep = 1, FPForm = SpecialFP, FPFormBits = SpecialFP.Value in {
-
-  def NACL_RET64    : I<0, Pseudo, (outs), (ins variable_ops),
-                     "pop %rcx\n\tnacljmp %ecx, %r15", []>;
-}
-
-
-let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1 in
-  let Defs = [RAX, RCX, RDX, RSI, RDI, R8, R9, R10, R11,
-              FP0, FP1, FP2, FP3, FP4, FP5, FP6, ST0, ST1,
-              MM0, MM1, MM2, MM3, MM4, MM5, MM6, MM7,
-              XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
-              XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15, EFLAGS],
-      Uses = [RSP] in {
-
-  def NACL_TAILJMPr64 : I<0, Pseudo, (outs), (ins GR64_TC:$dst, variable_ops),
-                     "nacljmp\t$dst,%r15  # TAILCALL", 
-		     []>;
-
-}
-
-let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
-  def NACL_JMP64r     : I<0, Pseudo, (outs), (ins GR64:$dst),
-                     "nacljmp\t$dst, %r15",
-                     []>;
-
-}
-
-// TODO: indicate that we clobber rcx
-def NACL_POP_RBP   : I<0, Pseudo,
-                   (outs GR64:$reg), (ins), 
-		   "pop\t%rcx\n\t naclrestbp\t%ecx, %r15", 
-		   []>;
-
-// @LOCALMOD-END
-
-
 // ADJCALLSTACKDOWN/UP implicitly use/def RSP because they may be expanded into
 // a stack adjustment and the codegen must know that they may modify the stack
 // pointer before prolog-epilog rewriting occurs.
@@ -219,21 +148,17 @@ let isCall = 1 in
                           (outs), (ins i64i32imm_pcrel:$dst, variable_ops),
                           "call{q}\t$dst", []>,
                         Requires<[In64BitMode, NotWin64]>;
-
-    def CALL64r    : I<0xFF, MRM2r, (outs), (ins GR64:$dst, variable_ops),
+    def CALL64r     : I<0xFF, MRM2r, (outs), (ins GR64:$dst, variable_ops),
                           "call{q}\t{*}$dst", [(X86call GR64:$dst)]>,
                         Requires<[NotWin64]>;
-
-// @LOCALMOD-START
-    // def CALL64m       : I<0xFF, MRM2m, (outs), (ins i64mem:$dst, variable_ops),
-    //                       "call{q}\t{*}$dst", [(X86call (loadi64 addr:$dst))]>,
-    //                     Requires<[NotWin64]>;
+    def CALL64m       : I<0xFF, MRM2m, (outs), (ins i64mem:$dst, variable_ops),
+                          "call{q}\t{*}$dst", [(X86call (loadi64 addr:$dst))]>,
+                        Requires<[NotWin64, NotNaCl]>;   // @LOCALMOD
                         
-    // def FARCALL64   : RI<0xFF, MRM3m, (outs), (ins opaque80mem:$dst),
-    //                      "lcall{q}\t{*}$dst", []>;
-// @LOCALMOD-END
+    def FARCALL64   : RI<0xFF, MRM3m, (outs), (ins opaque80mem:$dst),
+                         "lcall{q}\t{*}$dst", []>,
+                        Requires<[NotNaCl]>; // @LOCALMOD
   }
-
 
   // FIXME: We need to teach codegen about single list of call-clobbered 
   // registers.
@@ -284,23 +209,22 @@ let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1 in
   def TAILJMPr64 : I<0xFF, MRM4r, (outs), (ins GR64_TC:$dst, variable_ops),
                      "jmp{q}\t{*}$dst  # TAILCALL", []>;
 
-   def TAILJMPm64 : I<0xFF, MRM4m, (outs), (ins i64mem_TC:$dst, variable_ops),
-                      "jmp{q}\t{*}$dst  # TAILCALL", []>;
+  def TAILJMPm64 : I<0xFF, MRM4m, (outs), (ins i64mem_TC:$dst, variable_ops),
+                     "jmp{q}\t{*}$dst  # TAILCALL", []>;
 }
 
 // Branches
 let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
   def JMP64pcrel32 : I<0xE9, RawFrm, (outs), (ins brtarget:$dst), 
                        "jmp{q}\t$dst", []>;
-
   def JMP64r     : I<0xFF, MRM4r, (outs), (ins GR64:$dst), "jmp{q}\t{*}$dst",
                      [(brind GR64:$dst)]>;
-// @LOCALMOD-START
-  // def JMP64m     : I<0xFF, MRM4m, (outs), (ins i64mem:$dst), "jmp{q}\t{*}$dst",
-  //                    [(brind (loadi64 addr:$dst))]>;
-  //  def FARJMP64   : RI<0xFF, MRM5m, (outs), (ins opaque80mem:$dst),
-  //                    "ljmp{q}\t{*}$dst", []>;
-// @LOCALMOD-END
+  def JMP64m     : I<0xFF, MRM4m, (outs), (ins i64mem:$dst), "jmp{q}\t{*}$dst",
+                     [(brind (loadi64 addr:$dst))]>,
+                   Requires<[NotNaCl]>; // @LOCALMOD
+  def FARJMP64   : RI<0xFF, MRM5m, (outs), (ins opaque80mem:$dst),
+                     "ljmp{q}\t{*}$dst", []>,
+                   Requires<[NotNaCl]>;  // @LOCALMOD
 }
 
 //===----------------------------------------------------------------------===//

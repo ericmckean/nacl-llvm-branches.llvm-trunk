@@ -316,6 +316,8 @@ def In32BitMode  : Predicate<"!Subtarget->is64Bit()">;
 def In64BitMode  : Predicate<"Subtarget->is64Bit()">;
 def IsWin64      : Predicate<"Subtarget->isTargetWin64()">;
 def NotWin64     : Predicate<"!Subtarget->isTargetWin64()">;
+def IsNaCl       : Predicate<"Subtarget->isTargetNativeClient()">;     // @LOCALMOD
+def NotNaCl      : Predicate<"!Subtarget->isTargetNativeClient()">;    // @LOCALMOD
 def SmallCode    : Predicate<"TM.getCodeModel() == CodeModel::Small">;
 def KernelCode   : Predicate<"TM.getCodeModel() == CodeModel::Kernel">;
 def FarData      : Predicate<"TM.getCodeModel() != CodeModel::Small &&"
@@ -517,49 +519,6 @@ def shld : PatFrag<(ops node:$src1, node:$amt1, node:$src2, node:$amt2),
 //
 
 
-//@ LOCALMOD-START
-let isTerminator = 1, isReturn = 1, isBarrier = 1,
-    hasCtrlDep = 1, FPForm = SpecialFP, FPFormBits = SpecialFP.Value in {
-
- def NACL_RET32   : I   <0, Pseudo, (outs), (ins variable_ops),
-                    "pop %ecx\n\tnacljmp %ecx",
-                    []>;
-}
-
-let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
-    def NACL_JMP32r     : I<0, Pseudo, (outs), (ins GR32:$dst), 
-    		       "nacljmp\t $dst",
-                         []>;
-}
-
-let isCall = 1 in
-  // All calls clobber the non-callee saved registers. ESP is marked as
-  // a use to prevent stack-pointer assignments that appear immediately
-  // before calls from potentially appearing dead. Uses for argument
-  // registers are added manually.
-  let Defs = [EAX, ECX, EDX, FP0, FP1, FP2, FP3, FP4, FP5, FP6, ST0,
-              MM0, MM1, MM2, MM3, MM4, MM5, MM6, MM7,
-              XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
-              XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15, EFLAGS],
-      Uses = [ESP] in {
-
-def NACL_CALL32r     : I<0, Pseudo, (outs), (ins GR32:$dst, variable_ops),
-                        "naclcall\t$dst", []>;
-}
-
-
-let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1 in
-  let Defs = [EAX, ECX, EDX, FP0, FP1, FP2, FP3, FP4, FP5, FP6, ST0,
-              MM0, MM1, MM2, MM3, MM4, MM5, MM6, MM7,
-              XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
-              XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15, EFLAGS],
-      Uses = [ESP] in {
-
- def NACL_TAILJMPr : I<0, Pseudo, (outs), (ins GR32_TC:$dst, variable_ops), 
-                   "nacljmp\t $dst  # TAILCALL", 
-		   []>;
-}
-//@ LOCALMOD-END
 
 // ADJCALLSTACKDOWN/UP implicitly use/def ESP because they may be expanded into
 // a stack adjustment and the codegen must know that they may modify the stack
@@ -688,13 +647,8 @@ let Uses = [ECX], isBranch = 1, isTerminator = 1 in
 let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
   def JMP32r     : I<0xFF, MRM4r, (outs), (ins GR32:$dst), "jmp{l}\t{*}$dst",
                      [(brind GR32:$dst)]>;
-
-// @LOCALMOD-START
-// NOTE:JMP32m must likely be banned
-
-//  def JMP32m     : I<0xFF, MRM4m, (outs), (ins i32mem:$dst), "jmp{l}\t{*}$dst",
-//                     [(brind (loadi32 addr:$dst))]>;
-// @LOCALMOD-END
+  def JMP32m     : I<0xFF, MRM4m, (outs), (ins i32mem:$dst), "jmp{l}\t{*}$dst",
+                     [(brind (loadi32 addr:$dst))]>, Requires<[NotNaCl]>;  // @LOCALMOD
   def FARJMP16i  : Iseg16<0xEA, RawFrm, (outs),
                           (ins i16imm:$seg, i16imm:$off),
                           "ljmp{w}\t$seg, $off", []>, OpSize;
@@ -734,14 +688,13 @@ let isCall = 1 in
       Uses = [ESP] in {
     def CALLpcrel32 : Ii32PCRel<0xE8, RawFrm,
                            (outs), (ins i32imm_pcrel:$dst,variable_ops),
-                           "call\t$dst", []>;
+                           "call\t$dst", []>,
+                      Requires<[NotNaCl]>; // @LOCALMOD
     def CALL32r     : I<0xFF, MRM2r, (outs), (ins GR32:$dst, variable_ops),
                         "call\t{*}$dst", [(X86call GR32:$dst)]>;
-// @LOCALMOD-START
-// NOTE: CALL32m must likely be banned
-//    def CALL32m     : I<0xFF, MRM2m, (outs), (ins i32mem:$dst, variable_ops),
-//                        "call\t{*}$dst", [(X86call (loadi32 addr:$dst))]>;
-// @LOCALMOD-END
+    def CALL32m     : I<0xFF, MRM2m, (outs), (ins i32mem:$dst, variable_ops),
+                        "call\t{*}$dst", [(X86call (loadi32 addr:$dst))]>,
+                      Requires<[NotNaCl]>; // @LOCALMOD
     def FARCALL16i  : Iseg16<0x9A, RawFrm, (outs),
                              (ins i16imm:$seg, i16imm:$off),
                              "lcall{w}\t$seg, $off", []>, OpSize;
@@ -5308,6 +5261,12 @@ include "X86InstrFPStack.td"
 //===----------------------------------------------------------------------===//
 
 include "X86Instr64bit.td"
+
+//===----------------------------------------------------------------------===//
+// NaCl support (@LOCALMOD)
+//===----------------------------------------------------------------------===//
+
+include "X86InstrNaCl.td"
 
 //===----------------------------------------------------------------------===//
 // SIMD support (SSE, MMX and AVX)
