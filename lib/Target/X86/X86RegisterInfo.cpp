@@ -41,12 +41,6 @@
 #include "llvm/Support/ErrorHandling.h"
 using namespace llvm;
 
-// @LOCALMOD-START
-static cl::opt<bool>
-ReserveR15("reserve-r15", cl::Hidden,
-           cl::desc("Reserve R15, making it unavailable as GPR"));
-// @LOCALMOD-END
-
 X86RegisterInfo::X86RegisterInfo(X86TargetMachine &tm,
                                  const TargetInstrInfo &tii)
   : X86GenRegisterInfo(tm.getSubtarget<X86Subtarget>().is64Bit() ?
@@ -273,21 +267,18 @@ X86RegisterInfo::getMatchingSuperRegClass(const TargetRegisterClass *A,
 
 const TargetRegisterClass *
 X86RegisterInfo::getPointerRegClass(unsigned Kind) const {
+  const X86Subtarget &Subtarget = TM.getSubtarget<X86Subtarget>();
+  bool is64BitPtrs = Subtarget.is64Bit() && !Subtarget.isTargetNativeClient();
+
   switch (Kind) {
   default: llvm_unreachable("Unexpected Kind in getPointerRegClass!");
   case 0: // Normal GPRs.
-    // @LOCALMOD-START
-// Don't use 64-bit regs for pointers, since pointers are 32-bits for PNaCl
-//     if (TM.getSubtarget<X86Subtarget>().is64Bit())
-//       return &X86::GR64RegClass;
-    // @LOCALMOD-END
+    if (is64BitPtrs)   // @LOCALMOD
+      return &X86::GR64RegClass;
     return &X86::GR32RegClass;
   case 1: // Normal GRPs except the stack pointer (for encoding reasons).
-    // @LOCALMOD-START
-// Don't use 64-bit regs for pointers, since pointers are 32-bits for PNaCl
-//     if (TM.getSubtarget<X86Subtarget>().is64Bit())
-//       return &X86::GR64_NOSPRegClass;
-    // @LOCALMOD-END
+    if (is64BitPtrs)   // @LOCALMOD
+      return &X86::GR64_NOSPRegClass;
     return &X86::GR32_NOSPRegClass;
   }
 }
@@ -451,9 +442,8 @@ BitVector X86RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   Reserved.set(X86::ST7);
 
   // @LOCALMOD-START
-  // TODO(robertm): really use flag
   const X86Subtarget& Subtarget = MF.getTarget().getSubtarget<X86Subtarget>();
-  if (Subtarget.is64Bit() && (ReserveR15 || 1)) {
+  if (Subtarget.isTargetNativeClient() && Subtarget.is64Bit()) {
     Reserved.set(X86::R15);
     Reserved.set(X86::R15D);
     Reserved.set(X86::R15W);
@@ -1314,7 +1304,8 @@ void X86RegisterInfo::emitEpilogue(MachineFunction &MF,
 
     // Delete the pseudo instruction TCRETURN.
     MBB.erase(MBBI);
-  } else if ((RetOpcode == X86::RET || RetOpcode == X86::RETI) &&
+  } else if ((RetOpcode == X86::RET || RetOpcode == X86::RETI ||
+              RetOpcode == X86::NACL_RET32 || RetOpcode == X86::NACL_RET64) && // @LOCALMOD
              (X86FI->getTCReturnAddrDelta() < 0)) {
     // Add the return addr area delta back since we are not tail calling.
     int delta = -1*X86FI->getTCReturnAddrDelta();

@@ -121,7 +121,8 @@ static TargetLoweringObjectFile *createTLOF(X86TargetMachine &TM) {
     if (TM.getSubtarget<X86Subtarget>().is64Bit())
       return new X8664_MachoTargetObjectFile();
     return new TargetLoweringObjectFileMachO();
-  case X86Subtarget::isELF:
+  case X86Subtarget::isGenericELF:   // @LOCALMOD
+  case X86Subtarget::isNativeClient: // @LOCALMOD
    if (TM.getSubtarget<X86Subtarget>().is64Bit())
      return new X8664_ELFTargetObjectFile(TM);
     return new X8632_ELFTargetObjectFile(TM);
@@ -1540,8 +1541,8 @@ X86TargetLowering::LowerFormalArguments(SDValue Chain,
 
 
   // @LOCALMOD-START
-  const TargetMachine &TM = MF.getTarget();
-  if (TM.getSubtarget<X86Subtarget>().is64Bit()) {
+  if (Subtarget->isTargetNativeClient() &&
+      Subtarget->is64Bit()) {
     FuncInfo->setForceFramePointer(true);
   }
   // @LOCALMOD-END

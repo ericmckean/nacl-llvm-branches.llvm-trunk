@@ -1,0 +1,146 @@
+//====- X86InstrNaCl.td - Describe NaCl Instructions ----*- tablegen -*-===//
+//
+//                     The LLVM Compiler Infrastructure
+//
+// This file is distributed under the University of Illinois Open Source
+// License. See LICENSE.TXT for details.
+//
+//===----------------------------------------------------------------------===//
+//
+// This file describes the modifications to the X86 instruction set needed for
+// Native Client code generation.
+//
+//===----------------------------------------------------------------------===//
+
+
+//===----------------------------------------------------------------------===//
+//
+// Native Client 32-bit
+//
+//===----------------------------------------------------------------------===//
+
+// TODO: indicate that we clobber rcx
+let isTerminator = 1, isReturn = 1, isBarrier = 1,
+    hasCtrlDep = 1, FPForm = SpecialFP, FPFormBits = SpecialFP.Value in {
+
+  def NACL_RET32   : I<0, Pseudo, (outs), (ins variable_ops),
+                    "pop %ecx\n\tnacljmp %ecx",
+                    [(X86retflag 0)]>, 
+                    Requires<[IsNaCl,In32BitMode]>;
+}
+
+let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
+    def NACL_JMP32r     : I<0, Pseudo, (outs), (ins GR32:$dst),
+                       "nacljmp\t $dst",
+                         []>, Requires<[IsNaCl]>;
+}
+
+let isCall = 1 in
+  // All calls clobber the non-callee saved registers. ESP is marked as
+  // a use to prevent stack-pointer assignments that appear immediately
+  // before calls from potentially appearing dead. Uses for argument
+  // registers are added manually.
+  let Defs = [EAX, ECX, EDX, FP0, FP1, FP2, FP3, FP4, FP5, FP6, ST0,
+              ESI, EDI, R8D, R9D, R10D, R11D, // if x64 is forced to use 32-bit
+              MM0, MM1, MM2, MM3, MM4, MM5, MM6, MM7,
+              XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
+              XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15, EFLAGS],
+      Uses = [ESP] in {
+
+def NACL_CALL32r     : I<0, Pseudo, (outs), (ins GR32:$dst, variable_ops),
+                        "naclcall\t$dst", []>, Requires<[IsNaCl]>;
+}
+
+let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1 in
+  let Defs = [EAX, ECX, EDX, FP0, FP1, FP2, FP3, FP4, FP5, FP6, ST0,
+              MM0, MM1, MM2, MM3, MM4, MM5, MM6, MM7,
+              XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
+              XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15, EFLAGS],
+      Uses = [ESP] in {
+
+ def NACL_TAILJMPr : I<0, Pseudo, (outs), (ins GR32_TC:$dst, variable_ops),
+                   "nacljmp\t $dst  # TAILCALL",
+                   []>, Requires<[IsNaCl]>;
+}
+
+
+//===----------------------------------------------------------------------===//
+//
+// Native Client 64-bit
+//
+//===----------------------------------------------------------------------===//
+
+let Defs = [RSP, EFLAGS], Uses = [RSP] in {
+    def NACL_ADD_SP : I<0, Pseudo, (outs GR64:$dst),
+                      (ins GR64:$src1, i64i32imm:$src2),
+                      "naclasp{q}\t{$src2, %r15|%r15, $src2}",
+                      []>, Requires<[IsNaCl]>;
+
+   def NACL_SUB_SP   : I<0, Pseudo, (outs GR64:$dst),
+                      (ins GR64:$src1, i64i32imm:$src2),
+                      "naclssp{q}\t{$src2, %r15|%r15, $src2}",
+                      []>, Requires<[IsNaCl]>;
+
+}
+
+let isCall = 1 in
+  // All calls clobber the non-callee saved registers. RSP is marked as
+  // a use to prevent stack-pointer assignments that appear immediately
+  // before calls from potentially appearing dead. Uses for argument
+  // registers are added manually.
+  let Defs = [RAX, RCX, RDX, RSI, RDI, R8, R9, R10, R11,
+              FP0, FP1, FP2, FP3, FP4, FP5, FP6, ST0, ST1,
+              MM0, MM1, MM2, MM3, MM4, MM5, MM6, MM7,
+              XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
+              XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15, EFLAGS],
+      Uses = [RSP] in {
+
+    def NACL_CALL64r    : I<0, Pseudo, (outs), (ins GR64:$dst, variable_ops),
+                          "naclcall\t$dst, %r15",
+                          []>,
+                          Requires<[IsNaCl]>;
+}
+
+// TODO: indicate that we clobber rcx
+let isTerminator = 1, isReturn = 1, isBarrier = 1,
+    hasCtrlDep = 1, FPForm = SpecialFP, FPFormBits = SpecialFP.Value in {
+
+  def NACL_RET64    : I<0, Pseudo, (outs), (ins variable_ops),
+                     "pop %rcx\n\tnacljmp %ecx, %r15",
+                     []>, 
+                     Requires<[IsNaCl,In64BitMode]>;
+}
+
+
+let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1 in
+  let Defs = [RAX, RCX, RDX, RSI, RDI, R8, R9, R10, R11,
+              FP0, FP1, FP2, FP3, FP4, FP5, FP6, ST0, ST1,
+              MM0, MM1, MM2, MM3, MM4, MM5, MM6, MM7,
+              XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
+              XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15, EFLAGS],
+      Uses = [RSP] in {
+
+  def NACL_TAILJMPr64 : I<0, Pseudo, (outs), (ins GR64_TC:$dst, variable_ops),
+                        "nacljmp\t$dst,%r15  # TAILCALL",
+                        []>,
+                        Requires<[IsNaCl]>;
+
+}
+
+let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
+  def NACL_JMP64r     : I<0, Pseudo, (outs), (ins GR64:$dst),
+                        "nacljmp\t$dst, %r15",
+                        []>,
+                        Requires<[IsNaCl]>;
+
+}
+
+// TODO: indicate that we clobber rcx
+def NACL_POP_RBP   : I<0, Pseudo,
+                     (outs GR64:$reg), (ins),
+                     "pop\t%rcx\n\t naclrestbp\t%ecx, %r15",
+                     []>,
+                     Requires<[IsNaCl]>;
+
+
+
