@@ -179,7 +179,6 @@ static bool is32BitReg(unsigned reg) {
 }
 
 static bool is64BitReg(unsigned reg) {
-  dbgs() << "num64Regs: " << X86::GR64RegClass.getNumRegs() << "\n";
   return (X86::GR64RegClass.contains(reg));
 }
 
@@ -190,9 +189,9 @@ static unsigned Get32BitRegFor64BitReg(unsigned reg64) {
       if (is64BitReg(reg64)) {
         dbgs() << "Missed 64bit reg case in Get32BitRegFor64BitReg: "
                << reg64 << "\n";
-      } else if (is32BitReg(reg32)) {
+      } else if (is32BitReg(reg64)) {
         dbgs() << "Get 32bit reg given 32bit reg\n";
-        return reg32;
+        return reg64;
       } else {
         dbgs() << "Get 32bit Reg for 64bit reg, not given 64bit reg "
                << reg64 << "\n";
