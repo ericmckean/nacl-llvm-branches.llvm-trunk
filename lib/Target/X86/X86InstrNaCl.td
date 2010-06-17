@@ -41,7 +41,6 @@ let isCall = 1 in
   // before calls from potentially appearing dead. Uses for argument
   // registers are added manually.
   let Defs = [EAX, ECX, EDX, FP0, FP1, FP2, FP3, FP4, FP5, FP6, ST0,
-              ESI, EDI, R8D, R9D, R10D, R11D, // if x64 is forced to use 32-bit
               MM0, MM1, MM2, MM3, MM4, MM5, MM6, MM7,
               XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
               XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15, EFLAGS],
