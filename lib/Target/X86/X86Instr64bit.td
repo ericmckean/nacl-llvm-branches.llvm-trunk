@@ -147,7 +147,7 @@ let isCall = 1 in
     def CALL64pcrel32 : Ii32<0xE8, RawFrm,
                           (outs), (ins i64i32imm_pcrel:$dst, variable_ops),
                           "call{q}\t$dst", []>,
-                        Requires<[In64BitMode, NotWin64]>;
+                        Requires<[In64BitMode, NotWin64, NotNaCl]>; // @LOCALMOD
     def CALL64r     : I<0xFF, MRM2r, (outs), (ins GR64:$dst, variable_ops),
                           "call{q}\t{*}$dst", [(X86call GR64:$dst)]>,
                         Requires<[NotWin64]>;
@@ -1912,9 +1912,9 @@ def : Pat<(store (i64 (X86Wrapper tblockaddress:$src)), addr:$dst),
 // Direct PC relative function call for small code model. 32-bit displacement
 // sign extended to 64-bit.
 def : Pat<(X86call (i64 tglobaladdr:$dst)),
-          (CALL64pcrel32 tglobaladdr:$dst)>, Requires<[NotWin64]>;
+          (CALL64pcrel32 tglobaladdr:$dst)>, Requires<[NotWin64,NotNaCl]>;
 def : Pat<(X86call (i64 texternalsym:$dst)),
-          (CALL64pcrel32 texternalsym:$dst)>, Requires<[NotWin64]>;
+          (CALL64pcrel32 texternalsym:$dst)>, Requires<[NotWin64,NotNaCl]>;
 
 def : Pat<(X86call (i64 tglobaladdr:$dst)),
           (WINCALL64pcrel32 tglobaladdr:$dst)>, Requires<[IsWin64]>;

@@ -102,7 +102,8 @@ private:
 
 public:
   enum {
-    isGenericELF, isCygwin, isDarwin, isWindows, isMingw, isNativeClient  // @LOCALMOD
+    // @LOCALMOD
+    isGenericELF, isCygwin, isDarwin, isWindows, isMingw, isNativeClient
   } TargetType;
 
   /// This constructor initializes the data members to match that
@@ -153,10 +154,13 @@ public:
   bool isTargetDarwin() const { return TargetType == isDarwin; }
 
   bool isTargetELF() const {
-    return TargetType == isGenericELF || TargetType == isNativeClient; // @LOCALMOD
+    // @LOCALMOD
+    return TargetType == isGenericELF || TargetType == isNativeClient;
   }
 
-  bool isTargetNativeClient() const { return TargetType == isNativeClient; }
+  bool isTargetNaCl() const { return TargetType == isNativeClient; }
+  bool isTargetNaCl32() const { return isTargetNaCl() && !is64Bit(); }
+  bool isTargetNaCl64() const { return isTargetNaCl() && is64Bit(); }
 
   bool isTargetWindows() const { return TargetType == isWindows; }
   bool isTargetMingw() const { return TargetType == isMingw; }
@@ -177,7 +181,7 @@ public:
 
   std::string getDataLayout() const {
     const char *p;
-    if (isTargetNativeClient() && is64Bit())
+    if (isTargetNaCl64())  // @LOCALMOD
       p = "e-p:32:32-s:64-f64:64:64-i64:64:64-f80:128:128-n8:16:32:64";
     else if (is64Bit())
       p = "e-p:64:64-s:64-f64:64:64-i64:64:64-f80:128:128-n8:16:32:64";

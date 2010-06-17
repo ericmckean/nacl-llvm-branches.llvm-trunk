@@ -612,6 +612,8 @@ bool X86NaClRewritePass::PassSandboxingControlFlow(MachineBasicBlock &MBB,
       DumpInstructionVerbose(MI);
       assert(0);
      case X86::CALL32r:
+// Made unnecessary by pattern matching
+#if 0
        if (is64Bit) {
          // use NACL_CALL64r when in 64bit mode (so that rzp is inserted)
          DEBUG(dbgs() << "Switching CALL32r to NACL_CALL64r\n");
@@ -622,6 +624,7 @@ bool X86NaClRewritePass::PassSandboxingControlFlow(MachineBasicBlock &MBB,
          MI.setDesc(TII->get(X86::NACL_CALL32r));
        }
       Modified = true;
+#endif
       break;
 
      case X86::JMP32r:
@@ -661,15 +664,17 @@ bool X86NaClRewritePass::PassSandboxingControlFlow(MachineBasicBlock &MBB,
        break;
      }
      case X86::CALL64r: {
+// Made unnecessary by pattern matching
+#if 0
       MI.setDesc(TII->get(X86::NACL_CALL64r));
       const MachineOperand &IndexReg  = MI.getOperand(0);
       const unsigned reg32 = Get32BitRegFor64BitReg(IndexReg.getReg());
       assert (reg32 > 0);
       const_cast<MachineOperand&>(IndexReg).setReg(reg32);
       Modified = true;
+#endif
       break;
      }
-
 #if 0
       // We have not yet encountered this one
      case X86::TAILJMPr64:

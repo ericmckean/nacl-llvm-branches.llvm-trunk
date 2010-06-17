@@ -267,8 +267,10 @@ X86RegisterInfo::getMatchingSuperRegClass(const TargetRegisterClass *A,
 
 const TargetRegisterClass *
 X86RegisterInfo::getPointerRegClass(unsigned Kind) const {
+  // @LOCALMOD-BEGIN
   const X86Subtarget &Subtarget = TM.getSubtarget<X86Subtarget>();
-  bool is64BitPtrs = Subtarget.is64Bit() && !Subtarget.isTargetNativeClient();
+  bool is64BitPtrs = Subtarget.is64Bit() && !Subtarget.isTargetNaCl();
+  // @LOCALMOD-END
 
   switch (Kind) {
   default: llvm_unreachable("Unexpected Kind in getPointerRegClass!");
@@ -443,7 +445,7 @@ BitVector X86RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
 
   // @LOCALMOD-START
   const X86Subtarget& Subtarget = MF.getTarget().getSubtarget<X86Subtarget>();
-  if (Subtarget.isTargetNativeClient() && Subtarget.is64Bit()) {
+  if (Subtarget.isTargetNaCl64()) {
     Reserved.set(X86::R15);
     Reserved.set(X86::R15D);
     Reserved.set(X86::R15W);
@@ -1305,8 +1307,9 @@ void X86RegisterInfo::emitEpilogue(MachineFunction &MF,
     // Delete the pseudo instruction TCRETURN.
     MBB.erase(MBBI);
   } else if ((RetOpcode == X86::RET || RetOpcode == X86::RETI ||
-              RetOpcode == X86::NACL_RET32 || RetOpcode == X86::NACL_RET64) && // @LOCALMOD
-             (X86FI->getTCReturnAddrDelta() < 0)) {
+              RetOpcode == X86::NACL_RET32 ||    // @LOCALMOD
+              RetOpcode == X86::NACL_RET64)      // @LOCALMOD
+             && (X86FI->getTCReturnAddrDelta() < 0)) {
     // Add the return addr area delta back since we are not tail calling.
     int delta = -1*X86FI->getTCReturnAddrDelta();
     MBBI = prior(MBB.end());

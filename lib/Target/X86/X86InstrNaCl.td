@@ -26,13 +26,13 @@ let isTerminator = 1, isReturn = 1, isBarrier = 1,
   def NACL_RET32   : I<0, Pseudo, (outs), (ins variable_ops),
                     "pop %ecx\n\tnacljmp %ecx",
                     [(X86retflag 0)]>, 
-                    Requires<[IsNaCl,In32BitMode]>;
+                    Requires<[IsNaCl32]>;
 }
 
 let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
     def NACL_JMP32r     : I<0, Pseudo, (outs), (ins GR32:$dst),
                        "nacljmp\t $dst",
-                         []>, Requires<[IsNaCl]>;
+                         []>, Requires<[IsNaCl32]>;
 }
 
 let isCall = 1 in
@@ -47,9 +47,23 @@ let isCall = 1 in
               XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15, EFLAGS],
       Uses = [ESP] in {
 
+def NACL_CALLpcrel32 : Ii32PCRel<0, Pseudo,
+                      (outs), (ins i32imm_pcrel:$dst,variable_ops),
+                      "call\t$dst", []>,
+                      Requires<[IsNaCl32]>;
 def NACL_CALL32r     : I<0, Pseudo, (outs), (ins GR32:$dst, variable_ops),
-                        "naclcall\t$dst", []>, Requires<[IsNaCl]>;
+                        "naclcall\t$dst", [(X86call GR32:$dst)]>,
+                       Requires<[IsNaCl32]>;
 }
+
+// Normal calls, with various flavors of addresses.
+def : Pat<(X86call (i32 tglobaladdr:$dst)),
+          (NACL_CALLpcrel32 tglobaladdr:$dst)>, Requires<[IsNaCl32]>;
+def : Pat<(X86call (i32 texternalsym:$dst)),
+          (NACL_CALLpcrel32 texternalsym:$dst)>, Requires<[IsNaCl32]>;
+def : Pat<(X86call (i32 imm:$dst)),
+          (NACL_CALLpcrel32 imm:$dst)>, Requires<[CallImmAddr,IsNaCl32]>;
+
 
 let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1 in
   let Defs = [EAX, ECX, EDX, FP0, FP1, FP2, FP3, FP4, FP5, FP6, ST0,
@@ -60,7 +74,7 @@ let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1 in
 
  def NACL_TAILJMPr : I<0, Pseudo, (outs), (ins GR32_TC:$dst, variable_ops),
                    "nacljmp\t $dst  # TAILCALL",
-                   []>, Requires<[IsNaCl]>;
+                   []>, Requires<[IsNaCl32]>;
 }
 
 
@@ -74,12 +88,12 @@ let Defs = [RSP, EFLAGS], Uses = [RSP] in {
     def NACL_ADD_SP : I<0, Pseudo, (outs GR64:$dst),
                       (ins GR64:$src1, i64i32imm:$src2),
                       "naclasp{q}\t{$src2, %r15|%r15, $src2}",
-                      []>, Requires<[IsNaCl]>;
+                      []>, Requires<[IsNaCl64]>;
 
    def NACL_SUB_SP   : I<0, Pseudo, (outs GR64:$dst),
                       (ins GR64:$src1, i64i32imm:$src2),
                       "naclssp{q}\t{$src2, %r15|%r15, $src2}",
-                      []>, Requires<[IsNaCl]>;
+                      []>, Requires<[IsNaCl64]>;
 
 }
 
@@ -95,11 +109,24 @@ let isCall = 1 in
               XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15, EFLAGS],
       Uses = [RSP] in {
 
-    def NACL_CALL64r    : I<0, Pseudo, (outs), (ins GR64:$dst, variable_ops),
+    def NACL_CALL64pcrel32 : Ii32<0, Pseudo,
+                          (outs), (ins i32imm_pcrel:$dst, variable_ops),
+                          "call{q}\t$dst", []>,
+                          Requires<[IsNaCl64]>;
+
+    def NACL_CALL64r    : I<0, Pseudo, (outs), (ins GR32:$dst, variable_ops),
                           "naclcall\t$dst, %r15",
-                          []>,
-                          Requires<[IsNaCl]>;
+                          [(X86call GR32:$dst)]>,
+                          Requires<[IsNaCl64]>;
 }
+
+def : Pat<(X86call (i32 tglobaladdr:$dst)),
+          (NACL_CALL64pcrel32 tglobaladdr:$dst)>, Requires<[IsNaCl64]>;
+def : Pat<(X86call (i32 texternalsym:$dst)),
+          (NACL_CALL64pcrel32 texternalsym:$dst)>, Requires<[IsNaCl64]>;
+def : Pat<(X86call (i32 imm:$dst)),
+          (NACL_CALL64pcrel32 imm:$dst)>, Requires<[CallImmAddr,IsNaCl64]>;
+
 
 // TODO: indicate that we clobber rcx
 let isTerminator = 1, isReturn = 1, isBarrier = 1,
@@ -108,7 +135,7 @@ let isTerminator = 1, isReturn = 1, isBarrier = 1,
   def NACL_RET64    : I<0, Pseudo, (outs), (ins variable_ops),
                      "pop %rcx\n\tnacljmp %ecx, %r15",
                      []>, 
-                     Requires<[IsNaCl,In64BitMode]>;
+                     Requires<[IsNaCl64]>;
 }
 
 
@@ -123,7 +150,7 @@ let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1 in
   def NACL_TAILJMPr64 : I<0, Pseudo, (outs), (ins GR64_TC:$dst, variable_ops),
                         "nacljmp\t$dst,%r15  # TAILCALL",
                         []>,
-                        Requires<[IsNaCl]>;
+                        Requires<[IsNaCl64]>;
 
 }
 
@@ -131,7 +158,7 @@ let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
   def NACL_JMP64r     : I<0, Pseudo, (outs), (ins GR64:$dst),
                         "nacljmp\t$dst, %r15",
                         []>,
-                        Requires<[IsNaCl]>;
+                        Requires<[IsNaCl64]>;
 
 }
 
@@ -140,7 +167,7 @@ def NACL_POP_RBP   : I<0, Pseudo,
                      (outs GR64:$reg), (ins),
                      "pop\t%rcx\n\t naclrestbp\t%ecx, %r15",
                      []>,
-                     Requires<[IsNaCl]>;
+                     Requires<[IsNaCl64]>;
 
 
 
