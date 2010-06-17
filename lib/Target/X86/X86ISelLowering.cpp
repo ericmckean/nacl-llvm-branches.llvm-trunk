@@ -1541,8 +1541,7 @@ X86TargetLowering::LowerFormalArguments(SDValue Chain,
 
 
   // @LOCALMOD-START
-  if (Subtarget->isTargetNativeClient() &&
-      Subtarget->is64Bit()) {
+  if (Subtarget->isTargetNaCl64()) {
     FuncInfo->setForceFramePointer(true);
   }
   // @LOCALMOD-END

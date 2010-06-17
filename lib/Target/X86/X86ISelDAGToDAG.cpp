@@ -307,7 +307,7 @@ namespace {
 
     // @LOCALMO-START
     bool RestrictUseOfBaseReg() {
-      return Subtarget->isTargetNativeClient() && Subtarget->is64Bit();
+      return Subtarget->isTargetNaCl() && Subtarget->is64Bit();
     }
     // @LOCALMO-END
 
@@ -455,7 +455,7 @@ void X86DAGToDAGISel::PreprocessISelDAG() {
     SDNode *N = I++;  // Preincrement iterator to avoid invalidation issues.
 
     if (OptLevel != CodeGenOpt::None &&
-        !Subtarget->isTargetNativeClient() &&  // @LOCALMOD:Cannot fold load/call
+        !Subtarget->isTargetNaCl() &&   // @LOCALMOD: We can't fold load/call
         (N->getOpcode() == X86ISD::CALL ||
          N->getOpcode() == X86ISD::TC_RETURN)) {
       /// Also try moving call address load from outside callseq_start to just

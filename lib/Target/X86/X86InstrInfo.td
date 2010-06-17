@@ -316,8 +316,10 @@ def In32BitMode  : Predicate<"!Subtarget->is64Bit()">;
 def In64BitMode  : Predicate<"Subtarget->is64Bit()">;
 def IsWin64      : Predicate<"Subtarget->isTargetWin64()">;
 def NotWin64     : Predicate<"!Subtarget->isTargetWin64()">;
-def IsNaCl       : Predicate<"Subtarget->isTargetNativeClient()">;     // @LOCALMOD
-def NotNaCl      : Predicate<"!Subtarget->isTargetNativeClient()">;    // @LOCALMOD
+def IsNaCl       : Predicate<"Subtarget->isTargetNaCl()">;     // @LOCALMOD
+def IsNaCl32     : Predicate<"Subtarget->isTargetNaCl32()">;   // @LOCALMOD
+def IsNaCl64     : Predicate<"Subtarget->isTargetNaCl64()">;   // @LOCALMOD
+def NotNaCl      : Predicate<"!Subtarget->isTargetNaCl()">;    // @LOCALMOD
 def SmallCode    : Predicate<"TM.getCodeModel() == CodeModel::Small">;
 def KernelCode   : Predicate<"TM.getCodeModel() == CodeModel::Kernel">;
 def FarData      : Predicate<"TM.getCodeModel() != CodeModel::Small &&"
@@ -648,7 +650,8 @@ let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
   def JMP32r     : I<0xFF, MRM4r, (outs), (ins GR32:$dst), "jmp{l}\t{*}$dst",
                      [(brind GR32:$dst)]>;
   def JMP32m     : I<0xFF, MRM4m, (outs), (ins i32mem:$dst), "jmp{l}\t{*}$dst",
-                     [(brind (loadi32 addr:$dst))]>, Requires<[NotNaCl]>;  // @LOCALMOD
+                     [(brind (loadi32 addr:$dst))]>,
+                   Requires<[NotNaCl]>;  // @LOCALMOD
   def FARJMP16i  : Iseg16<0xEA, RawFrm, (outs),
                           (ins i16imm:$seg, i16imm:$off),
                           "ljmp{w}\t$seg, $off", []>, OpSize;
@@ -678,9 +681,6 @@ let isCall = 1 in
   // before calls from potentially appearing dead. Uses for argument
   // registers are added manually.
   let Defs = [EAX, ECX, EDX,
-//@ LOCALMOD-START
-              ESI, EDI, R8D, R9D, R10D, R11D, // if x64 is forced to use 32-bit
-//@ LOCALMOD-END
               FP0, FP1, FP2, FP3, FP4, FP5, FP6, ST0,
               MM0, MM1, MM2, MM3, MM4, MM5, MM6, MM7,
               XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
@@ -691,7 +691,8 @@ let isCall = 1 in
                            "call\t$dst", []>,
                       Requires<[NotNaCl]>; // @LOCALMOD
     def CALL32r     : I<0xFF, MRM2r, (outs), (ins GR32:$dst, variable_ops),
-                        "call\t{*}$dst", [(X86call GR32:$dst)]>;
+                        "call\t{*}$dst", [(X86call GR32:$dst)]>,
+                      Requires<[NotNaCl]>; // @LOCALMOD
     def CALL32m     : I<0xFF, MRM2m, (outs), (ins i32mem:$dst, variable_ops),
                         "call\t{*}$dst", [(X86call (loadi32 addr:$dst))]>,
                       Requires<[NotNaCl]>; // @LOCALMOD
@@ -4386,11 +4387,11 @@ def : Pat<(X86tcret (i32 texternalsym:$dst), imm:$off),
 
 // Normal calls, with various flavors of addresses.
 def : Pat<(X86call (i32 tglobaladdr:$dst)),
-          (CALLpcrel32 tglobaladdr:$dst)>;
+          (CALLpcrel32 tglobaladdr:$dst)>, Requires<[NotNaCl]>;
 def : Pat<(X86call (i32 texternalsym:$dst)),
-          (CALLpcrel32 texternalsym:$dst)>;
+          (CALLpcrel32 texternalsym:$dst)>, Requires<[NotNaCl]>;
 def : Pat<(X86call (i32 imm:$dst)),
-          (CALLpcrel32 imm:$dst)>, Requires<[CallImmAddr]>;
+          (CALLpcrel32 imm:$dst)>, Requires<[CallImmAddr,NotNaCl]>;
 
 // X86 specific add which produces a flag.
 def : Pat<(addc GR32:$src1, GR32:$src2),
