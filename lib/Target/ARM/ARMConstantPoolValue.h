@@ -28,7 +28,8 @@ namespace ARMCP {
     CPValue,
     CPExtSymbol,
     CPBlockAddress,
-    CPLSDA
+    CPLSDA,
+    CPJumpTable // @LOCALMOD
   };
 }
 
@@ -38,6 +39,7 @@ namespace ARMCP {
 class ARMConstantPoolValue : public MachineConstantPoolValue {
   Constant *CVal;          // Constant being loaded.
   const char *S;           // ExtSymbol being loaded.
+  unsigned JumpTableIndex; // Index of a jump table. // @LOCALMOD
   unsigned LabelId;        // Label id of the load.
   ARMCP::ARMCPKind Kind;   // Kind of constant.
   unsigned char PCAdjust;  // Extra adjustment if constantpool is pc-relative.
@@ -54,6 +56,7 @@ public:
                        unsigned char PCAdj = 0, const char *Modifier = NULL,
                        bool AddCurrentAddress = false);
   ARMConstantPoolValue(GlobalValue *GV, const char *Modifier);
+  ARMConstantPoolValue(LLVMContext &C, unsigned jt); // @LOCALMOD
   ARMConstantPoolValue();
   ~ARMConstantPoolValue();
 
@@ -69,6 +72,13 @@ public:
   bool isExtSymbol() const { return Kind == ARMCP::CPExtSymbol; }
   bool isBlockAddress() { return Kind == ARMCP::CPBlockAddress; }
   bool isLSDA() { return Kind == ARMCP::CPLSDA; }
+  // @LOCALMOD-START
+  bool isValue() const { return Kind == ARMCP::CPValue; }
+  bool isJumpTable() const { return Kind == ARMCP::CPJumpTable; }
+  virtual unsigned *getJumpTableIndex() {
+    return isJumpTable() ? &JumpTableIndex : 0;
+  }
+  // @LOCALMOD-END
 
   virtual unsigned getRelocationInfo() const {
     // FIXME: This is conservatively claiming that these entries require a

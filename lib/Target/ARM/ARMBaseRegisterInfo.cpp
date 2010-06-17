@@ -143,10 +143,21 @@ ARMBaseRegisterInfo::ARMBaseRegisterInfo(const ARMBaseInstrInfo &tii,
     FramePtr((STI.isTargetDarwin() || STI.isThumb()) ? ARM::R7 : ARM::R11) {
 }
 
+extern cl::opt<bool> ReserveR9; // @LOCALMOD
+
 const unsigned*
 ARMBaseRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
   static const unsigned CalleeSavedRegs[] = {
     ARM::LR, ARM::R11, ARM::R10, ARM::R9, ARM::R8,
+    ARM::R7, ARM::R6,  ARM::R5,  ARM::R4,
+
+    ARM::D15, ARM::D14, ARM::D13, ARM::D12,
+    ARM::D11, ARM::D10, ARM::D9,  ARM::D8,
+    0
+  };
+
+  static const unsigned CalleeSavedRegsNoR9[] = { // @LOCALMOD
+    ARM::LR, ARM::R11, ARM::R10, ARM::R8,
     ARM::R7, ARM::R6,  ARM::R5,  ARM::R4,
 
     ARM::D15, ARM::D14, ARM::D13, ARM::D12,
@@ -164,11 +175,17 @@ ARMBaseRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
     ARM::D11, ARM::D10, ARM::D9,  ARM::D8,
     0
   };
-  return STI.isTargetDarwin() ? DarwinCalleeSavedRegs : CalleeSavedRegs;
+  if (STI.isTargetDarwin())
+    return DarwinCalleeSavedRegs;
+  if (ReserveR9)
+    return CalleeSavedRegsNoR9; // @LOCALMOD
+  return CalleeSavedRegs;
 }
 
 const TargetRegisterClass* const *
 ARMBaseRegisterInfo::getCalleeSavedRegClasses(const MachineFunction *MF) const {
+  // FIXME: Having both getCalleeSavedRegClasses and getCalleeSavedRegs is
+  // error prone.
   static const TargetRegisterClass * const CalleeSavedRegClasses[] = {
     &ARM::GPRRegClass, &ARM::GPRRegClass, &ARM::GPRRegClass,
     &ARM::GPRRegClass, &ARM::GPRRegClass, &ARM::GPRRegClass,
@@ -179,9 +196,29 @@ ARMBaseRegisterInfo::getCalleeSavedRegClasses(const MachineFunction *MF) const {
     0
   };
 
+  static const TargetRegisterClass * const CalleeSavedRegClassesNoR9[] = { // @LOCALMOD
+    &ARM::GPRRegClass, &ARM::GPRRegClass, &ARM::GPRRegClass,
+                       &ARM::GPRRegClass, &ARM::GPRRegClass,
+    &ARM::GPRRegClass, &ARM::GPRRegClass, &ARM::GPRRegClass,
+
+    &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass,
+    &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass,
+    0
+  };
+
   static const TargetRegisterClass * const ThumbCalleeSavedRegClasses[] = {
     &ARM::GPRRegClass, &ARM::GPRRegClass, &ARM::GPRRegClass,
     &ARM::GPRRegClass, &ARM::GPRRegClass, &ARM::tGPRRegClass,
+    &ARM::tGPRRegClass,&ARM::tGPRRegClass,&ARM::tGPRRegClass,
+
+    &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass,
+    &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass,
+    0
+  };
+
+  static const TargetRegisterClass * const ThumbCalleeSavedRegClassesNoR9[] = { // @LOCALMOD
+    &ARM::GPRRegClass, &ARM::GPRRegClass, &ARM::GPRRegClass,
+                       &ARM::GPRRegClass, &ARM::tGPRRegClass,
     &ARM::tGPRRegClass,&ARM::tGPRRegClass,&ARM::tGPRRegClass,
 
     &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass,
@@ -209,12 +246,14 @@ ARMBaseRegisterInfo::getCalleeSavedRegClasses(const MachineFunction *MF) const {
     0
   };
 
-  if (STI.isThumb1Only()) {
-    return STI.isTargetDarwin()
-      ? DarwinThumbCalleeSavedRegClasses : ThumbCalleeSavedRegClasses;
-  }
-  return STI.isTargetDarwin()
-    ? DarwinCalleeSavedRegClasses : CalleeSavedRegClasses;
+  if (STI.isTargetDarwin())
+    return STI.isThumb1Only() ? DarwinThumbCalleeSavedRegClasses :
+      DarwinCalleeSavedRegClasses;
+  if (ReserveR9)
+    return STI.isThumb1Only() ? ThumbCalleeSavedRegClassesNoR9
+      : CalleeSavedRegClassesNoR9;
+  return STI.isThumb1Only() ? ThumbCalleeSavedRegClasses
+    : CalleeSavedRegClasses;
 }
 
 BitVector ARMBaseRegisterInfo::

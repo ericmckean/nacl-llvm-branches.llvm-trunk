@@ -25,6 +25,8 @@ add_llvm_target(ARMCodeGen
   ARMLoadStoreOptimizer.cpp
   ARMMCAsmInfo.cpp
   ARMRegisterInfo.cpp
+  ARMSFIPlacement.cpp
+  ARMSFIBranch.cpp
   ARMSubtarget.cpp
   ARMTargetMachine.cpp
   ARMTargetObjectFile.cpp
