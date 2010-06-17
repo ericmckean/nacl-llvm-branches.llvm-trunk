@@ -145,6 +145,11 @@ static inline bool IsCondBranch(unsigned BrOpc) {
   return IsBRF(BrOpc) || IsBRT(BrOpc);
 }
 
+static inline bool IsBR_JT(unsigned BrOpc) {
+  return BrOpc == XCore::BR_JT
+      || BrOpc == XCore::BR_JT32;
+}
+
 /// GetCondFromBranchOpc - Return the XCore CC that matches 
 /// the correspondent Branch instruction opcode.
 static XCore::CondCode GetCondFromBranchOpc(unsigned BrOpc) 
@@ -269,6 +274,14 @@ XCoreInstrInfo::AnalyzeBranch(MachineBasicBlock &MBB, MachineBasicBlock *&TBB,
     if (AllowModify)
       I->eraseFromParent();
     return false;
+  }
+
+  // Likewise if it ends with a branch table followed by an unconditional branch.
+  if (IsBR_JT(SecondLastInst->getOpcode()) && IsBRU(LastInst->getOpcode())) {
+    I = LastInst;
+    if (AllowModify)
+      I->eraseFromParent();
+    return true;
   }
 
   // Otherwise, can't handle this.
@@ -416,10 +429,9 @@ bool XCoreInstrInfo::spillCalleeSavedRegisters(MachineBasicBlock &MBB,
     storeRegToStackSlot(MBB, MI, it->getReg(), true,
                         it->getFrameIdx(), it->getRegClass());
     if (emitFrameMoves) {
-      unsigned SaveLabelId = MMI->NextLabelID();
-      BuildMI(MBB, MI, DL, get(XCore::DBG_LABEL)).addImm(SaveLabelId);
-      XFI->getSpillLabels().push_back(
-          std::pair<unsigned, CalleeSavedInfo>(SaveLabelId, *it));
+      MCSymbol *SaveLabel = MMI->getContext().CreateTempSymbol();
+      BuildMI(MBB, MI, DL, get(XCore::DBG_LABEL)).addSym(SaveLabel);
+      XFI->getSpillLabels().push_back(std::make_pair(SaveLabel, *it));
     }
   }
   return true;
@@ -451,26 +463,6 @@ bool XCoreInstrInfo::restoreCalleeSavedRegisters(MachineBasicBlock &MBB,
     }
   }
   return true;
-}
-
-/// BlockHasNoFallThrough - Analyse if MachineBasicBlock does not
-/// fall-through into its successor block.
-bool XCoreInstrInfo::
-BlockHasNoFallThrough(const MachineBasicBlock &MBB) const 
-{
-  if (MBB.empty()) return false;
-  
-  switch (MBB.back().getOpcode()) {
-  case XCore::RETSP_u6:     // Return.
-  case XCore::RETSP_lu6:
-  case XCore::BAU_1r:       // Indirect branch.
-  case XCore::BRFU_u6:      // Uncond branch.
-  case XCore::BRFU_lu6:
-  case XCore::BRBU_u6:
-  case XCore::BRBU_lu6:
-    return true;
-  default: return false;
-  }
 }
 
 /// ReverseBranchCondition - Return the inverse opcode of the 

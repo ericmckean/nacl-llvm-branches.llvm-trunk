@@ -40,13 +40,49 @@ struct MachineJumpTableEntry {
 };
   
 class MachineJumpTableInfo {
-  unsigned EntrySize;
-  unsigned Alignment;
+public:
+  /// JTEntryKind - This enum indicates how each entry of the jump table is
+  /// represented and emitted.
+  enum JTEntryKind {
+    /// EK_BlockAddress - Each entry is a plain address of block, e.g.:
+    ///     .word LBB123
+    EK_BlockAddress,
+    
+    /// EK_GPRel32BlockAddress - Each entry is an address of block, encoded
+    /// with a relocation as gp-relative, e.g.:
+    ///     .gprel32 LBB123
+    EK_GPRel32BlockAddress,
+    
+    /// EK_LabelDifference32 - Each entry is the address of the block minus
+    /// the address of the jump table.  This is used for PIC jump tables where
+    /// gprel32 is not supported.  e.g.:
+    ///      .word LBB123 - LJTI1_2
+    /// If the .set directive is supported, this is emitted as:
+    ///      .set L4_5_set_123, LBB123 - LJTI1_2
+    ///      .word L4_5_set_123
+    EK_LabelDifference32,
+
+    /// EK_Inline - Jump table entries are emitted inline at their point of
+    /// use. It is the responsibility of the target to emit the entries.
+    EK_Inline,
+
+    /// EK_Custom32 - Each entry is a 32-bit value that is custom lowered by the
+    /// TargetLowering::LowerCustomJumpTableEntry hook.
+    EK_Custom32
+  };
+private:
+  JTEntryKind EntryKind;
   std::vector<MachineJumpTableEntry> JumpTables;
 public:
-  MachineJumpTableInfo(unsigned Size, unsigned Align)
-  : EntrySize(Size), Alignment(Align) {}
+  MachineJumpTableInfo(JTEntryKind Kind): EntryKind(Kind) {}
     
+  JTEntryKind getEntryKind() const { return EntryKind; }
+
+  /// getEntrySize - Return the size of each entry in the jump table.
+  unsigned getEntrySize(const TargetData &TD) const;
+  /// getEntryAlignment - Return the alignment of each entry in the jump table.
+  unsigned getEntryAlignment(const TargetData &TD) const;
+  
   /// getJumpTableIndex - Create a new jump table or return an existing one.
   ///
   unsigned getJumpTableIndex(const std::vector<MachineBasicBlock*> &DestBBs);
@@ -58,9 +94,9 @@ public:
   const std::vector<MachineJumpTableEntry> &getJumpTables() const {
     return JumpTables;
   }
-  
-  /// RemoveJumpTable - Mark the specific index as being dead.  This will cause
-  /// it to not be emitted.
+
+  /// RemoveJumpTable - Mark the specific index as being dead.  This will
+  /// prevent it from being emitted.
   void RemoveJumpTable(unsigned Idx) {
     JumpTables[Idx].MBBs.clear();
   }
@@ -69,13 +105,11 @@ public:
   /// the jump tables to branch to New instead.
   bool ReplaceMBBInJumpTables(MachineBasicBlock *Old, MachineBasicBlock *New);
 
-  /// getEntrySize - Returns the size of an individual field in a jump table. 
-  ///
-  unsigned getEntrySize() const { return EntrySize; }
-  
-  /// getAlignment - returns the target's preferred alignment for jump tables
-  unsigned getAlignment() const { return Alignment; }
-  
+  /// ReplaceMBBInJumpTable - If Old is a target of the jump tables, update
+  /// the jump table to branch to New instead.
+  bool ReplaceMBBInJumpTable(unsigned Idx, MachineBasicBlock *Old,
+                             MachineBasicBlock *New);
+
   /// print - Used by the MachineFunction printer to print information about
   /// jump tables.  Implemented in MachineFunction.cpp
   ///

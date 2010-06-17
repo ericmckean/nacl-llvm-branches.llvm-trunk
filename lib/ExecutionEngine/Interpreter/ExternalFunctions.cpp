@@ -158,7 +158,7 @@ static void *ffiValueFor(const Type *Ty, const GenericValue &AV,
       }
     case Type::FloatTyID: {
       float *FloatPtr = (float *) ArgDataPtr;
-      *FloatPtr = AV.DoubleVal;
+      *FloatPtr = AV.FloatVal;
       return ArgDataPtr;
     }
     case Type::DoubleTyID: {
@@ -284,6 +284,9 @@ GenericValue Interpreter::callExternalFunction(Function *F,
   else
     llvm_report_error("Tried to execute an unknown external function: " +
                       F->getType()->getDescription() + " " +F->getName());
+#ifndef USE_LIBFFI
+  errs() << "Recompiling LLVM with --enable-libffi might help.\n";
+#endif
   return GenericValue();
 }
 
@@ -365,7 +368,7 @@ GenericValue lle_X_sprintf(const FunctionType *FT,
 
       switch (Last) {
       case '%':
-        strcpy(Buffer, "%"); break;
+        memcpy(Buffer, "%", 2); break;
       case 'c':
         sprintf(Buffer, FmtBuf, uint32_t(Args[ArgNo++].IntVal.getZExtValue()));
         break;
@@ -397,8 +400,9 @@ GenericValue lle_X_sprintf(const FunctionType *FT,
         errs() << "<unknown printf code '" << *FmtStr << "'!>";
         ArgNo++; break;
       }
-      strcpy(OutputBuffer, Buffer);
-      OutputBuffer += strlen(Buffer);
+      size_t Len = strlen(Buffer);
+      memcpy(OutputBuffer, Buffer, Len + 1);
+      OutputBuffer += Len;
       }
       break;
     }

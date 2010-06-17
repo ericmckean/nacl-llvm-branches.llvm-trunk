@@ -53,10 +53,14 @@ namespace llvm {
       CMOV,         // ARM conditional move instructions.
       CNEG,         // ARM conditional negate instructions.
 
+      RBIT,         // ARM bitreverse instruction
+
       FTOSI,        // FP to sint within a FP register.
       FTOUI,        // FP to uint within a FP register.
       SITOF,        // sint to FP within a FP register.
       UITOF,        // uint to FP within a FP register.
+      F16_TO_F32,   // Half FP to single FP within a FP register.
+      F32_TO_F16,   // Single FP to half FP within a FP register.
 
       SRL_FLAG,     // V,Flag = srl_flag X -> srl X, 1 + save carry out.
       SRA_FLAG,     // V,Flag = sra_flag X -> sra X, 1 + save carry out.
@@ -71,6 +75,9 @@ namespace llvm {
       THREAD_POINTER,
 
       DYN_ALLOC,    // Dynamic allocation on the stack.
+
+      MEMBARRIER,   // Memory barrier
+      SYNCBARRIER,  // Memory sync barrier
 
       VCEQ,         // Vector compare equal.
       VCGE,         // Vector compare greater than or equal.
@@ -126,7 +133,11 @@ namespace llvm {
       VREV16,       // reverse elements within 16-bit halfwords
       VZIP,         // zip (interleave)
       VUZP,         // unzip (deinterleave)
-      VTRN          // transpose
+      VTRN,         // transpose
+
+      // Floating-point max and min:
+      FMAX,
+      FMIN
     };
   }
 
@@ -273,8 +284,8 @@ namespace llvm {
                              const CCValAssign &VA,
                              ISD::ArgFlagsTy Flags);
     SDValue LowerINTRINSIC_W_CHAIN(SDValue Op, SelectionDAG &DAG);
-    SDValue LowerINTRINSIC_WO_CHAIN(SDValue Op, SelectionDAG &DAG);
-    SDValue LowerJumpTable(SDValue Op, SelectionDAG &DAG); // @LOCALMOD
+    SDValue LowerINTRINSIC_WO_CHAIN(SDValue Op, SelectionDAG &DAG,
+                                    const ARMSubtarget *Subtarget);
     SDValue LowerBlockAddress(SDValue Op, SelectionDAG &DAG);
     SDValue LowerGlobalAddressDarwin(SDValue Op, SelectionDAG &DAG);
     SDValue LowerGlobalAddressELF(SDValue Op, SelectionDAG &DAG);
@@ -284,6 +295,7 @@ namespace llvm {
     SDValue LowerToTLSExecModels(GlobalAddressSDNode *GA,
                                    SelectionDAG &DAG);
     SDValue LowerGLOBAL_OFFSET_TABLE(SDValue Op, SelectionDAG &DAG);
+    SDValue LowerJumpTable(SDValue Op, SelectionDAG &DAG); // @LOCALMOD
     SDValue LowerBR_JT(SDValue Op, SelectionDAG &DAG);
     SDValue LowerSELECT_CC(SDValue Op, SelectionDAG &DAG);
     SDValue LowerBR_CC(SDValue Op, SelectionDAG &DAG);
@@ -315,7 +327,7 @@ namespace llvm {
     virtual SDValue
       LowerCall(SDValue Chain, SDValue Callee,
                 CallingConv::ID CallConv, bool isVarArg,
-                bool isTailCall,
+                bool &isTailCall,
                 const SmallVectorImpl<ISD::OutputArg> &Outs,
                 const SmallVectorImpl<ISD::InputArg> &Ins,
                 DebugLoc dl, SelectionDAG &DAG,
@@ -329,6 +341,15 @@ namespace llvm {
 
     SDValue getARMCmp(SDValue LHS, SDValue RHS, ISD::CondCode CC,
                       SDValue &ARMCC, SelectionDAG &DAG, DebugLoc dl);
+
+    MachineBasicBlock *EmitAtomicCmpSwap(MachineInstr *MI,
+                                         MachineBasicBlock *BB,
+                                         unsigned Size) const;
+    MachineBasicBlock *EmitAtomicBinary(MachineInstr *MI,
+                                        MachineBasicBlock *BB,
+                                        unsigned Size,
+                                        unsigned BinOpcode) const;
+
   };
 }
 

@@ -72,7 +72,7 @@ class scc_iterator
     SCCNodeStack.push_back(N);
     MinVisitNumStack.push_back(visitNum);
     VisitStack.push_back(std::make_pair(N, GT::child_begin(N)));
-    //errs() << "TarjanSCC: Node " << N <<
+    //dbgs() << "TarjanSCC: Node " << N <<
     //      " : visitNum = " << visitNum << "\n";
   }
 
@@ -107,7 +107,7 @@ class scc_iterator
       if (!MinVisitNumStack.empty() && MinVisitNumStack.back() > minVisitNum)
         MinVisitNumStack.back() = minVisitNum;
 
-      //errs() << "TarjanSCC: Popped node " << visitingN <<
+      //dbgs() << "TarjanSCC: Popped node " << visitingN <<
       //      " : minVisitNum = " << minVisitNum << "; Node visit num = " <<
       //      nodeVisitNumbers[visitingN] << "\n";
 
@@ -136,8 +136,8 @@ public:
   typedef scc_iterator<GraphT, GT> _Self;
 
   // Provide static "constructors"...
-  static inline _Self begin(GraphT& G) { return _Self(GT::getEntryNode(G)); }
-  static inline _Self end  (GraphT& G) { return _Self(); }
+  static inline _Self begin(const GraphT& G) { return _Self(GT::getEntryNode(G)); }
+  static inline _Self end  (const GraphT& G) { return _Self(); }
 
   // Direct loop termination test (I.fini() is more efficient than I == end())
   inline bool fini() const {
@@ -186,13 +186,23 @@ public:
 
 // Global constructor for the SCC iterator.
 template <class T>
-scc_iterator<T> scc_begin(T G) {
+scc_iterator<T> scc_begin(const T& G) {
   return scc_iterator<T>::begin(G);
 }
 
 template <class T>
-scc_iterator<T> scc_end(T G) {
+scc_iterator<T> scc_end(const T& G) {
   return scc_iterator<T>::end(G);
+}
+
+template <class T>
+scc_iterator<Inverse<T> > scc_begin(const Inverse<T>& G) {
+       return scc_iterator<Inverse<T> >::begin(G);
+}
+
+template <class T>
+scc_iterator<Inverse<T> > scc_end(const Inverse<T>& G) {
+       return scc_iterator<Inverse<T> >::end(G);
 }
 
 } // End llvm namespace

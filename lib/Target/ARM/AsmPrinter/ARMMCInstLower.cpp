@@ -21,8 +21,8 @@
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
 //#include "llvm/MC/MCStreamer.h"
+#include "llvm/Target/Mangler.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Support/Mangler.h"
 #include "llvm/ADT/SmallString.h"
 using namespace llvm;
 
@@ -40,33 +40,24 @@ MachineModuleInfoMachO &ARMMCInstLower::getMachOMMI() const {
 
 MCSymbol *ARMMCInstLower::
 GetGlobalAddressSymbol(const MachineOperand &MO) const {
-  const GlobalValue *GV = MO.getGlobal();
-  
-  SmallString<128> Name;
-  Mang.getNameWithPrefix(Name, GV, false);
-  
   // FIXME: HANDLE PLT references how??
   switch (MO.getTargetFlags()) {
   default: assert(0 && "Unknown target flag on GV operand");
   case 0: break;
   }
   
-  return Ctx.GetOrCreateSymbol(Name.str());
+  return Printer.Mang->getSymbol(MO.getGlobal());
 }
 
 MCSymbol *ARMMCInstLower::
 GetExternalSymbolSymbol(const MachineOperand &MO) const {
-  SmallString<128> Name;
-  Name += Printer.MAI->getGlobalPrefix();
-  Name += MO.getSymbolName();
-  
   // FIXME: HANDLE PLT references how??
   switch (MO.getTargetFlags()) {
   default: assert(0 && "Unknown target flag on GV operand");
   case 0: break;
   }
   
-  return Ctx.GetOrCreateSymbol(Name.str());
+  return Printer.GetExternalSymbolSymbol(MO.getSymbolName());
 }
 
 
@@ -84,7 +75,7 @@ GetJumpTableSymbol(const MachineOperand &MO) const {
 #endif
   
   // Create a symbol for the name.
-  return Ctx.GetOrCreateSymbol(Name.str());
+  return Ctx.GetOrCreateTemporarySymbol(Name.str());
 }
 
 MCSymbol *ARMMCInstLower::
@@ -100,7 +91,7 @@ GetConstantPoolIndexSymbol(const MachineOperand &MO) const {
 #endif
   
   // Create a symbol for the name.
-  return Ctx.GetOrCreateSymbol(Name.str());
+  return Ctx.GetOrCreateTemporarySymbol(Name.str());
 }
   
 MCOperand ARMMCInstLower::
@@ -145,7 +136,7 @@ void ARMMCInstLower::Lower(const MachineInstr *MI, MCInst &OutMI) const {
       break;
     case MachineOperand::MO_MachineBasicBlock:
       MCOp = MCOperand::CreateExpr(MCSymbolRefExpr::Create(
-                       Printer.GetMBBSymbol(MO.getMBB()->getNumber()), Ctx));
+                       MO.getMBB()->getSymbol(), Ctx));
       break;
     case MachineOperand::MO_GlobalAddress:
       MCOp = LowerSymbolOperand(MO, GetGlobalAddressSymbol(MO));

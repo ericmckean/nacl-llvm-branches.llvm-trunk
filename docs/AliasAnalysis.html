@@ -225,12 +225,7 @@ method for testing dependencies between function calls.  This method takes two
 call sites (CS1 &amp; CS2), returns NoModRef if the two calls refer to disjoint
 memory locations, Ref if CS1 reads memory written by CS2, Mod if CS1 writes to
 memory read or written by CS2, or ModRef if CS1 might read or write memory
-accessed by CS2.  Note that this relation is not commutative.  Clients that use
-this method should be predicated on the <tt>hasNoModRefInfoForCalls()</tt>
-method, which indicates whether or not an analysis can provide mod/ref
-information for function call pairs (most can not).  If this predicate is false,
-the client shouldn't waste analysis time querying the <tt>getModRefInfo</tt>
-method many times.</p>
+accessed by CS2.  Note that this relation is not commutative.</p>
 
 </div>
 
@@ -246,21 +241,6 @@ method many times.</p>
 Several other tidbits of information are often collected by various alias
 analysis implementations and can be put to good use by various clients.
 </p>
-
-</div>
-
-<!-- _______________________________________________________________________ -->
-<div class="doc_subsubsection">
-  The <tt>getMustAliases</tt> method
-</div>
-
-<div class="doc_text">
-
-<p>The <tt>getMustAliases</tt> method returns all values that are known to
-always must alias a pointer.  This information can be provided in some cases for
-important objects like the null pointer and global values.  Knowing that a
-pointer always points to a particular function allows indirect calls to be
-turned into direct calls, for example.</p>
 
 </div>
 
@@ -423,7 +403,7 @@ implementing, you just override the interfaces you can improve.</p>
 href="#basic-aa">basicaa</a></tt> and <a href="#no-aa"><tt>no-aa</tt></a>
 passes) every alias analysis pass chains to another alias analysis
 implementation (for example, the user can specify "<tt>-basicaa -ds-aa
--anders-aa -licm</tt>" to get the maximum benefit from the three alias
+-licm</tt>" to get the maximum benefit from both alias
 analyses).  The alias analysis class automatically takes care of most of this
 for methods that you don't override.  For methods that you do override, in code
 paths that return a conservative MayAlias or Mod/Ref result, simply return
@@ -725,25 +705,6 @@ non-address taken globals), but is very quick analysis.</p>
 
 <!-- _______________________________________________________________________ -->
 <div class="doc_subsubsection">
-  <a name="anders-aa">The <tt>-anders-aa</tt> pass</a>
-</div>
-
-<div class="doc_text">
-
-<p>The <tt>-anders-aa</tt> pass implements the well-known "Andersen's algorithm"
-for interprocedural alias analysis.  This algorithm is a subset-based,
-flow-insensitive, context-insensitive, and field-insensitive alias analysis that
-is widely believed to be fairly precise.  Unfortunately, this algorithm is also
-O(N<sup>3</sup>).  The LLVM implementation currently does not implement any of
-the refinements (such as "online cycle elimination" or "offline variable
-substitution") to improve its efficiency, so it can be quite slow in common
-cases.
-</p>
-
-</div>
-
-<!-- _______________________________________________________________________ -->
-<div class="doc_subsubsection">
   <a name="steens-aa">The <tt>-steens-aa</tt> pass</a>
 </div>
 
@@ -875,7 +836,7 @@ pointer.</p>
 <div class="doc_text">
 
 <p>These passes are useful for evaluating the various alias analysis
-implementations.  You can use them with commands like '<tt>opt -anders-aa -ds-aa
+implementations.  You can use them with commands like '<tt>opt -ds-aa
 -aa-eval foo.bc -disable-output -stats</tt>'.</p>
 
 </div>
@@ -969,7 +930,7 @@ analysis directly.</p>
 
   <a href="mailto:sabre@nondot.org">Chris Lattner</a><br>
   <a href="http://llvm.org">LLVM Compiler Infrastructure</a><br>
-  Last modified: $Date: 2009-04-25 17:11:37 -0400 (Sat, 25 Apr 2009) $
+  Last modified: $Date: 2010-03-01 14:24:17 -0500 (Mon, 01 Mar 2010) $
 </address>
 
 </body>

@@ -60,9 +60,6 @@ namespace llvm {
     typedef DenseMap<unsigned, LiveInterval*> Reg2IntervalMap;
     Reg2IntervalMap r2iMap_;
 
-    /// phiJoinCopies - Copy instructions which are PHI joins.
-    SmallVector<MachineInstr*, 16> phiJoinCopies;
-
     /// allocatableRegs_ - A bit vector of allocatable registers.
     BitVector allocatableRegs_;
 
@@ -73,8 +70,15 @@ namespace llvm {
     static char ID; // Pass identification, replacement for typeid
     LiveIntervals() : MachineFunctionPass(&ID) {}
 
-    static float getSpillWeight(bool isDef, bool isUse, unsigned loopDepth) {
-      return (isDef + isUse) * powf(10.0F, (float)loopDepth);
+    // Calculate the spill weight to assign to a single instruction.
+    static float getSpillWeight(bool isDef, bool isUse, unsigned loopDepth);
+
+    // After summing the spill weights of all defs and uses, the final weight
+    // should be normalized, dividing the weight of the interval by its size.
+    // This encourages spilling of intervals that are large and have few uses,
+    // and discourages spilling of small intervals with many uses.
+    void normalizeSpillWeight(LiveInterval &li) {
+      li.weight /= getApproximateInstructionCount(li) + 25;
     }
 
     typedef Reg2IntervalMap::iterator iterator;
@@ -115,16 +119,19 @@ namespace llvm {
       return (unsigned)(IntervalPercentage * indexes_->getFunctionSize());
     }
 
-    /// conflictsWithPhysRegDef - Returns true if the specified register
-    /// is defined during the duration of the specified interval.
-    bool conflictsWithPhysRegDef(const LiveInterval &li, VirtRegMap &vrm,
-                                 unsigned reg);
+    /// conflictsWithPhysReg - Returns true if the specified register is used or
+    /// defined during the duration of the specified interval. Copies to and
+    /// from li.reg are allowed. This method is only able to analyze simple
+    /// ranges that stay within a single basic block. Anything else is
+    /// considered a conflict.
+    bool conflictsWithPhysReg(const LiveInterval &li, VirtRegMap &vrm,
+                              unsigned reg);
 
-    /// conflictsWithPhysRegRef - Similar to conflictsWithPhysRegRef except
-    /// it can check use as well.
-    bool conflictsWithPhysRegRef(LiveInterval &li, unsigned Reg,
-                                 bool CheckUse,
-                                 SmallPtrSet<MachineInstr*,32> &JoinedCopies);
+    /// conflictsWithSubPhysRegRef - Similar to conflictsWithPhysRegRef except
+    /// it checks for sub-register reference and it can check use as well.
+    bool conflictsWithSubPhysRegRef(LiveInterval &li, unsigned Reg,
+                                    bool CheckUse,
+                                   SmallPtrSet<MachineInstr*,32> &JoinedCopies);
 
     // Interval creation
     LiveInterval &getOrCreateInterval(unsigned reg) {
@@ -189,20 +196,12 @@ namespace llvm {
       return indexes_->getMBBFromIndex(index);
     }
 
-    bool hasGapBeforeInstr(SlotIndex index) {
-      return indexes_->hasGapBeforeInstr(index);
+    SlotIndex getMBBTerminatorGap(const MachineBasicBlock *mbb) {
+      return indexes_->getTerminatorGap(mbb);
     }
 
-    bool hasGapAfterInstr(SlotIndex index) {
-      return indexes_->hasGapAfterInstr(index);
-    }
-
-    SlotIndex findGapBeforeInstr(SlotIndex index, bool furthest = false) {
-      return indexes_->findGapBeforeInstr(index, furthest);
-    }
-
-    void InsertMachineInstrInMaps(MachineInstr *MI, SlotIndex Index) {
-      indexes_->insertMachineInstrInMaps(MI, Index);
+    SlotIndex InsertMachineInstrInMaps(MachineInstr *MI) {
+      return indexes_->insertMachineInstrInMaps(MI);
     }
 
     void RemoveMachineInstrFromMaps(MachineInstr *MI) {
@@ -219,7 +218,7 @@ namespace llvm {
     }
 
     void renumber() {
-      indexes_->renumber();
+      indexes_->renumberIndexes();
     }
 
     BumpPtrAllocator& getVNInfoAllocator() { return VNInfoAllocator; }
@@ -289,13 +288,6 @@ namespace llvm {
   private:      
     /// computeIntervals - Compute live intervals.
     void computeIntervals();
-
-    bool isSafeAndProfitableToCoalesce(LiveInterval &DstInt,
-                                       LiveInterval &SrcInt,
-                 SmallVector<MachineInstr*,16> &IdentCopies,
-                 SmallVector<MachineInstr*,16> &OtherCopies);
-
-    void performEarlyCoalescing();
 
     /// handleRegisterDef - update intervals for a register def
     /// (calls handlePhysicalRegisterDef and
@@ -423,6 +415,9 @@ namespace llvm {
         DenseMap<unsigned,std::vector<SRInfo> > &RestoreIdxes,
         DenseMap<unsigned,unsigned> &MBBVRegsMap,
         std::vector<LiveInterval*> &NewLIs);
+
+    // Normalize the spill weight of all the intervals in NewLIs.
+    void normalizeSpillWeights(std::vector<LiveInterval*> &NewLIs);
 
     static LiveInterval* createInterval(unsigned Reg);
 

@@ -58,12 +58,13 @@ namespace ARMII {
     Size4Bytes    = 3,
     Size2Bytes    = 4,
 
-    // IndexMode - Unindex, pre-indexed, or post-indexed. Only valid for load
-    // and store ops
+    // IndexMode - Unindex, pre-indexed, or post-indexed are valid for load
+    // and store ops only.  Generic "updating" flag is used for ld/st multiple.
     IndexModeShift = 7,
     IndexModeMask  = 3 << IndexModeShift,
     IndexModePre   = 1,
     IndexModePost  = 2,
+    IndexModeUpd   = 3,
 
     //===------------------------------------------------------------------===//
     // Instruction encoding formats.
@@ -91,6 +92,8 @@ namespace ARMII {
     LdMiscFrm     = 8  << FormShift,
     StMiscFrm     = 9  << FormShift,
     LdStMulFrm    = 10 << FormShift,
+
+    LdStExFrm     = 28 << FormShift,
 
     // Miscellaneous arithmetic instructions
     ArithMiscFrm  = 11 << FormShift,
@@ -162,6 +165,22 @@ namespace ARMII {
     I_BitShift     = 25,
     CondShift      = 28
   };
+
+  /// Target Operand Flag enum.
+  enum TOF {
+    //===------------------------------------------------------------------===//
+    // ARM Specific MachineOperand flags.
+
+    MO_NO_FLAG,
+
+    /// MO_LO16 - On a symbol operand, this represents a relocation containing
+    /// lower 16 bit of the address. Used only via movw instruction.
+    MO_LO16,
+
+    /// MO_HI16 - On a symbol operand, this represents a relocation containing
+    /// higher 16 bit of the address. Used only via movt instruction.
+    MO_HI16
+  };
 }
 
 class ARMBaseInstrInfo : public TargetInstrInfoImpl {
@@ -173,9 +192,6 @@ public:
   // Return the non-pre/post incrementing version of 'Opc'. Return 0
   // if there is not such an opcode.
   virtual unsigned getUnindexedOpcode(unsigned Opc) const =0;
-
-  // Return true if the block does not fall through.
-  virtual bool BlockHasNoFallThrough(const MachineBasicBlock &MBB) const =0;
 
   virtual MachineInstr *convertToThreeAddress(MachineFunction::iterator &MFI,
                                               MachineBasicBlock::iterator &MBBI,
@@ -219,6 +235,8 @@ public:
 
   virtual bool DefinesPredicate(MachineInstr *MI,
                                 std::vector<MachineOperand> &Pred) const;
+
+  virtual bool isPredicable(MachineInstr *MI) const;
 
   /// GetInstSize - Returns the size of the specified MachineInstr.
   ///
@@ -267,10 +285,13 @@ public:
   virtual void reMaterialize(MachineBasicBlock &MBB,
                              MachineBasicBlock::iterator MI,
                              unsigned DestReg, unsigned SubIdx,
-                             const MachineInstr *Orig) const;
+                             const MachineInstr *Orig,
+                             const TargetRegisterInfo *TRI) const;
 
-  virtual bool isIdentical(const MachineInstr *MI, const MachineInstr *Other,
-                           const MachineRegisterInfo *MRI) const;
+  MachineInstr *duplicate(MachineInstr *Orig, MachineFunction &MF) const;
+
+  virtual bool produceSameValue(const MachineInstr *MI0,
+                                const MachineInstr *MI1) const;
 };
 
 static inline
@@ -312,7 +333,7 @@ bool isJumpTableBranchOpcode(int Opc) {
 
 static inline
 bool isIndirectBranchOpcode(int Opc) {
-  return Opc == ARM::BRIND || Opc == ARM::tBRIND;
+  return Opc == ARM::BRIND || Opc == ARM::MOVPCRX || Opc == ARM::tBRIND;
 }
 
 /// getInstrPredicate - If instruction is predicated, returns its predicate

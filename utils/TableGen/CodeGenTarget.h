@@ -46,9 +46,6 @@ enum SDNP {
   SDNPMemOperand
 };
 
-// ComplexPattern attributes.
-enum CPAttr { CPAttrParentAsRoot };
-
 /// getValueType - Return the MVT::SimpleValueType that the specified TableGen
 /// record corresponds to.
 MVT::SimpleValueType getValueType(Record *Rec);
@@ -170,7 +167,7 @@ public:
 
   /// getRegisterVTs - Find the union of all possible SimpleValueTypes for the
   /// specified physical register.
-  std::vector<unsigned char> getRegisterVTs(Record *R) const;
+  std::vector<MVT::SimpleValueType> getRegisterVTs(Record *R) const;
   
   const std::vector<MVT::SimpleValueType> &getLegalValueTypes() const {
     if (LegalValueTypes.empty()) ReadLegalValueTypes();
@@ -227,7 +224,6 @@ class ComplexPattern {
   std::string SelectFunc;
   std::vector<Record*> RootNodes;
   unsigned Properties; // Node properties
-  unsigned Attributes; // Pattern attributes
 public:
   ComplexPattern() : NumOperands(0) {}
   ComplexPattern(Record *R);
@@ -239,7 +235,6 @@ public:
     return RootNodes;
   }
   bool hasProperty(enum SDNP Prop) const { return Properties & (1 << Prop); }
-  bool hasAttribute(enum CPAttr Attr) const { return Attributes & (1 << Attr); }
 };
 
 } // End llvm namespace

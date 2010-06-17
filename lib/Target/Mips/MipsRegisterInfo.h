@@ -23,6 +23,15 @@ class MipsSubtarget;
 class TargetInstrInfo;
 class Type;
 
+namespace Mips {
+  /// SubregIndex - The index of various sized subregister classes. Note that 
+  /// these indices must be kept in sync with the class indices in the 
+  /// MipsRegisterInfo.td file.
+  enum SubregIndex {
+    SUBREG_FPEVEN = 1, SUBREG_FPODD = 2
+  };
+}
+
 struct MipsRegisterInfo : public MipsGenRegisterInfo {
   const MipsSubtarget &Subtarget;
   const TargetInstrInfo &TII;
@@ -55,7 +64,7 @@ struct MipsRegisterInfo : public MipsGenRegisterInfo {
 
   /// Stack Frame Processing Methods
   unsigned eliminateFrameIndex(MachineBasicBlock::iterator II,
-                               int SPAdj, int *Value = NULL,
+                               int SPAdj, FrameIndexValue *Value = NULL,
                                RegScavenger *RS = NULL) const;
 
   void processFunctionBeforeFrameFinalized(MachineFunction &MF) const;
