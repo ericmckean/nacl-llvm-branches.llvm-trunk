@@ -264,7 +264,6 @@ namespace {
 // @LOCALMOD-START
 // Make sure all jump targets are aligned and also all constant pools
 void NaclAlignAllJumpTargetsAndConstantPools(MachineFunction &MF) {
-  errs() << "align jumo tables " << "\n";
   // JUMP TABLE TARGETS  
   MachineJumpTableInfo *jt_info = MF.getJumpTableInfo();
   if (jt_info) {
@@ -272,8 +271,6 @@ void NaclAlignAllJumpTargetsAndConstantPools(MachineFunction &MF) {
     for (unsigned i=0; i < JT.size(); ++i) {
       std::vector<MachineBasicBlock*> MBBs = JT[i].MBBs;
       
-      
-      //cout << "JUMPTABLE "<< i << " " << MBBs.size() << "\n";
       for (unsigned j=0; j < MBBs.size(); ++j) {
         if (MBBs[j]->begin()->getOpcode() == ARM::CONSTPOOL_ENTRY) {
           continue;
@@ -283,7 +280,6 @@ void NaclAlignAllJumpTargetsAndConstantPools(MachineFunction &MF) {
     }
   }
   
-  errs() << "align constpools " << "\n";
   // FIRST ENTRY IN A ConstanPool
   bool last_bb_was_constant_pool = false;
   for (MachineFunction::iterator I = MF.begin(), E = MF.end();
@@ -302,8 +298,6 @@ void NaclAlignAllJumpTargetsAndConstantPools(MachineFunction &MF) {
     
     last_bb_was_constant_pool = is_constant_pool;
   }
-
-  errs() << "align done " << "\n";
 }
 // @LOCALMOD-END
 
