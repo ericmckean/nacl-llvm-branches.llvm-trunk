@@ -1300,7 +1300,8 @@ bool X86DAGToDAGISel::SelectTLSADDRAddr(SDNode *Op, SDValue N, SDValue &Base,
   AM.setBaseReg(CurDAG->getRegister(0, N.getValueType()));
   AM.SymbolFlags = GA->getTargetFlags();
 
-  if (N.getValueType() == MVT::i32) {
+  if (N.getValueType() == MVT::i32 && 
+      !Subtarget->isTargetNaCl64()) {   // @LOCALMOD
     AM.Scale = 1;
     AM.IndexReg = CurDAG->getRegister(X86::EBX, MVT::i32);
   } else {

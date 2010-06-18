@@ -5208,6 +5208,15 @@ LowerToTLSGeneralDynamicModel64(GlobalAddressSDNode *GA, SelectionDAG &DAG,
                     X86::RAX, X86II::MO_TLSGD);
 }
 
+// @LOCALMOD-START
+static SDValue
+LowerToTLSNaClModel64(GlobalAddressSDNode *GA, SelectionDAG &DAG,
+                                const EVT PtrVT) {
+  return GetTLSADDR(DAG, DAG.getEntryNode(), GA, NULL, PtrVT,
+                    X86::EAX, X86II::MO_TPOFF);
+}
+// @LOCALMOD-END
+
 // Lower ISD::GlobalTLSAddress using the "initial exec" (for no-pic) or
 // "local exec" model.
 static SDValue LowerToTLSExecModel(GlobalAddressSDNode *GA, SelectionDAG &DAG,
@@ -5269,6 +5278,11 @@ X86TargetLowering::LowerGlobalTLSAddress(SDValue Op, SelectionDAG &DAG) {
 
   TLSModel::Model model = getTLSModel(GV,
                                       getTargetMachine().getRelocationModel());
+
+  // @LOCAMOD-START
+  if (Subtarget->isTargetNaCl64())
+    return LowerToTLSNaClModel64(GA, DAG, getPointerTy());
+  // @LOCALMOD-END
 
   switch (model) {
   case TLSModel::GeneralDynamic:

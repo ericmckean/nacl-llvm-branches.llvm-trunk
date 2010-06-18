@@ -3819,12 +3819,14 @@ def TLS_addr32 : I<0, Pseudo, (outs), (ins lea32mem:$sym),
 let AddedComplexity = 5, isCodeGenOnly = 1 in
 def GS_MOV32rm : I<0x8B, MRMSrcMem, (outs GR32:$dst), (ins i32mem:$src),
                    "movl\t%gs:$src, $dst",
-                   [(set GR32:$dst, (gsload addr:$src))]>, SegGS;
+                   [(set GR32:$dst, (gsload addr:$src))]>, SegGS,
+                   Requires<[NotNaCl]>; // @LOCALMOD
 
 let AddedComplexity = 5, isCodeGenOnly = 1 in
 def FS_MOV32rm : I<0x8B, MRMSrcMem, (outs GR32:$dst), (ins i32mem:$src),
                    "movl\t%fs:$src, $dst",
-                   [(set GR32:$dst, (fsload addr:$src))]>, SegFS;
+                   [(set GR32:$dst, (fsload addr:$src))]>, SegFS,
+                   Requires<[NotNaCl]>; // @LOCALMOD
 
 //===----------------------------------------------------------------------===//
 // EH Pseudo Instructions
