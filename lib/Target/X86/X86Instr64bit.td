@@ -1688,12 +1688,14 @@ def TLS_addr64 : I<0, Pseudo, (outs), (ins lea64mem:$sym),
 let AddedComplexity = 5, isCodeGenOnly = 1 in
 def MOV64GSrm : RI<0x8B, MRMSrcMem, (outs GR64:$dst), (ins i64mem:$src),
                  "movq\t%gs:$src, $dst",
-                 [(set GR64:$dst, (gsload addr:$src))]>, SegGS;
+                 [(set GR64:$dst, (gsload addr:$src))]>, SegGS,
+                 Requires<[NotNaCl]>; // @LOCALMOD
 
 let AddedComplexity = 5, isCodeGenOnly = 1 in
 def MOV64FSrm : RI<0x8B, MRMSrcMem, (outs GR64:$dst), (ins i64mem:$src),
                  "movq\t%fs:$src, $dst",
-                 [(set GR64:$dst, (fsload addr:$src))]>, SegFS;
+                 [(set GR64:$dst, (fsload addr:$src))]>, SegFS,
+                 Requires<[NotNaCl]>; // @LOCALMOD
 
 //===----------------------------------------------------------------------===//
 // Atomic Instructions

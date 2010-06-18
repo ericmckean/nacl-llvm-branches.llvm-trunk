@@ -76,6 +76,18 @@ let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1 in
                    []>, Requires<[IsNaCl32]>;
 }
 
+let AddedComplexity = 5, isCodeGenOnly = 1 in
+def NACL_GS_MOV32rm : I<0x8B, MRMSrcMem, (outs GR32:$dst), (ins i32mem:$src),
+                   "movl\t%gs:$src, $dst",
+                   [(set GR32:$dst, (gsload addr:$src))]>, SegGS,
+                   Requires<[IsNaCl32]>; // @LOCALMOD
+
+let AddedComplexity = 5, isCodeGenOnly = 1 in
+def NACL_FS_MOV32rm : I<0x8B, MRMSrcMem, (outs GR32:$dst), (ins i32mem:$src),
+                   "movl\t%fs:$src, $dst",
+                   [(set GR32:$dst, (fsload addr:$src))]>, SegFS,
+                   Requires<[IsNaCl32]>; // @LOCALMOD
+
 
 //===----------------------------------------------------------------------===//
 //
@@ -168,5 +180,17 @@ def NACL_POP_RBP   : I<0, Pseudo,
                      []>,
                      Requires<[IsNaCl64]>;
 
-
+// The NaCl loader cannot set the FS or GS segmentation registers
+// in Windows, so we must use a NaCl syscall.
+let Defs = [RAX, RCX, RDX, RSI, RDI, R8, R9, R10, R11,
+            FP0, FP1, FP2, FP3, FP4, FP5, FP6, ST0, ST1,
+            MM0, MM1, MM2, MM3, MM4, MM5, MM6, MM7,
+            XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
+            XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15, EFLAGS],
+    Uses = [RSP] in
+def NACL_TLS_addr64 : I<0, Pseudo, (outs), (ins lea32mem:$sym),
+                      "movq\t$$$sym, %rdi; "
+                      "call\t__tls_get_addr@PLT",
+                     [(X86tlsaddr tls32addr:$sym)]>,
+                     Requires<[IsNaCl64]>;
 
