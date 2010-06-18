@@ -4354,6 +4354,13 @@ ARMTargetLowering::getPreIndexedAddressParts(SDNode *N, SDValue &Base,
   if (Subtarget->isThumb1Only())
     return false;
 
+  // @LOCAMOD-START
+  // NOTE: THIS IS A LITTLE DRASTIC
+  if (FlagSfiStore && N->getOpcode() == ISD::STORE) {
+    return false;
+  }
+  // @LOCAMOD-END
+
   EVT VT;
   SDValue Ptr;
   bool isSEXTLoad = false;

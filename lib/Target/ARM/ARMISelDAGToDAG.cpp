@@ -35,8 +35,10 @@
 
 using namespace llvm;
 
-#include "llvm/Support/CommandLine.h" // @LOCALMOD
-extern cl::opt<bool> FlagSfiStore; // @LOCALMOD
+// @LOCALMOD-START
+#include "llvm/Support/CommandLine.h"
+extern cl::opt<bool> FlagSfiStore;
+// @LOCALMOD-END
 
 //===--------------------------------------------------------------------===//
 /// ARMDAGToDAGISel - ARM specific code to select ARM machine
@@ -228,12 +230,17 @@ bool ARMDAGToDAGISel::SelectShifterOperandReg(SDNode *Op,
   return true;
 }
 
+// @LOCALMOD-START
+// Note: In the code below we do not want "Offfset" to be real register to
+// not violate ARM sandboxing.
+// @LOCALMOD-END
+
+
 bool ARMDAGToDAGISel::SelectAddrMode2(SDNode *Op, SDValue N,
                                       SDValue &Base, SDValue &Offset,
                                       SDValue &Opc) {
-
   // @LOCALMOD-START
-  // avoid two reg addressing mode for strores
+  // avoid two reg addressing mode for stores
   const bool is_store = (Op->getOpcode() == ISD::STORE);
   if (!FlagSfiStore || !is_store ) {
   // @LOCALMOD-END
@@ -416,7 +423,8 @@ bool ARMDAGToDAGISel::SelectAddrMode3(SDNode *Op, SDValue N,
   // TODO: ADD COMMENT
   // if (N.getOpcode() == ISD::SUB) {
   const bool is_store = (Op->getOpcode() == ISD::STORE);
-  if ((!FlagSfiStore ||!is_store) && N.getOpcode() == ISD::SUB) {
+  if (!FlagSfiStore ||!is_store) { // @LOCAMOD-START
+  if (N.getOpcode() == ISD::SUB) {
   // @LOCALMOD-END
 
     // X - C  is canonicalize to X + -C, no need to handle it here.
@@ -425,6 +433,7 @@ bool ARMDAGToDAGISel::SelectAddrMode3(SDNode *Op, SDValue N,
     Opc = CurDAG->getTargetConstant(ARM_AM::getAM3Opc(ARM_AM::sub, 0),MVT::i32);
     return true;
   }
+  } // @LOCAMOD-END
 
   if (N.getOpcode() != ISD::ADD) {
     Base = N;
