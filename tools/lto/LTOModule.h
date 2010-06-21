@@ -38,8 +38,7 @@ namespace llvm {
 //
 // C++ class which implements the opaque lto_module_t
 //
-class LTOModule {
-public:
+struct LTOModule {
 
     static bool              isBitcodeFile(const void* mem, size_t length);
     static bool              isBitcodeFile(const char* path);
@@ -106,8 +105,6 @@ private:
     StringSet                               _defines;    
     llvm::StringMap<NameAndAttributes>      _undefines;
 };
-
-extern std::string getFeatureString(const char *TargetTriple);
 
 #endif // LTO_MODULE_H
 

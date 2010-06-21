@@ -48,6 +48,7 @@ let PrintMethod = "printFCCOperand" in
 def In32BitMode      : Predicate<"!Subtarget.isFP64bit()">;
 def IsSingleFloat    : Predicate<"Subtarget.isSingleFloat()">;
 def IsNotSingleFloat : Predicate<"!Subtarget.isSingleFloat()">;
+def IsNotMipsI       : Predicate<"!Subtarget.isMips1()">;
 
 //===----------------------------------------------------------------------===//
 // Instruction Class Templates
@@ -112,7 +113,6 @@ let ft = 0 in {
   defm ROUND_W : FFR1_1<0b001100, "round.w">;
   defm TRUNC_W : FFR1_1<0b001101, "trunc.w">;
   defm CVTW    : FFR1_1<0b100100, "cvt.w">;
-  defm FMOV    : FFR1_1<0b000110, "mov">;
 
   defm FABS    : FFR1_2<0b000101, "abs",  fabs>; 
   defm FNEG    : FFR1_2<0b000111, "neg",  fneg>; 
@@ -172,8 +172,13 @@ let fd = 0 in {
                   "mtc1 $rt, $fs", []>;
 }
 
+def FMOV_S32 : FFR<0x11, 0b000110, 0x0, (outs FGR32:$fd), (ins FGR32:$fs),
+                   "mov.s $fd, $fs", []>;
+def FMOV_D32 : FFR<0x11, 0b000110, 0x1, (outs AFGR64:$fd), (ins AFGR64:$fs),
+                   "mov.d $fd, $fs", []>;
+
 /// Floating Point Memory Instructions
-let Predicates = [IsNotSingleFloat] in {
+let Predicates = [IsNotSingleFloat, IsNotMipsI] in {
   def LDC1 : FFI<0b110101, (outs AFGR64:$ft), (ins mem:$addr), 
                  "ldc1 $ft, $addr", [(set AFGR64:$ft, (load addr:$addr))]>;
 

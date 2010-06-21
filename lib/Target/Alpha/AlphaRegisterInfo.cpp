@@ -153,7 +153,7 @@ eliminateCallFramePseudoInstr(MachineFunction &MF, MachineBasicBlock &MBB,
 
 unsigned
 AlphaRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
-                                       int SPAdj, int *Value,
+                                       int SPAdj, FrameIndexValue *Value,
                                        RegScavenger *RS) const {
   assert(SPAdj == 0 && "Unexpected");
 
@@ -251,7 +251,7 @@ void AlphaRegisterInfo::emitPrologue(MachineFunction &MF) const {
   } else {
     std::string msg;
     raw_string_ostream Msg(msg); 
-    Msg << "Too big a stack frame at " + NumBytes;
+    Msg << "Too big a stack frame at " << NumBytes;
     llvm_report_error(Msg.str());
   }
 
@@ -303,15 +303,14 @@ void AlphaRegisterInfo::emitEpilogue(MachineFunction &MF,
     } else {
       std::string msg;
       raw_string_ostream Msg(msg); 
-      Msg << "Too big a stack frame at " + NumBytes;
+      Msg << "Too big a stack frame at " << NumBytes;
       llvm_report_error(Msg.str());
     }
   }
 }
 
 unsigned AlphaRegisterInfo::getRARegister() const {
-  llvm_unreachable("What is the return address register");
-  return 0;
+  return Alpha::R26;
 }
 
 unsigned AlphaRegisterInfo::getFrameRegister(const MachineFunction &MF) const {

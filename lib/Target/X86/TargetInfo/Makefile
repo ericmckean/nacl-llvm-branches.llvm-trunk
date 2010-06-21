@@ -6,10 +6,11 @@
 # License. See LICENSE.TXT for details.
 #
 ##===----------------------------------------------------------------------===##
+
 LEVEL = ../../../..
 LIBRARYNAME = LLVMX86Info
 
 # Hack: we need to include 'main' target directory to grab private headers
-CPPFLAGS = -I$(PROJ_OBJ_DIR)/.. -I$(PROJ_SRC_DIR)/..
+CPP.Flags += -I$(PROJ_OBJ_DIR)/.. -I$(PROJ_SRC_DIR)/..
 
 include $(LEVEL)/Makefile.common

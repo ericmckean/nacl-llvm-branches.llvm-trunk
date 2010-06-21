@@ -43,15 +43,15 @@ static RTLIB::Libcall GetFPLibCall(EVT VT,
 //===----------------------------------------------------------------------===//
 
 void DAGTypeLegalizer::SoftenFloatResult(SDNode *N, unsigned ResNo) {
-  DEBUG(errs() << "Soften float result " << ResNo << ": "; N->dump(&DAG);
-        errs() << "\n");
+  DEBUG(dbgs() << "Soften float result " << ResNo << ": "; N->dump(&DAG);
+        dbgs() << "\n");
   SDValue R = SDValue();
 
   switch (N->getOpcode()) {
   default:
 #ifndef NDEBUG
-    errs() << "SoftenFloatResult #" << ResNo << ": ";
-    N->dump(&DAG); errs() << "\n";
+    dbgs() << "SoftenFloatResult #" << ResNo << ": ";
+    N->dump(&DAG); dbgs() << "\n";
 #endif
     llvm_unreachable("Do not know how to soften the result of this operator!");
 
@@ -79,6 +79,7 @@ void DAGTypeLegalizer::SoftenFloatResult(SDNode *N, unsigned ResNo) {
     case ISD::FNEG:        R = SoftenFloatRes_FNEG(N); break;
     case ISD::FP_EXTEND:   R = SoftenFloatRes_FP_EXTEND(N); break;
     case ISD::FP_ROUND:    R = SoftenFloatRes_FP_ROUND(N); break;
+    case ISD::FP16_TO_FP32:R = SoftenFloatRes_FP16_TO_FP32(N); break;
     case ISD::FPOW:        R = SoftenFloatRes_FPOW(N); break;
     case ISD::FPOWI:       R = SoftenFloatRes_FPOWI(N); break;
     case ISD::FREM:        R = SoftenFloatRes_FREM(N); break;
@@ -332,6 +333,14 @@ SDValue DAGTypeLegalizer::SoftenFloatRes_FP_EXTEND(SDNode *N) {
   return MakeLibCall(LC, NVT, &Op, 1, false, N->getDebugLoc());
 }
 
+// FIXME: Should we just use 'normal' FP_EXTEND / FP_TRUNC instead of special
+// nodes?
+SDValue DAGTypeLegalizer::SoftenFloatRes_FP16_TO_FP32(SDNode *N) {
+  EVT NVT = TLI.getTypeToTransformTo(*DAG.getContext(), N->getValueType(0));
+  SDValue Op = N->getOperand(0);
+  return MakeLibCall(RTLIB::FPEXT_F16_F32, NVT, &Op, 1, false, N->getDebugLoc());
+}
+
 SDValue DAGTypeLegalizer::SoftenFloatRes_FP_ROUND(SDNode *N) {
   EVT NVT = TLI.getTypeToTransformTo(*DAG.getContext(), N->getValueType(0));
   SDValue Op = N->getOperand(0);
@@ -444,7 +453,7 @@ SDValue DAGTypeLegalizer::SoftenFloatRes_LOAD(SDNode *N) {
     NewL = DAG.getLoad(L->getAddressingMode(), dl, L->getExtensionType(),
                        NVT, L->getChain(), L->getBasePtr(), L->getOffset(),
                        L->getSrcValue(), L->getSrcValueOffset(), NVT,
-                       L->isVolatile(), L->getAlignment());
+                       L->isVolatile(), L->isNonTemporal(), L->getAlignment());
     // Legalized the chain result - switch anything that used the old chain to
     // use the new one.
     ReplaceValueWith(SDValue(N, 1), NewL.getValue(1));
@@ -456,8 +465,8 @@ SDValue DAGTypeLegalizer::SoftenFloatRes_LOAD(SDNode *N) {
                      L->getMemoryVT(), L->getChain(),
                      L->getBasePtr(), L->getOffset(),
                      L->getSrcValue(), L->getSrcValueOffset(),
-                     L->getMemoryVT(),
-                     L->isVolatile(), L->getAlignment());
+                     L->getMemoryVT(), L->isVolatile(),
+                     L->isNonTemporal(), L->getAlignment());
   // Legalized the chain result - switch anything that used the old chain to
   // use the new one.
   ReplaceValueWith(SDValue(N, 1), NewL.getValue(1));
@@ -531,15 +540,15 @@ SDValue DAGTypeLegalizer::SoftenFloatRes_XINT_TO_FP(SDNode *N) {
 //===----------------------------------------------------------------------===//
 
 bool DAGTypeLegalizer::SoftenFloatOperand(SDNode *N, unsigned OpNo) {
-  DEBUG(errs() << "Soften float operand " << OpNo << ": "; N->dump(&DAG);
-        errs() << "\n");
+  DEBUG(dbgs() << "Soften float operand " << OpNo << ": "; N->dump(&DAG);
+        dbgs() << "\n");
   SDValue Res = SDValue();
 
   switch (N->getOpcode()) {
   default:
 #ifndef NDEBUG
-    errs() << "SoftenFloatOperand Op #" << OpNo << ": ";
-    N->dump(&DAG); errs() << "\n";
+    dbgs() << "SoftenFloatOperand Op #" << OpNo << ": ";
+    N->dump(&DAG); dbgs() << "\n";
 #endif
     llvm_unreachable("Do not know how to soften this operator's operand!");
 
@@ -548,6 +557,7 @@ bool DAGTypeLegalizer::SoftenFloatOperand(SDNode *N, unsigned OpNo) {
   case ISD::FP_ROUND:    Res = SoftenFloatOp_FP_ROUND(N); break;
   case ISD::FP_TO_SINT:  Res = SoftenFloatOp_FP_TO_SINT(N); break;
   case ISD::FP_TO_UINT:  Res = SoftenFloatOp_FP_TO_UINT(N); break;
+  case ISD::FP32_TO_FP16:Res = SoftenFloatOp_FP32_TO_FP16(N); break;
   case ISD::SELECT_CC:   Res = SoftenFloatOp_SELECT_CC(N); break;
   case ISD::SETCC:       Res = SoftenFloatOp_SETCC(N); break;
   case ISD::STORE:       Res = SoftenFloatOp_STORE(N, OpNo); break;
@@ -637,7 +647,8 @@ void DAGTypeLegalizer::SoftenSetCCOperands(SDValue &NewLHS, SDValue &NewRHS,
     }
   }
 
-  EVT RetVT = MVT::i32; // FIXME: is this the correct return type?
+  // Use the target specific return value for comparions lib calls.
+  EVT RetVT = TLI.getCmpLibcallReturnType();
   SDValue Ops[2] = { LHSInt, RHSInt };
   NewLHS = MakeLibCall(LC1, RetVT, Ops, 2, false/*sign irrelevant*/, dl);
   NewRHS = DAG.getConstant(0, RetVT);
@@ -703,6 +714,13 @@ SDValue DAGTypeLegalizer::SoftenFloatOp_FP_TO_UINT(SDNode *N) {
   return MakeLibCall(LC, RVT, &Op, 1, false, N->getDebugLoc());
 }
 
+SDValue DAGTypeLegalizer::SoftenFloatOp_FP32_TO_FP16(SDNode *N) {
+  EVT RVT = N->getValueType(0);
+  RTLIB::Libcall LC = RTLIB::FPROUND_F32_F16;
+  SDValue Op = GetSoftenedFloat(N->getOperand(0));
+  return MakeLibCall(LC, RVT, &Op, 1, false, N->getDebugLoc());
+}
+
 SDValue DAGTypeLegalizer::SoftenFloatOp_SELECT_CC(SDNode *N) {
   SDValue NewLHS = N->getOperand(0), NewRHS = N->getOperand(1);
   ISD::CondCode CCCode = cast<CondCodeSDNode>(N->getOperand(4))->get();
@@ -754,7 +772,8 @@ SDValue DAGTypeLegalizer::SoftenFloatOp_STORE(SDNode *N, unsigned OpNo) {
 
   return DAG.getStore(ST->getChain(), dl, Val, ST->getBasePtr(),
                       ST->getSrcValue(), ST->getSrcValueOffset(),
-                      ST->isVolatile(), ST->getAlignment());
+                      ST->isVolatile(), ST->isNonTemporal(),
+                      ST->getAlignment());
 }
 
 
@@ -767,7 +786,7 @@ SDValue DAGTypeLegalizer::SoftenFloatOp_STORE(SDNode *N, unsigned OpNo) {
 /// have invalid operands or may have other results that need promotion, we just
 /// know that (at least) one result needs expansion.
 void DAGTypeLegalizer::ExpandFloatResult(SDNode *N, unsigned ResNo) {
-  DEBUG(errs() << "Expand float result: "; N->dump(&DAG); errs() << "\n");
+  DEBUG(dbgs() << "Expand float result: "; N->dump(&DAG); dbgs() << "\n");
   SDValue Lo, Hi;
   Lo = Hi = SDValue();
 
@@ -778,8 +797,8 @@ void DAGTypeLegalizer::ExpandFloatResult(SDNode *N, unsigned ResNo) {
   switch (N->getOpcode()) {
   default:
 #ifndef NDEBUG
-    errs() << "ExpandFloatResult #" << ResNo << ": ";
-    N->dump(&DAG); errs() << "\n";
+    dbgs() << "ExpandFloatResult #" << ResNo << ": ";
+    N->dump(&DAG); dbgs() << "\n";
 #endif
     llvm_unreachable("Do not know how to expand the result of this operator!");
 
@@ -798,6 +817,7 @@ void DAGTypeLegalizer::ExpandFloatResult(SDNode *N, unsigned ResNo) {
   case ISD::FABS:       ExpandFloatRes_FABS(N, Lo, Hi); break;
   case ISD::FADD:       ExpandFloatRes_FADD(N, Lo, Hi); break;
   case ISD::FCEIL:      ExpandFloatRes_FCEIL(N, Lo, Hi); break;
+  case ISD::FCOPYSIGN:  ExpandFloatRes_FCOPYSIGN(N, Lo, Hi); break;
   case ISD::FCOS:       ExpandFloatRes_FCOS(N, Lo, Hi); break;
   case ISD::FDIV:       ExpandFloatRes_FDIV(N, Lo, Hi); break;
   case ISD::FEXP:       ExpandFloatRes_FEXP(N, Lo, Hi); break;
@@ -867,6 +887,17 @@ void DAGTypeLegalizer::ExpandFloatRes_FCEIL(SDNode *N,
   SDValue Call = LibCallify(GetFPLibCall(N->getValueType(0),
                                          RTLIB::CEIL_F32, RTLIB::CEIL_F64,
                                          RTLIB::CEIL_F80, RTLIB::CEIL_PPCF128),
+                            N, false);
+  GetPairElements(Call, Lo, Hi);
+}
+
+void DAGTypeLegalizer::ExpandFloatRes_FCOPYSIGN(SDNode *N,
+                                                SDValue &Lo, SDValue &Hi) {
+  SDValue Call = LibCallify(GetFPLibCall(N->getValueType(0),
+                                         RTLIB::COPYSIGN_F32,
+                                         RTLIB::COPYSIGN_F64,
+                                         RTLIB::COPYSIGN_F80,
+                                         RTLIB::COPYSIGN_PPCF128),
                             N, false);
   GetPairElements(Call, Lo, Hi);
 }
@@ -1072,8 +1103,8 @@ void DAGTypeLegalizer::ExpandFloatRes_LOAD(SDNode *N, SDValue &Lo,
 
   Hi = DAG.getExtLoad(LD->getExtensionType(), dl, NVT, Chain, Ptr,
                       LD->getSrcValue(), LD->getSrcValueOffset(),
-                      LD->getMemoryVT(),
-                      LD->isVolatile(), LD->getAlignment());
+                      LD->getMemoryVT(), LD->isVolatile(),
+                      LD->isNonTemporal(), LD->getAlignment());
 
   // Remember the chain.
   Chain = Hi.getValue(1);
@@ -1166,7 +1197,7 @@ void DAGTypeLegalizer::ExpandFloatRes_XINT_TO_FP(SDNode *N, SDValue &Lo,
 /// types of the node are known to be legal, but other operands of the node may
 /// need promotion or expansion as well as the specified one.
 bool DAGTypeLegalizer::ExpandFloatOperand(SDNode *N, unsigned OpNo) {
-  DEBUG(errs() << "Expand float operand: "; N->dump(&DAG); errs() << "\n");
+  DEBUG(dbgs() << "Expand float operand: "; N->dump(&DAG); dbgs() << "\n");
   SDValue Res = SDValue();
 
   if (TLI.getOperationAction(N->getOpcode(), N->getOperand(OpNo).getValueType())
@@ -1177,8 +1208,8 @@ bool DAGTypeLegalizer::ExpandFloatOperand(SDNode *N, unsigned OpNo) {
     switch (N->getOpcode()) {
     default:
   #ifndef NDEBUG
-      errs() << "ExpandFloatOperand Op #" << OpNo << ": ";
-      N->dump(&DAG); errs() << "\n";
+      dbgs() << "ExpandFloatOperand Op #" << OpNo << ": ";
+      N->dump(&DAG); dbgs() << "\n";
   #endif
       llvm_unreachable("Do not know how to expand this operator's operand!");
 
@@ -1381,6 +1412,6 @@ SDValue DAGTypeLegalizer::ExpandFloatOp_STORE(SDNode *N, unsigned OpNo) {
 
   return DAG.getTruncStore(Chain, N->getDebugLoc(), Hi, Ptr,
                            ST->getSrcValue(), ST->getSrcValueOffset(),
-                           ST->getMemoryVT(),
-                           ST->isVolatile(), ST->getAlignment());
+                           ST->getMemoryVT(), ST->isVolatile(),
+                           ST->isNonTemporal(), ST->getAlignment());
 }

@@ -8,14 +8,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/MC/MCContext.h"
+#include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCSection.h"
 #include "llvm/MC/MCSymbol.h"
-#include "llvm/MC/MCValue.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/Twine.h"
 using namespace llvm;
 
-MCContext::MCContext() {
+MCContext::MCContext(const MCAsmInfo &mai) : MAI(mai), NextUniqueID(0) {
 }
 
 MCContext::~MCContext() {
@@ -23,39 +23,49 @@ MCContext::~MCContext() {
   // we don't need to free them here.
 }
 
-MCSymbol *MCContext::CreateSymbol(StringRef Name) {
-  assert(Name[0] != '\0' && "Normal symbols cannot be unnamed!");
+MCSymbol *MCContext::GetOrCreateSymbol(StringRef Name, bool isTemporary) {
+  assert(!Name.empty() && "Normal symbols cannot be unnamed!");
+  
+  // Do the lookup and get the entire StringMapEntry.  We want access to the
+  // key if we are creating the entry.
+  StringMapEntry<MCSymbol*> &Entry = Symbols.GetOrCreateValue(Name);
+  if (Entry.getValue()) return Entry.getValue();
 
-  // Create and bind the symbol, and ensure that names are unique.
-  MCSymbol *&Entry = Symbols[Name];
-  assert(!Entry && "Duplicate symbol definition!");
-  return Entry = new (*this) MCSymbol(Name, false);
+  // Ok, the entry doesn't already exist.  Have the MCSymbol object itself refer
+  // to the copy of the string that is embedded in the StringMapEntry.
+  MCSymbol *Result = new (*this) MCSymbol(Entry.getKey(), isTemporary);
+  Entry.setValue(Result);
+  return Result; 
 }
 
-MCSymbol *MCContext::GetOrCreateSymbol(StringRef Name) {
-  MCSymbol *&Entry = Symbols[Name];
-  if (Entry) return Entry;
-
-  return Entry = new (*this) MCSymbol(Name, false);
-}
-
-MCSymbol *MCContext::GetOrCreateSymbol(const Twine &Name) {
+MCSymbol *MCContext::GetOrCreateSymbol(const Twine &Name, bool isTemporary) {
   SmallString<128> NameSV;
   Name.toVector(NameSV);
-  return GetOrCreateSymbol(NameSV.str());
+  return GetOrCreateSymbol(NameSV.str(), isTemporary);
+}
+
+MCSymbol *MCContext::CreateTempSymbol() {
+  return GetOrCreateTemporarySymbol(Twine(MAI.getPrivateGlobalPrefix()) +
+                                    "tmp" + Twine(NextUniqueID++));
 }
 
 
-MCSymbol *MCContext::CreateTemporarySymbol(StringRef Name) {
-  // If unnamed, just create a symbol.
+MCSymbol *MCContext::GetOrCreateTemporarySymbol(StringRef Name) {
+  // If there is no name, create a new anonymous symbol.
+  // FIXME: Remove this.  This form of the method should always take a name.
   if (Name.empty())
-    new (*this) MCSymbol("", true);
-    
-  // Otherwise create as usual.
-  MCSymbol *&Entry = Symbols[Name];
-  assert(!Entry && "Duplicate symbol definition!");
-  return Entry = new (*this) MCSymbol(Name, true);
+    return GetOrCreateTemporarySymbol(Twine(MAI.getPrivateGlobalPrefix()) +
+                                      "tmp" + Twine(NextUniqueID++));
+  
+  return GetOrCreateSymbol(Name, true);
 }
+
+MCSymbol *MCContext::GetOrCreateTemporarySymbol(const Twine &Name) {
+  SmallString<128> NameSV;
+  Name.toVector(NameSV);
+  return GetOrCreateTemporarySymbol(NameSV.str());
+}
+
 
 MCSymbol *MCContext::LookupSymbol(StringRef Name) const {
   return Symbols.lookup(Name);

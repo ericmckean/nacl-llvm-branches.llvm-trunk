@@ -20,9 +20,9 @@
 namespace llvm {
 class GlobalValue;
 class TargetMachine;
-  
+
 /// PICStyles - The X86 backend supports a number of different styles of PIC.
-/// 
+///
 namespace PICStyles {
 enum Style {
   StubPIC,          // Used on i386-darwin in -fPIC mode.
@@ -46,7 +46,7 @@ protected:
   /// PICStyle - Which PIC style to use
   ///
   PICStyles::Style PICStyle;
-  
+
   /// X86SSELevel - MMX, SSE1, SSE2, SSE3, SSSE3, SSE41, SSE42, or
   /// none supported.
   X86SSEEnum X86SSELevel;
@@ -58,7 +58,7 @@ protected:
   /// HasCMov - True if this processor has conditional move instructions
   /// (generally pentium pro+).
   bool HasCMov;
-  
+
   /// HasX86_64 - True if the processor supports X86-64 instructions.
   ///
   bool HasX86_64;
@@ -77,7 +77,12 @@ protected:
 
   /// IsBTMemSlow - True if BT (bit test) of memory instructions are slow.
   bool IsBTMemSlow;
-  
+
+  /// HasVectorUAMem - True if SIMD operations can have unaligned memory
+  ///                  operands. This may require setting a feature bit in the
+  ///                  processor.
+  bool HasVectorUAMem;
+
   /// DarwinVers - Nonzero if this is a darwin platform: the numeric
   /// version of the platform, e.g. 8 = 10.4 (Tiger), 9 = 10.5 (Leopard), etc.
   unsigned char DarwinVers; // Is any darwin-x86 platform.
@@ -128,6 +133,7 @@ public:
   PICStyles::Style getPICStyle() const { return PICStyle; }
   void setPICStyle(PICStyles::Style Style)  { PICStyle = Style; }
 
+  bool hasCMov() const { return HasCMov; }
   bool hasMMX() const { return X86SSELevel >= MMX; }
   bool hasSSE1() const { return X86SSELevel >= SSE1; }
   bool hasSSE2() const { return X86SSELevel >= SSE2; }
@@ -142,23 +148,24 @@ public:
   bool hasFMA3() const { return HasFMA3; }
   bool hasFMA4() const { return HasFMA4; }
   bool isBTMemSlow() const { return IsBTMemSlow; }
+  bool hasVectorUAMem() const { return HasVectorUAMem; }
 
   bool isTargetDarwin() const { return TargetType == isDarwin; }
   bool isTargetELF() const { return TargetType == isELF; }
-  
+
   bool isTargetWindows() const { return TargetType == isWindows; }
   bool isTargetMingw() const { return TargetType == isMingw; }
   bool isTargetCygwin() const { return TargetType == isCygwin; }
   bool isTargetCygMing() const {
     return TargetType == isMingw || TargetType == isCygwin;
   }
-  
+
   /// isTargetCOFF - Return true if this is any COFF/Windows target variant.
   bool isTargetCOFF() const {
     return TargetType == isMingw || TargetType == isCygwin ||
            TargetType == isWindows;
   }
-  
+
   bool isTargetWin64() const {
     return Is64Bit && (TargetType == isMingw || TargetType == isWindows);
   }
@@ -169,8 +176,11 @@ public:
       p = "e-p:64:64-s:64-f64:64:64-i64:64:64-f80:128:128-n8:16:32:64";
     else if (isTargetDarwin())
       p = "e-p:32:32-f64:32:64-i64:32:64-f80:128:128-n8:16:32";
+    else if (isTargetMingw() || isTargetWindows())
+      p = "e-p:32:32-f64:64:64-i64:64:64-f80:32:32-n8:16:32";
     else
       p = "e-p:32:32-f64:32:64-i64:32:64-f80:32:32-n8:16:32";
+
     return std::string(p);
   }
 
@@ -188,16 +198,21 @@ public:
   bool isPICStyleStubAny() const {
     return PICStyle == PICStyles::StubDynamicNoPIC ||
            PICStyle == PICStyles::StubPIC; }
-  
+
   /// getDarwinVers - Return the darwin version number, 8 = Tiger, 9 = Leopard,
   /// 10 = Snow Leopard, etc.
   unsigned getDarwinVers() const { return DarwinVers; }
-    
+
   /// ClassifyGlobalReference - Classify a global variable reference for the
   /// current subtarget according to how we should reference it in a non-pcrel
   /// context.
   unsigned char ClassifyGlobalReference(const GlobalValue *GV,
                                         const TargetMachine &TM)const;
+
+  /// ClassifyBlockAddressReference - Classify a blockaddress reference for the
+  /// current subtarget according to how we should reference it in a non-pcrel
+  /// context.
+  unsigned char ClassifyBlockAddressReference() const;
 
   /// IsLegalToCallImmediateAddr - Return true if the subtarget allows calls
   /// to immediate address.
@@ -220,7 +235,7 @@ public:
   /// at 'More' optimization level.
   bool enablePostRAScheduler(CodeGenOpt::Level OptLevel,
                              TargetSubtarget::AntiDepBreakMode& Mode,
-                             ExcludedRCVector& ExcludedRCs) const;
+                             RegClassVector& CriticalPathRCs) const;
 };
 
 } // End llvm namespace

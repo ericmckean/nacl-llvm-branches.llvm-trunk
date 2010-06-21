@@ -18,6 +18,7 @@
 #include "llvm/GlobalValue.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/System/Host.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/ADT/SmallVector.h"
@@ -26,6 +27,21 @@ using namespace llvm;
 #if defined(_MSC_VER)
 #include <intrin.h>
 #endif
+
+/// ClassifyBlockAddressReference - Classify a blockaddress reference for the
+/// current subtarget according to how we should reference it in a non-pcrel
+/// context.
+unsigned char X86Subtarget::
+ClassifyBlockAddressReference() const {
+  if (isPICStyleGOT())    // 32-bit ELF targets.
+    return X86II::MO_GOTOFF;
+  
+  if (isPICStyleStubPIC())   // Darwin/32 in PIC mode.
+    return X86II::MO_PIC_BASE_OFFSET;
+  
+  // Direct static reference to label.
+  return X86II::MO_NO_FLAG;
+}
 
 /// ClassifyGlobalReference - Classify a global variable reference for the
 /// current subtarget according to how we should reference it in a non-pcrel
@@ -37,9 +53,9 @@ ClassifyGlobalReference(const GlobalValue *GV, const TargetMachine &TM) const {
   if (GV->hasDLLImportLinkage())
     return X86II::MO_DLLIMPORT;
 
-  // GV with ghost linkage (in JIT lazy compilation mode) do not require an
+  // Materializable GVs (in JIT lazy compilation mode) do not require an
   // extra load from stub.
-  bool isDecl = GV->isDeclaration() && !GV->hasNotBeenReadFromBitcode();
+  bool isDecl = GV->isDeclaration() && !GV->isMaterializable();
 
   // X86-64 in PIC mode.
   if (isPICStyleRIPRel()) {
@@ -258,118 +274,6 @@ void X86Subtarget::AutoDetectSubtargetFeatures() {
   }
 }
 
-static const char *GetCurrentX86CPU() {
-  unsigned EAX = 0, EBX = 0, ECX = 0, EDX = 0;
-  if (GetCpuIDAndInfo(0x1, &EAX, &EBX, &ECX, &EDX))
-    return "generic";
-  unsigned Family = 0;
-  unsigned Model  = 0;
-  DetectFamilyModel(EAX, Family, Model);
-
-  GetCpuIDAndInfo(0x80000001, &EAX, &EBX, &ECX, &EDX);
-  bool Em64T = (EDX >> 29) & 0x1;
-  bool HasSSE3 = (ECX & 0x1);
-
-  union {
-    unsigned u[3];
-    char     c[12];
-  } text;
-
-  GetCpuIDAndInfo(0, &EAX, text.u+0, text.u+2, text.u+1);
-  if (memcmp(text.c, "GenuineIntel", 12) == 0) {
-    switch (Family) {
-      case 3:
-        return "i386";
-      case 4:
-        return "i486";
-      case 5:
-        switch (Model) {
-        case 4:  return "pentium-mmx";
-        default: return "pentium";
-        }
-      case 6:
-        switch (Model) {
-        case 1:  return "pentiumpro";
-        case 3:
-        case 5:
-        case 6:  return "pentium2";
-        case 7:
-        case 8:
-        case 10:
-        case 11: return "pentium3";
-        case 9:
-        case 13: return "pentium-m";
-        case 14: return "yonah";
-        case 15:
-        case 22: // Celeron M 540
-          return "core2";
-        case 23: // 45nm: Penryn , Wolfdale, Yorkfield (XE)
-          return "penryn";
-        default: return "i686";
-        }
-      case 15: {
-        switch (Model) {
-        case 3:  
-        case 4:
-        case 6: // same as 4, but 65nm
-          return (Em64T) ? "nocona" : "prescott";
-        case 26:
-          return "corei7";
-        case 28:
-          return "atom";
-        default:
-          return (Em64T) ? "x86-64" : "pentium4";
-        }
-      }
-        
-    default:
-      return "generic";
-    }
-  } else if (memcmp(text.c, "AuthenticAMD", 12) == 0) {
-    // FIXME: this poorly matches the generated SubtargetFeatureKV table.  There
-    // appears to be no way to generate the wide variety of AMD-specific targets
-    // from the information returned from CPUID.
-    switch (Family) {
-      case 4:
-        return "i486";
-      case 5:
-        switch (Model) {
-        case 6:
-        case 7:  return "k6";
-        case 8:  return "k6-2";
-        case 9:
-        case 13: return "k6-3";
-        default: return "pentium";
-        }
-      case 6:
-        switch (Model) {
-        case 4:  return "athlon-tbird";
-        case 6:
-        case 7:
-        case 8:  return "athlon-mp";
-        case 10: return "athlon-xp";
-        default: return "athlon";
-        }
-      case 15:
-        if (HasSSE3) {
-          return "k8-sse3";
-        } else {
-          switch (Model) {
-          case 1:  return "opteron";
-          case 5:  return "athlon-fx"; // also opteron
-          default: return "athlon64";
-          }
-        }
-      case 16:
-        return "amdfam10";
-    default:
-      return "generic";
-    }
-  } else {
-    return "generic";
-  }
-}
-
 X86Subtarget::X86Subtarget(const std::string &TT, const std::string &FS, 
                            bool is64Bit)
   : PICStyle(PICStyles::None)
@@ -382,6 +286,7 @@ X86Subtarget::X86Subtarget(const std::string &TT, const std::string &FS,
   , HasFMA3(false)
   , HasFMA4(false)
   , IsBTMemSlow(false)
+  , HasVectorUAMem(false)
   , DarwinVers(0)
   , stackAlignment(8)
   // FIXME: this is a known good value for Yonah. How about others?
@@ -396,7 +301,7 @@ X86Subtarget::X86Subtarget(const std::string &TT, const std::string &FS,
   // Determine default and user specified characteristics
   if (!FS.empty()) {
     // If feature string is not empty, parse features string.
-    std::string CPU = GetCurrentX86CPU();
+    std::string CPU = sys::getHostCPUName();
     ParseSubtargetFeatures(FS, CPU);
     // All X86-64 CPUs also have SSE2, however user might request no SSE via 
     // -mattr, so don't force SSELevel here.
@@ -410,10 +315,15 @@ X86Subtarget::X86Subtarget(const std::string &TT, const std::string &FS,
 
   // If requesting codegen for X86-64, make sure that 64-bit features
   // are enabled.
-  if (Is64Bit)
+  if (Is64Bit) {
     HasX86_64 = true;
 
-  DEBUG(errs() << "Subtarget features: SSELevel " << X86SSELevel
+    // All 64-bit cpus have cmov support.
+    HasCMov = true;
+  }
+    
+
+  DEBUG(dbgs() << "Subtarget features: SSELevel " << X86SSELevel
                << ", 3DNowLevel " << X863DNowLevel
                << ", 64bit " << HasX86_64 << "\n");
   assert((!Is64Bit || HasX86_64) &&
@@ -460,8 +370,8 @@ X86Subtarget::X86Subtarget(const std::string &TT, const std::string &FS,
 bool X86Subtarget::enablePostRAScheduler(
             CodeGenOpt::Level OptLevel,
             TargetSubtarget::AntiDepBreakMode& Mode,
-            ExcludedRCVector& ExcludedRCs) const {
+            RegClassVector& CriticalPathRCs) const {
   Mode = TargetSubtarget::ANTIDEP_CRITICAL;
-  ExcludedRCs.clear();
-  return OptLevel >= CodeGenOpt::Default;
+  CriticalPathRCs.clear();
+  return OptLevel >= CodeGenOpt::Aggressive;
 }

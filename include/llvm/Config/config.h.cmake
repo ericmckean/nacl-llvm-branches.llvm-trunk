@@ -12,6 +12,18 @@
 /* Directories clang will search for headers */
 #define C_INCLUDE_DIRS "${C_INCLUDE_DIRS}"
 
+/* Directory clang will search for libstdc++ headers */
+#define CXX_INCLUDE_ROOT "${CXX_INCLUDE_ROOT}"
+
+/* Architecture of libstdc++ headers */
+#define CXX_INCLUDE_ARCH "${CXX_INCLUDE_ARCH}"
+
+/* 32 bit multilib directory */
+#define CXX_INCLUDE_32BIT_DIR "${CXX_INCLUDE_32BIT_DIR}"
+
+/* 64 bit multilib directory */
+#define CXX_INCLUDE_64BIT_DIR "${CXX_INCLUDE_64BIT_DIR}"
+
 /* Define if position independent code is enabled */
 #cmakedefine ENABLE_PIC ${ENABLE_PIC}
 
@@ -439,6 +451,9 @@
 
 /* Define to 1 if the system has the type `u_int64_t'. */
 #undef HAVE_U_INT64_T
+
+/* Define to 1 if you have the <valgrind/valgrind.h> header file. */
+#cmakedefine HAVE_VALGRIND_VALGRIND_H ${HAVE_VALGRIND_VALGRIND_H}
 
 /* Define to 1 if you have the <windows.h> header file. */
 #cmakedefine HAVE_WINDOWS_H ${HAVE_WINDOWS_H}

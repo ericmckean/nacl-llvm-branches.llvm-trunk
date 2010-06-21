@@ -13,6 +13,7 @@
 
 #include "llvm/Target/TargetLowering.h"
 #include "llvm/MC/MCAsmInfo.h"
+#include "llvm/MC/MCExpr.h"
 #include "llvm/Target/TargetData.h"
 #include "llvm/Target/TargetLoweringObjectFile.h"
 #include "llvm/Target/TargetMachine.h"
@@ -21,6 +22,8 @@
 #include "llvm/GlobalVariable.h"
 #include "llvm/DerivedTypes.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
+#include "llvm/CodeGen/MachineJumpTableInfo.h"
+#include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -171,7 +174,13 @@ static void InitLibcallNames(const char **Names) {
   Names[RTLIB::FLOOR_F64] = "floor";
   Names[RTLIB::FLOOR_F80] = "floorl";
   Names[RTLIB::FLOOR_PPCF128] = "floorl";
+  Names[RTLIB::COPYSIGN_F32] = "copysignf";
+  Names[RTLIB::COPYSIGN_F64] = "copysign";
+  Names[RTLIB::COPYSIGN_F80] = "copysignl";
+  Names[RTLIB::COPYSIGN_PPCF128] = "copysignl";
   Names[RTLIB::FPEXT_F32_F64] = "__extendsfdf2";
+  Names[RTLIB::FPEXT_F16_F32] = "__gnu_h2f_ieee";
+  Names[RTLIB::FPROUND_F32_F16] = "__gnu_f2h_ieee";
   Names[RTLIB::FPROUND_F64_F32] = "__truncdfsf2";
   Names[RTLIB::FPROUND_F80_F32] = "__truncxfsf2";
   Names[RTLIB::FPROUND_PPCF128_F32] = "__trunctfsf2";
@@ -266,6 +275,7 @@ RTLIB::Libcall RTLIB::getFPEXT(EVT OpVT, EVT RetVT) {
     if (RetVT == MVT::f64)
       return FPEXT_F32_F64;
   }
+
   return UNKNOWN_LIBCALL;
 }
 
@@ -285,6 +295,7 @@ RTLIB::Libcall RTLIB::getFPROUND(EVT OpVT, EVT RetVT) {
     if (OpVT == MVT::ppcf128)
       return FPROUND_PPCF128_F64;
   }
+
   return UNKNOWN_LIBCALL;
 }
 
@@ -507,7 +518,6 @@ TargetLowering::TargetLowering(TargetMachine &tm,TargetLoweringObjectFile *tlof)
   setOperationAction(ISD::TRAP, MVT::Other, Expand);
     
   IsLittleEndian = TD->isLittleEndian();
-  UsesGlobalOffsetTable = false;
   ShiftAmountTy = PointerTy = MVT::getIntegerVT(8*TD->getPointerSize());
   memset(RegClassForVT, 0,MVT::LAST_VALUETYPE*sizeof(TargetRegisterClass*));
   memset(TargetDAGCombineArray, 0, array_lengthof(TargetDAGCombineArray));
@@ -532,16 +542,29 @@ TargetLowering::TargetLowering(TargetMachine &tm,TargetLoweringObjectFile *tlof)
   InitLibcallNames(LibcallRoutineNames);
   InitCmpLibcallCCs(CmpLibcallCCs);
   InitLibcallCallingConvs(LibcallCallingConvs);
-
-  // Tell Legalize whether the assembler supports DEBUG_LOC.
-  const MCAsmInfo *TASM = TM.getMCAsmInfo();
-  if (!TASM || !TASM->hasDotLocAndDotFile())
-    setOperationAction(ISD::DEBUG_LOC, MVT::Other, Expand);
 }
 
 TargetLowering::~TargetLowering() {
   delete &TLOF;
 }
+
+/// canOpTrap - Returns true if the operation can trap for the value type.
+/// VT must be a legal type.
+bool TargetLowering::canOpTrap(unsigned Op, EVT VT) const {
+  assert(isTypeLegal(VT));
+  switch (Op) {
+  default:
+    return false;
+  case ISD::FDIV:
+  case ISD::FREM:
+  case ISD::SDIV:
+  case ISD::UDIV:
+  case ISD::SREM:
+  case ISD::UREM:
+    return true;
+  }
+}
+
 
 static unsigned getVectorTypeBreakdownMVT(MVT VT, MVT &IntermediateVT,
                                        unsigned &NumIntermediates,
@@ -687,7 +710,7 @@ void TargetLowering::computeRegisterProperties() {
       for (unsigned nVT = i+1; nVT <= MVT::LAST_VECTOR_VALUETYPE; ++nVT) {
         EVT SVT = (MVT::SimpleValueType)nVT;
         if (isTypeLegal(SVT) && SVT.getVectorElementType() == EltVT &&
-            SVT.getVectorNumElements() > NElts) {
+            SVT.getVectorNumElements() > NElts && NElts != 1) {
           TransformToType[i] = SVT;
           ValueTypeActions.setTypeAction(VT, Promote);
           IsLegalWiderType = true;
@@ -716,6 +739,10 @@ const char *TargetLowering::getTargetNodeName(unsigned Opcode) const {
 
 MVT::SimpleValueType TargetLowering::getSetCCResultType(EVT VT) const {
   return PointerTy.SimpleTy;
+}
+
+MVT::SimpleValueType TargetLowering::getCmpLibcallReturnType() const {
+  return MVT::i32; // return the default value
 }
 
 /// getVectorTypeBreakdown - Vector types are broken down into some number of
@@ -773,20 +800,6 @@ unsigned TargetLowering::getVectorTypeBreakdown(LLVMContext &Context, EVT VT,
   return 1;
 }
 
-/// getWidenVectorType: given a vector type, returns the type to widen to
-/// (e.g., v7i8 to v8i8). If the vector type is legal, it returns itself.
-/// If there is no vector type that we want to widen to, returns MVT::Other
-/// When and where to widen is target dependent based on the cost of
-/// scalarizing vs using the wider vector type.
-EVT TargetLowering::getWidenVectorType(EVT VT) const {
-  assert(VT.isVector());
-  if (isTypeLegal(VT))
-    return VT;
- 
-  // Default is not to widen until moved to LegalizeTypes
-  return MVT::Other;
-}
-
 /// getByValTypeAlignment - Return the desired alignment for ByVal aggregate
 /// function arguments in the caller parameter area.  This is the actual
 /// alignment, not its logarithm.
@@ -794,11 +807,38 @@ unsigned TargetLowering::getByValTypeAlignment(const Type *Ty) const {
   return TD->getCallFrameTypeAlignment(Ty);
 }
 
+/// getJumpTableEncoding - Return the entry encoding for a jump table in the
+/// current function.  The returned value is a member of the
+/// MachineJumpTableInfo::JTEntryKind enum.
+unsigned TargetLowering::getJumpTableEncoding() const {
+  // In non-pic modes, just use the address of a block.
+  if (getTargetMachine().getRelocationModel() != Reloc::PIC_)
+    return MachineJumpTableInfo::EK_BlockAddress;
+  
+  // In PIC mode, if the target supports a GPRel32 directive, use it.
+  if (getTargetMachine().getMCAsmInfo()->getGPRel32Directive() != 0)
+    return MachineJumpTableInfo::EK_GPRel32BlockAddress;
+  
+  // Otherwise, use a label difference.
+  return MachineJumpTableInfo::EK_LabelDifference32;
+}
+
 SDValue TargetLowering::getPICJumpTableRelocBase(SDValue Table,
                                                  SelectionDAG &DAG) const {
-  if (usesGlobalOffsetTable())
+  // If our PIC model is GP relative, use the global offset table as the base.
+  if (getJumpTableEncoding() == MachineJumpTableInfo::EK_GPRel32BlockAddress)
     return DAG.getGLOBAL_OFFSET_TABLE(getPointerTy());
   return Table;
+}
+
+/// getPICJumpTableRelocBaseExpr - This returns the relocation base for the
+/// given PIC jumptable, the same as getPICJumpTableRelocBase, but as an
+/// MCExpr.
+const MCExpr *
+TargetLowering::getPICJumpTableRelocBaseExpr(const MachineFunction *MF,
+                                             unsigned JTI,MCContext &Ctx) const{
+  // The normal PIC reloc base is the label at the start of the jump table.
+  return MCSymbolRefExpr::Create(MF->getJTISymbol(JTI, Ctx), Ctx);
 }
 
 bool
@@ -916,7 +956,7 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
                                           TargetLoweringOpt &TLO,
                                           unsigned Depth) const {
   unsigned BitWidth = DemandedMask.getBitWidth();
-  assert(Op.getValueSizeInBits() == BitWidth &&
+  assert(Op.getValueType().getScalarType().getSizeInBits() == BitWidth &&
          "Mask size mismatches value type size!");
   APInt NewMask = DemandedMask;
   DebugLoc dl = Op.getDebugLoc();
@@ -991,7 +1031,7 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
     if (TLO.ShrinkDemandedConstant(Op, ~KnownZero2 & NewMask))
       return true;
     // If the operation can be done in a smaller type, do so.
-    if (TLO.ShrinkDemandedOp(Op, BitWidth, NewMask, dl))
+    if (TLO.ShrinkOps && TLO.ShrinkDemandedOp(Op, BitWidth, NewMask, dl))
       return true;
 
     // Output known-1 bits are only known if set in both the LHS & RHS.
@@ -1025,7 +1065,7 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
     if (TLO.ShrinkDemandedConstant(Op, NewMask))
       return true;
     // If the operation can be done in a smaller type, do so.
-    if (TLO.ShrinkDemandedOp(Op, BitWidth, NewMask, dl))
+    if (TLO.ShrinkOps && TLO.ShrinkDemandedOp(Op, BitWidth, NewMask, dl))
       return true;
 
     // Output known-0 bits are only known if clear in both the LHS & RHS.
@@ -1050,7 +1090,7 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
     if ((KnownZero2 & NewMask) == NewMask)
       return TLO.CombineTo(Op, Op.getOperand(1));
     // If the operation can be done in a smaller type, do so.
-    if (TLO.ShrinkDemandedOp(Op, BitWidth, NewMask, dl))
+    if (TLO.ShrinkOps && TLO.ShrinkDemandedOp(Op, BitWidth, NewMask, dl))
       return true;
 
     // If all of the unknown bits are known to be zero on one side or the other
@@ -1245,7 +1285,7 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
       // demand the input sign bit.
       APInt HighBits = APInt::getHighBitsSet(BitWidth, ShAmt);
       if (HighBits.intersects(NewMask))
-        InDemandedMask |= APInt::getSignBit(VT.getSizeInBits());
+        InDemandedMask |= APInt::getSignBit(VT.getScalarType().getSizeInBits());
       
       if (SimplifyDemandedBits(Op.getOperand(0), InDemandedMask,
                                KnownZero, KnownOne, TLO, Depth+1))
@@ -1273,19 +1313,21 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
 
     // Sign extension.  Compute the demanded bits in the result that are not 
     // present in the input.
-    APInt NewBits = APInt::getHighBitsSet(BitWidth,
-                                          BitWidth - EVT.getSizeInBits()) &
-                    NewMask;
+    APInt NewBits =
+      APInt::getHighBitsSet(BitWidth,
+                            BitWidth - EVT.getScalarType().getSizeInBits()) &
+      NewMask;
     
     // If none of the extended bits are demanded, eliminate the sextinreg.
     if (NewBits == 0)
       return TLO.CombineTo(Op, Op.getOperand(0));
 
-    APInt InSignBit = APInt::getSignBit(EVT.getSizeInBits());
+    APInt InSignBit = APInt::getSignBit(EVT.getScalarType().getSizeInBits());
     InSignBit.zext(BitWidth);
-    APInt InputDemandedBits = APInt::getLowBitsSet(BitWidth,
-                                                   EVT.getSizeInBits()) &
-                              NewMask;
+    APInt InputDemandedBits =
+      APInt::getLowBitsSet(BitWidth,
+                           EVT.getScalarType().getSizeInBits()) &
+      NewMask;
     
     // Since the sign extended bits are demanded, we know that the sign
     // bit is demanded.
@@ -1314,7 +1356,8 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
     break;
   }
   case ISD::ZERO_EXTEND: {
-    unsigned OperandBitWidth = Op.getOperand(0).getValueSizeInBits();
+    unsigned OperandBitWidth =
+      Op.getOperand(0).getValueType().getScalarType().getSizeInBits();
     APInt InMask = NewMask;
     InMask.trunc(OperandBitWidth);
     
@@ -1337,7 +1380,7 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
   }
   case ISD::SIGN_EXTEND: {
     EVT InVT = Op.getOperand(0).getValueType();
-    unsigned InBits = InVT.getSizeInBits();
+    unsigned InBits = InVT.getScalarType().getSizeInBits();
     APInt InMask    = APInt::getLowBitsSet(BitWidth, InBits);
     APInt InSignBit = APInt::getBitsSet(BitWidth, InBits - 1, InBits);
     APInt NewBits   = ~InMask & NewMask;
@@ -1377,7 +1420,8 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
     break;
   }
   case ISD::ANY_EXTEND: {
-    unsigned OperandBitWidth = Op.getOperand(0).getValueSizeInBits();
+    unsigned OperandBitWidth =
+      Op.getOperand(0).getValueType().getScalarType().getSizeInBits();
     APInt InMask = NewMask;
     InMask.trunc(OperandBitWidth);
     if (SimplifyDemandedBits(Op.getOperand(0), InMask,
@@ -1391,8 +1435,10 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
   case ISD::TRUNCATE: {
     // Simplify the input, using demanded bit information, and compute the known
     // zero/one bits live out.
+    unsigned OperandBitWidth =
+      Op.getOperand(0).getValueType().getScalarType().getSizeInBits();
     APInt TruncMask = NewMask;
-    TruncMask.zext(Op.getOperand(0).getValueSizeInBits());
+    TruncMask.zext(OperandBitWidth);
     if (SimplifyDemandedBits(Op.getOperand(0), TruncMask,
                              KnownZero, KnownOne, TLO, Depth+1))
       return true;
@@ -1403,15 +1449,14 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
     // on the known demanded bits.
     if (Op.getOperand(0).getNode()->hasOneUse()) {
       SDValue In = Op.getOperand(0);
-      unsigned InBitWidth = In.getValueSizeInBits();
       switch (In.getOpcode()) {
       default: break;
       case ISD::SRL:
         // Shrink SRL by a constant if none of the high bits shifted in are
         // demanded.
         if (ConstantSDNode *ShAmt = dyn_cast<ConstantSDNode>(In.getOperand(1))){
-          APInt HighBits = APInt::getHighBitsSet(InBitWidth,
-                                                 InBitWidth - BitWidth);
+          APInt HighBits = APInt::getHighBitsSet(OperandBitWidth,
+                                                 OperandBitWidth - BitWidth);
           HighBits = HighBits.lshr(ShAmt->getZExtValue());
           HighBits.trunc(BitWidth);
           
@@ -1481,7 +1526,7 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
                              KnownOne2, TLO, Depth+1))
       return true;
     // See if the operation should be performed at a smaller bit width.
-    if (TLO.ShrinkDemandedOp(Op, BitWidth, NewMask, dl))
+    if (TLO.ShrinkOps && TLO.ShrinkDemandedOp(Op, BitWidth, NewMask, dl))
       return true;
   }
   // FALL THROUGH
@@ -1557,7 +1602,7 @@ static bool ValueHasExactlyOneBitSet(SDValue Val, const SelectionDAG &DAG) {
 
   // Fall back to ComputeMaskedBits to catch other known cases.
   EVT OpVT = Val.getValueType();
-  unsigned BitWidth = OpVT.getSizeInBits();
+  unsigned BitWidth = OpVT.getScalarType().getSizeInBits();
   APInt Mask = APInt::getAllOnesValue(BitWidth);
   APInt KnownZero, KnownOne;
   DAG.ComputeMaskedBits(Val, Mask, KnownZero, KnownOne);
@@ -1598,7 +1643,8 @@ TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
     if (N0.getOpcode() == ISD::SRL && (C1 == 0 || C1 == 1) &&
         N0.getOperand(0).getOpcode() == ISD::CTLZ &&
         N0.getOperand(1).getOpcode() == ISD::Constant) {
-      unsigned ShAmt = cast<ConstantSDNode>(N0.getOperand(1))->getZExtValue();
+      const APInt &ShAmt
+        = cast<ConstantSDNode>(N0.getOperand(1))->getAPIntValue();
       if ((Cond == ISD::SETEQ || Cond == ISD::SETNE) &&
           ShAmt == Log2_32(N0.getValueType().getSizeInBits())) {
         if ((C1 == 0) == (Cond == ISD::SETEQ)) {
@@ -1626,27 +1672,26 @@ TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
         N0.getOperand(0).getNode()->hasOneUse() &&
         isa<ConstantSDNode>(N0.getOperand(1))) {
       LoadSDNode *Lod = cast<LoadSDNode>(N0.getOperand(0));
-      uint64_t bestMask = 0;
+      APInt bestMask;
       unsigned bestWidth = 0, bestOffset = 0;
-      if (!Lod->isVolatile() && Lod->isUnindexed() &&
-          // FIXME: This uses getZExtValue() below so it only works on i64 and
-          // below.
-          N0.getValueType().getSizeInBits() <= 64) {
+      if (!Lod->isVolatile() && Lod->isUnindexed()) {
         unsigned origWidth = N0.getValueType().getSizeInBits();
+        unsigned maskWidth = origWidth;
         // We can narrow (e.g.) 16-bit extending loads on 32-bit target to 
         // 8 bits, but have to be careful...
         if (Lod->getExtensionType() != ISD::NON_EXTLOAD)
           origWidth = Lod->getMemoryVT().getSizeInBits();
-        uint64_t Mask =cast<ConstantSDNode>(N0.getOperand(1))->getZExtValue();
+        const APInt &Mask =
+          cast<ConstantSDNode>(N0.getOperand(1))->getAPIntValue();
         for (unsigned width = origWidth / 2; width>=8; width /= 2) {
-          uint64_t newMask = (1ULL << width) - 1;
+          APInt newMask = APInt::getLowBitsSet(maskWidth, width);
           for (unsigned offset=0; offset<origWidth/width; offset++) {
             if ((newMask & Mask) == Mask) {
               if (!TD->isLittleEndian())
                 bestOffset = (origWidth/width - offset - 1) * (width/8);
               else
                 bestOffset = (uint64_t)offset * (width/8);
-              bestMask = Mask >> (offset * (width/8) * 8);
+              bestMask = Mask.lshr(offset * (width/8) * 8);
               bestWidth = width;
               break;
             }
@@ -1666,10 +1711,11 @@ TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
           SDValue NewLoad = DAG.getLoad(newVT, dl, Lod->getChain(), Ptr,
                                         Lod->getSrcValue(), 
                                         Lod->getSrcValueOffset() + bestOffset,
-                                        false, NewAlign);
+                                        false, false, NewAlign);
           return DAG.getSetCC(dl, VT, 
                               DAG.getNode(ISD::AND, dl, newVT, NewLoad,
-                                          DAG.getConstant(bestMask, newVT)),
+                                      DAG.getConstant(bestMask.trunc(bestWidth),
+                                                      newVT)),
                               DAG.getConstant(0LL, newVT), Cond);
         }
       }
@@ -1724,7 +1770,7 @@ TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
         break;   // todo, be more careful with signed comparisons
       }
     } else if (N0.getOpcode() == ISD::SIGN_EXTEND_INREG &&
-                (Cond == ISD::SETEQ || Cond == ISD::SETNE)) {
+               (Cond == ISD::SETEQ || Cond == ISD::SETNE)) {
       EVT ExtSrcTy = cast<VTSDNode>(N0.getOperand(1))->getVT();
       unsigned ExtSrcTyBits = ExtSrcTy.getSizeInBits();
       EVT ExtDstTy = N0.getValueType();
@@ -1758,22 +1804,21 @@ TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
                           Cond);
     } else if ((N1C->isNullValue() || N1C->getAPIntValue() == 1) &&
                 (Cond == ISD::SETEQ || Cond == ISD::SETNE)) {
-      
       // SETCC (SETCC), [0|1], [EQ|NE]  -> SETCC
-      if (N0.getOpcode() == ISD::SETCC) {
-        bool TrueWhenTrue = (Cond == ISD::SETEQ) ^ (N1C->getZExtValue() != 1);
+      if (N0.getOpcode() == ISD::SETCC &&
+          isTypeLegal(VT) && VT.bitsLE(N0.getValueType())) {
+        bool TrueWhenTrue = (Cond == ISD::SETEQ) ^ (N1C->getAPIntValue() != 1);
         if (TrueWhenTrue)
-          return N0;
-        
+          return DAG.getNode(ISD::TRUNCATE, dl, VT, N0);        
         // Invert the condition.
         ISD::CondCode CC = cast<CondCodeSDNode>(N0.getOperand(2))->get();
         CC = ISD::getSetCCInverse(CC, 
                                   N0.getOperand(0).getValueType().isInteger());
         return DAG.getSetCC(dl, VT, N0.getOperand(0), N0.getOperand(1), CC);
       }
-      
+
       if ((N0.getOpcode() == ISD::XOR ||
-            (N0.getOpcode() == ISD::AND && 
+           (N0.getOpcode() == ISD::AND && 
             N0.getOperand(0).getOpcode() == ISD::XOR &&
             N0.getOperand(1) == N0.getOperand(0).getOperand(1))) &&
           isa<ConstantSDNode>(N0.getOperand(1)) &&
@@ -1796,7 +1841,34 @@ TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
                               N0.getOperand(0).getOperand(0),
                               N0.getOperand(1));
           }
+
           return DAG.getSetCC(dl, VT, Val, N1,
+                              Cond == ISD::SETEQ ? ISD::SETNE : ISD::SETEQ);
+        }
+      } else if (N1C->getAPIntValue() == 1 &&
+                 (VT == MVT::i1 ||
+                  getBooleanContents() == ZeroOrOneBooleanContent)) {
+        SDValue Op0 = N0;
+        if (Op0.getOpcode() == ISD::TRUNCATE)
+          Op0 = Op0.getOperand(0);
+
+        if ((Op0.getOpcode() == ISD::XOR) &&
+            Op0.getOperand(0).getOpcode() == ISD::SETCC &&
+            Op0.getOperand(1).getOpcode() == ISD::SETCC) {
+          // (xor (setcc), (setcc)) == / != 1 -> (setcc) != / == (setcc)
+          Cond = (Cond == ISD::SETEQ) ? ISD::SETNE : ISD::SETEQ;
+          return DAG.getSetCC(dl, VT, Op0.getOperand(0), Op0.getOperand(1),
+                              Cond);
+        } else if (Op0.getOpcode() == ISD::AND &&
+                isa<ConstantSDNode>(Op0.getOperand(1)) &&
+                cast<ConstantSDNode>(Op0.getOperand(1))->getAPIntValue() == 1) {
+          // If this is (X&1) == / != 1, normalize it to (X&1) != / == 0.
+          if (Op0.getValueType() != VT)
+            Op0 = DAG.getNode(ISD::AND, dl, VT,
+                          DAG.getNode(ISD::TRUNCATE, dl, VT, Op0.getOperand(0)),
+                          DAG.getConstant(1, VT));
+          return DAG.getSetCC(dl, VT, Op0,
+                              DAG.getConstant(0, Op0.getValueType()),
                               Cond == ISD::SETEQ ? ISD::SETNE : ISD::SETEQ);
         }
       }
@@ -1877,24 +1949,27 @@ TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
 
     // Fold bit comparisons when we can.
     if ((Cond == ISD::SETEQ || Cond == ISD::SETNE) &&
-        VT == N0.getValueType() && N0.getOpcode() == ISD::AND)
+        (VT == N0.getValueType() ||
+         (isTypeLegal(VT) && VT.bitsLE(N0.getValueType()))) &&
+        N0.getOpcode() == ISD::AND)
       if (ConstantSDNode *AndRHS =
                   dyn_cast<ConstantSDNode>(N0.getOperand(1))) {
         EVT ShiftTy = DCI.isBeforeLegalize() ?
           getPointerTy() : getShiftAmountTy();
         if (Cond == ISD::SETNE && C1 == 0) {// (X & 8) != 0  -->  (X & 8) >> 3
           // Perform the xform if the AND RHS is a single bit.
-          if (isPowerOf2_64(AndRHS->getZExtValue())) {
-            return DAG.getNode(ISD::SRL, dl, VT, N0,
-                                DAG.getConstant(Log2_64(AndRHS->getZExtValue()),
-                                                ShiftTy));
+          if (AndRHS->getAPIntValue().isPowerOf2()) {
+            return DAG.getNode(ISD::TRUNCATE, dl, VT,
+                              DAG.getNode(ISD::SRL, dl, N0.getValueType(), N0,
+                   DAG.getConstant(AndRHS->getAPIntValue().logBase2(), ShiftTy)));
           }
-        } else if (Cond == ISD::SETEQ && C1 == AndRHS->getZExtValue()) {
+        } else if (Cond == ISD::SETEQ && C1 == AndRHS->getAPIntValue()) {
           // (X & 8) == 8  -->  (X & 8) >> 3
           // Perform the xform if C1 is a single bit.
           if (C1.isPowerOf2()) {
-            return DAG.getNode(ISD::SRL, dl, VT, N0,
-                                DAG.getConstant(C1.logBase2(), ShiftTy));
+            return DAG.getNode(ISD::TRUNCATE, dl, VT,
+                               DAG.getNode(ISD::SRL, dl, N0.getValueType(), N0,
+                                      DAG.getConstant(C1.logBase2(), ShiftTy)));
           }
         }
       }
@@ -2189,48 +2264,6 @@ bool TargetLowering::isGAPlusOffset(SDNode *N, GlobalValue* &GA,
 }
 
 
-/// isConsecutiveLoad - Return true if LD is loading 'Bytes' bytes from a 
-/// location that is 'Dist' units away from the location that the 'Base' load 
-/// is loading from.
-bool TargetLowering::isConsecutiveLoad(LoadSDNode *LD, LoadSDNode *Base, 
-                                       unsigned Bytes, int Dist, 
-                                       const MachineFrameInfo *MFI) const {
-  if (LD->getChain() != Base->getChain())
-    return false;
-  EVT VT = LD->getValueType(0);
-  if (VT.getSizeInBits() / 8 != Bytes)
-    return false;
-
-  SDValue Loc = LD->getOperand(1);
-  SDValue BaseLoc = Base->getOperand(1);
-  if (Loc.getOpcode() == ISD::FrameIndex) {
-    if (BaseLoc.getOpcode() != ISD::FrameIndex)
-      return false;
-    int FI  = cast<FrameIndexSDNode>(Loc)->getIndex();
-    int BFI = cast<FrameIndexSDNode>(BaseLoc)->getIndex();
-    int FS  = MFI->getObjectSize(FI);
-    int BFS = MFI->getObjectSize(BFI);
-    if (FS != BFS || FS != (int)Bytes) return false;
-    return MFI->getObjectOffset(FI) == (MFI->getObjectOffset(BFI) + Dist*Bytes);
-  }
-  if (Loc.getOpcode() == ISD::ADD && Loc.getOperand(0) == BaseLoc) {
-    ConstantSDNode *V = dyn_cast<ConstantSDNode>(Loc.getOperand(1));
-    if (V && (V->getSExtValue() == Dist*Bytes))
-      return true;
-  }
-
-  GlobalValue *GV1 = NULL;
-  GlobalValue *GV2 = NULL;
-  int64_t Offset1 = 0;
-  int64_t Offset2 = 0;
-  bool isGA1 = isGAPlusOffset(Loc.getNode(), GV1, Offset1);
-  bool isGA2 = isGAPlusOffset(BaseLoc.getNode(), GV2, Offset2);
-  if (isGA1 && isGA2 && GV1 == GV2)
-    return Offset1 == (Offset2 + Dist*Bytes);
-  return false;
-}
-
-
 SDValue TargetLowering::
 PerformDAGCombine(SDNode *N, DAGCombinerInfo &DCI) const {
   // Default implementation: no optimization.
@@ -2372,7 +2405,7 @@ getRegForInlineAsmConstraint(const std::string &Constraint,
        E = RI->regclass_end(); RCI != E; ++RCI) {
     const TargetRegisterClass *RC = *RCI;
     
-    // If none of the the value types for this register class are valid, we 
+    // If none of the value types for this register class are valid, we 
     // can't use it.  For example, 64-bit reg classes on 32-bit targets.
     bool isLegal = false;
     for (TargetRegisterClass::vt_iterator I = RC->vt_begin(), E = RC->vt_end();
