@@ -169,7 +169,7 @@ public:
     return I;
   }
 
-  /// hasSubClass - return true if the the specified TargetRegisterClass
+  /// hasSubClass - return true if the specified TargetRegisterClass
   /// is a proper subset of this TargetRegisterClass.
   bool hasSubClass(const TargetRegisterClass *cs) const {
     for (int i = 0; SubClasses[i] != NULL; ++i)
@@ -299,7 +299,7 @@ public:
     /// FirstVirtualRegister - This is the first register number that is
     /// considered to be a 'virtual' register, which is part of the SSA
     /// namespace.  This must be the same for all targets, which means that each
-    /// target is limited to 1024 registers.
+    /// target is limited to this fixed number of registers.
     FirstVirtualRegister = 1024
   };
 
@@ -464,6 +464,11 @@ public:
   /// exist.
   virtual unsigned getSubReg(unsigned RegNo, unsigned Index) const = 0;
 
+  /// getSubRegIndex - For a given register pair, return the sub-register index
+  /// if the are second register is a sub-register of the first. Return zero
+  /// otherwise.
+  virtual unsigned getSubRegIndex(unsigned RegNo, unsigned SubRegNo) const = 0;
+
   /// getMatchingSuperReg - Return a super-register of the specified register
   /// Reg so its sub-register of index SubIdx is Reg.
   unsigned getMatchingSuperReg(unsigned Reg, unsigned SubIdx,
@@ -582,6 +587,17 @@ public:
     return !hasFP(MF);
   }
 
+  /// canSimplifyCallFramePseudos - When possible, it's best to simplify the
+  /// call frame pseudo ops before doing frame index elimination. This is
+  /// possible only when frame index references between the pseudos won't
+  /// need adjusted for the call frame adjustments. Normally, that's true
+  /// if the function has a reserved call frame or a frame pointer. Some
+  /// targets (Thumb2, for example) may have more complicated criteria,
+  /// however, and can override this behavior.
+  virtual bool canSimplifyCallFramePseudos(MachineFunction &MF) const {
+    return hasReservedCallFrame(MF) || hasFP(MF);
+  }
+
   /// hasReservedSpillSlot - Return true if target has reserved a spill slot in
   /// the stack frame of the given function for the specified register. e.g. On
   /// x86, if the frame register is required, the first fixed stack object is
@@ -651,21 +667,24 @@ public:
                                      MachineBasicBlock::iterator I,
                                      MachineBasicBlock::iterator &UseMI,
                                      const TargetRegisterClass *RC,
-                                     unsigned Reg) const {return false;}
+                                     unsigned Reg) const {
+    return false;
+  }
 
   /// eliminateFrameIndex - This method must be overriden to eliminate abstract
   /// frame indices from instructions which may use them.  The instruction
   /// referenced by the iterator contains an MO_FrameIndex operand which must be
   /// eliminated by this method.  This method may modify or replace the
-  /// specified instruction, as long as it keeps the iterator pointing the the
+  /// specified instruction, as long as it keeps the iterator pointing at the
   /// finished product. SPAdj is the SP adjustment due to call frame setup
   /// instruction.
   ///
   /// When -enable-frame-index-scavenging is enabled, the virtual register
   /// allocated for this frame index is returned and its value is stored in
   /// *Value.
+  typedef std::pair<unsigned, int> FrameIndexValue;
   virtual unsigned eliminateFrameIndex(MachineBasicBlock::iterator MI,
-                                       int SPAdj, int *Value = NULL,
+                                       int SPAdj, FrameIndexValue *Value = NULL,
                                        RegScavenger *RS=NULL) const = 0;
 
   /// emitProlog/emitEpilog - These methods insert prolog and epilog code into
@@ -689,7 +708,19 @@ public:
 
   /// getFrameIndexOffset - Returns the displacement from the frame register to
   /// the stack frame of the specified index.
-  virtual int getFrameIndexOffset(MachineFunction &MF, int FI) const;
+  virtual int getFrameIndexOffset(const MachineFunction &MF, int FI) const;
+
+  /// getFrameIndexReference - This method should return the base register
+  /// and offset used to reference a frame index location. The offset is
+  /// returned directly, and the base register is returned via FrameReg.
+  virtual int getFrameIndexReference(const MachineFunction &MF, int FI,
+                                     unsigned &FrameReg) const {
+    // By default, assume all frame indices are referenced via whatever
+    // getFrameRegister() says. The target can override this if it's doing
+    // something different.
+    FrameReg = getFrameRegister(MF);
+    return getFrameIndexOffset(MF, FI);
+  }
 
   /// getRARegister - This method should return the register where the return
   /// address can be found.

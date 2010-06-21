@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Target/SubtargetFeature.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/ADT/StringExtras.h"
 #include <algorithm>
@@ -66,7 +67,7 @@ static void Split(std::vector<std::string> &V, const std::string &S) {
   while (true) {
     // Find the next comma
     size_t Comma = S.find(',', Pos);
-    // If no comma found then the the rest of the string is used
+    // If no comma found then the rest of the string is used
     if (Comma == std::string::npos) {
       // Add string to vector
       V.push_back(S.substr(Pos));
@@ -355,5 +356,32 @@ void SubtargetFeatures::print(raw_ostream &OS) const {
 /// dump - Dump feature info.
 ///
 void SubtargetFeatures::dump() const {
-  print(errs());
+  print(dbgs());
+}
+
+/// getDefaultSubtargetFeatures - Return a string listing
+/// the features associated with the target triple.
+///
+/// FIXME: This is an inelegant way of specifying the features of a
+/// subtarget. It would be better if we could encode this information
+/// into the IR. See <rdar://5972456>.
+///
+std::string SubtargetFeatures::getDefaultSubtargetFeatures(
+                                               const Triple& Triple) {
+  switch (Triple.getVendor()) {
+  case Triple::Apple:
+    switch (Triple.getArch()) {
+    case Triple::ppc:   // powerpc-apple-*
+      return std::string("altivec");
+    case Triple::ppc64: // powerpc64-apple-*
+      return std::string("64bit,altivec");
+    default:
+      break;
+    }
+    break;
+  default:
+    break;
+  } 
+
+  return std::string("");
 }

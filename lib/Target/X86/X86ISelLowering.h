@@ -19,6 +19,7 @@
 #include "X86RegisterInfo.h"
 #include "X86MachineFunctionInfo.h"
 #include "llvm/Target/TargetLowering.h"
+#include "llvm/Target/TargetOptions.h"
 #include "llvm/CodeGen/FastISel.h"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/CodeGen/CallingConvLower.h"
@@ -118,6 +119,10 @@ namespace llvm {
       /// operand produced by a CMP instruction.
       SETCC,
 
+      // Same as SETCC except it's materialized with a sbb and the value is all
+      // one's or all zero's.
+      SETCC_CARRY,
+
       /// X86 conditional moves. Operand 0 and operand 1 are the two values
       /// to select from. Operand 2 is the condition code, and operand 3 is the
       /// flag operand produced by a CMP or TEST instruction. It also writes a
@@ -152,6 +157,11 @@ namespace llvm {
       /// relative displacements.
       WrapperRIP,
 
+      /// MOVQ2DQ - Copies a 64-bit value from a vector to another vector.
+      /// Can be used to move a vector value from a MMX register to a XMM
+      /// register.
+      MOVQ2DQ,
+
       /// PEXTRB - Extract an 8-bit value from a vector and zero extend it to
       /// i32, corresponds to X86::PEXTRB.
       PEXTRB,
@@ -170,7 +180,7 @@ namespace llvm {
 
       /// PINSRW - Insert the lower 16-bits of a 32-bit value to a vector,
       /// corresponds to X86::PINSRW.
-      PINSRW,
+      PINSRW, MMX_PINSRW,
 
       /// PSHUFB - Shuffle 16 8-bit values within a vector.
       PSHUFB,
@@ -239,6 +249,9 @@ namespace llvm {
       // with control flow.
       VASTART_SAVE_XMM_REGS,
 
+      // MINGW_ALLOCA - MingW's __alloca call to do stack probing.
+      MINGW_ALLOCA,
+
       // ATOMADD64_DAG, ATOMSUB64_DAG, ATOMOR64_DAG, ATOMAND64_DAG, 
       // ATOMXOR64_DAG, ATOMNAND64_DAG, ATOMSWAP64_DAG - 
       // Atomic 64-bit binary operations.
@@ -249,6 +262,10 @@ namespace llvm {
       ATOMAND64_DAG,
       ATOMNAND64_DAG,
       ATOMSWAP64_DAG
+
+      // WARNING: Do not add anything in the end unless you want the node to
+      // have memop! In fact, starting from ATOMADD64_DAG all opcodes will be
+      // thought as target memory ops!
     };
   }
 
@@ -362,25 +379,33 @@ namespace llvm {
     unsigned VarArgsGPOffset;         // X86-64 vararg func int reg offset.
     unsigned VarArgsFPOffset;         // X86-64 vararg func fp reg offset.
     int BytesToPopOnReturn;           // Number of arg bytes ret should pop.
-    int BytesCallerReserves;          // Number of arg bytes caller makes.
 
   public:
     explicit X86TargetLowering(X86TargetMachine &TM);
 
+    /// getPICBaseSymbol - Return the X86-32 PIC base.
+    MCSymbol *getPICBaseSymbol(const MachineFunction *MF, MCContext &Ctx) const;
+    
+    virtual unsigned getJumpTableEncoding() const;
+
+    virtual const MCExpr *
+    LowerCustomJumpTableEntry(const MachineJumpTableInfo *MJTI,
+                              const MachineBasicBlock *MBB, unsigned uid,
+                              MCContext &Ctx) const;
+    
     /// getPICJumpTableRelocaBase - Returns relocation base for the given PIC
     /// jumptable.
-    SDValue getPICJumpTableRelocBase(SDValue Table,
-                                       SelectionDAG &DAG) const;
-
+    virtual SDValue getPICJumpTableRelocBase(SDValue Table,
+                                             SelectionDAG &DAG) const;
+    virtual const MCExpr *
+    getPICJumpTableRelocBaseExpr(const MachineFunction *MF,
+                                 unsigned JTI, MCContext &Ctx) const;
+    
     // Return the number of bytes that a function should pop when it returns (in
     // addition to the space used by the return address).
     //
     unsigned getBytesToPopOnReturn() const { return BytesToPopOnReturn; }
 
-    // Return the number of bytes that the caller reserves for arguments passed
-    // to this function.
-    unsigned getBytesCallerReserves() const { return BytesCallerReserves; }
- 
     /// getStackPtrReg - Return the stack pointer register we are using: either
     /// ESP or RSP.
     unsigned getStackPtrReg() const { return X86StackPtr; }
@@ -528,16 +553,6 @@ namespace llvm {
       return !X86ScalarSSEf64 || VT == MVT::f80;
     }
     
-    /// IsEligibleForTailCallOptimization - Check whether the call is eligible
-    /// for tail call optimization. Targets which want to do tail call
-    /// optimization should implement this function.
-    virtual bool
-    IsEligibleForTailCallOptimization(SDValue Callee,
-                                      CallingConv::ID CalleeCC,
-                                      bool isVarArg,
-                                      const SmallVectorImpl<ISD::InputArg> &Ins,
-                                      SelectionDAG& DAG) const;
-
     virtual const X86Subtarget* getSubtarget() {
       return Subtarget;
     }
@@ -548,13 +563,6 @@ namespace llvm {
       return (VT == MVT::f64 && X86ScalarSSEf64) || // f64 is when SSE2
       (VT == MVT::f32 && X86ScalarSSEf32);   // f32 is when SSE1
     }
-
-    /// getWidenVectorType: given a vector type, returns the type to widen
-    /// to (e.g., v7i8 to v8i8). If the vector type is legal, it returns itself.
-    /// If there is no vector type that we want to widen to, returns EVT::Other
-    /// When and were to widen is target dependent based on the cost of
-    /// scalarizing vs using the wider vector type.
-    virtual EVT getWidenVectorType(EVT VT) const;
 
     /// createFastISel - This method returns a target specific FastISel object,
     /// or null if the target does not support "fast" ISel.
@@ -615,19 +623,31 @@ namespace llvm {
                              ISD::ArgFlagsTy Flags);
 
     // Call lowering helpers.
+
+    /// IsEligibleForTailCallOptimization - Check whether the call is eligible
+    /// for tail call optimization. Targets which want to do tail call
+    /// optimization should implement this function.
+    bool IsEligibleForTailCallOptimization(SDValue Callee,
+                                           CallingConv::ID CalleeCC,
+                                           bool isVarArg,
+                                    const SmallVectorImpl<ISD::OutputArg> &Outs,
+                                    const SmallVectorImpl<ISD::InputArg> &Ins,
+                                           SelectionDAG& DAG) const;
     bool IsCalleePop(bool isVarArg, CallingConv::ID CallConv);
     SDValue EmitTailCallLoadRetAddr(SelectionDAG &DAG, SDValue &OutRetAddr,
                                 SDValue Chain, bool IsTailCall, bool Is64Bit,
                                 int FPDiff, DebugLoc dl);
 
     CCAssignFn *CCAssignFnForNode(CallingConv::ID CallConv) const;
-    NameDecorationStyle NameDecorationForCallConv(CallingConv::ID CallConv);
     unsigned GetAlignedArgumentStackSize(unsigned StackSize, SelectionDAG &DAG);
 
     std::pair<SDValue,SDValue> FP_TO_INTHelper(SDValue Op, SelectionDAG &DAG,
                                                bool isSigned);
-    
+
+    SDValue LowerAsSplatVectorLoad(SDValue SrcOp, EVT VT, DebugLoc dl,
+                                   SelectionDAG &DAG);
     SDValue LowerBUILD_VECTOR(SDValue Op, SelectionDAG &DAG);
+    SDValue LowerCONCAT_VECTORS(SDValue Op, SelectionDAG &DAG);
     SDValue LowerVECTOR_SHUFFLE(SDValue Op, SelectionDAG &DAG);
     SDValue LowerEXTRACT_VECTOR_ELT(SDValue Op, SelectionDAG &DAG);
     SDValue LowerEXTRACT_VECTOR_ELT_SSE4(SDValue Op, SelectionDAG &DAG);
@@ -687,7 +707,7 @@ namespace llvm {
                            SmallVectorImpl<SDValue> &InVals);
     virtual SDValue
       LowerCall(SDValue Chain, SDValue Callee,
-                CallingConv::ID CallConv, bool isVarArg, bool isTailCall,
+                CallingConv::ID CallConv, bool isVarArg, bool &isTailCall,
                 const SmallVectorImpl<ISD::OutputArg> &Outs,
                 const SmallVectorImpl<ISD::InputArg> &Ins,
                 DebugLoc dl, SelectionDAG &DAG,
@@ -769,7 +789,11 @@ namespace llvm {
     MachineBasicBlock *EmitLoweredSelect(MachineInstr *I,
                                          MachineBasicBlock *BB,
                     DenseMap<MachineBasicBlock*, MachineBasicBlock*> *EM) const;
-    
+
+    MachineBasicBlock *EmitLoweredMingwAlloca(MachineInstr *MI,
+                                              MachineBasicBlock *BB,
+                    DenseMap<MachineBasicBlock*, MachineBasicBlock*> *EM) const;
+
     /// Emit nodes that will be selected as "test Op0,Op0", or something
     /// equivalent, for use with the given x86 condition code.
     SDValue EmitTest(SDValue Op0, unsigned X86CC, SelectionDAG &DAG);

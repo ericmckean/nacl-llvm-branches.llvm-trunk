@@ -8,14 +8,20 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/MC/MCExpr.h"
+#include "llvm/MC/MCAsmLayout.h"
+#include "llvm/MC/MCAssembler.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/MC/MCValue.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Target/TargetAsmBackend.h"
 using namespace llvm;
 
-void MCExpr::print(raw_ostream &OS, const MCAsmInfo *MAI) const {
+void MCExpr::print(raw_ostream &OS) const {
   switch (getKind()) {
+  case MCExpr::Target:
+    return cast<MCTargetExpr>(this)->PrintImpl(OS);
   case MCExpr::Constant:
     OS << cast<MCConstantExpr>(*this).getValue();
     return;
@@ -25,13 +31,10 @@ void MCExpr::print(raw_ostream &OS, const MCAsmInfo *MAI) const {
     
     // Parenthesize names that start with $ so that they don't look like
     // absolute names.
-    if (Sym.getName()[0] == '$') {
-      OS << '(';
-      Sym.print(OS, MAI);
-      OS << ')';
-    } else {
-      Sym.print(OS, MAI);
-    }
+    if (Sym.getName()[0] == '$')
+      OS << '(' << Sym << ')';
+    else
+      OS << Sym;
     return;
   }
 
@@ -44,7 +47,7 @@ void MCExpr::print(raw_ostream &OS, const MCAsmInfo *MAI) const {
     case MCUnaryExpr::Not:   OS << '~'; break;
     case MCUnaryExpr::Plus:  OS << '+'; break;
     }
-    UE.getSubExpr()->print(OS, MAI);
+    OS << *UE.getSubExpr();
     return;
   }
 
@@ -53,11 +56,9 @@ void MCExpr::print(raw_ostream &OS, const MCAsmInfo *MAI) const {
     
     // Only print parens around the LHS if it is non-trivial.
     if (isa<MCConstantExpr>(BE.getLHS()) || isa<MCSymbolRefExpr>(BE.getLHS())) {
-      BE.getLHS()->print(OS, MAI);
+      OS << *BE.getLHS();
     } else {
-      OS << '(';
-      BE.getLHS()->print(OS, MAI);
-      OS << ')';
+      OS << '(' << *BE.getLHS() << ')';
     }
     
     switch (BE.getOpcode()) {
@@ -94,11 +95,9 @@ void MCExpr::print(raw_ostream &OS, const MCAsmInfo *MAI) const {
     
     // Only print parens around the LHS if it is non-trivial.
     if (isa<MCConstantExpr>(BE.getRHS()) || isa<MCSymbolRefExpr>(BE.getRHS())) {
-      BE.getRHS()->print(OS, MAI);
+      OS << *BE.getRHS();
     } else {
-      OS << '(';
-      BE.getRHS()->print(OS, MAI);
-      OS << ')';
+      OS << '(' << *BE.getRHS() << ')';
     }
     return;
   }
@@ -108,8 +107,8 @@ void MCExpr::print(raw_ostream &OS, const MCAsmInfo *MAI) const {
 }
 
 void MCExpr::dump() const {
-  print(errs(), 0);
-  errs() << '\n';
+  print(dbgs());
+  dbgs() << '\n';
 }
 
 /* *** */
@@ -137,13 +136,19 @@ const MCSymbolRefExpr *MCSymbolRefExpr::Create(StringRef Name, MCContext &Ctx) {
   return Create(Ctx.GetOrCreateSymbol(Name), Ctx);
 }
 
+const MCSymbolRefExpr *MCSymbolRefExpr::CreateTemp(StringRef Name,
+                                                   MCContext &Ctx) {
+  return Create(Ctx.GetOrCreateTemporarySymbol(Name), Ctx);
+}
+
+void MCTargetExpr::Anchor() {}
 
 /* *** */
 
-bool MCExpr::EvaluateAsAbsolute(int64_t &Res) const {
+bool MCExpr::EvaluateAsAbsolute(int64_t &Res, const MCAsmLayout *Layout) const {
   MCValue Value;
   
-  if (!EvaluateAsRelocatable(Value) || !Value.isAbsolute())
+  if (!EvaluateAsRelocatable(Value, Layout) || !Value.isAbsolute())
     return false;
 
   Res = Value.getConstant();
@@ -172,8 +177,12 @@ static bool EvaluateSymbolicAdd(const MCValue &LHS, const MCSymbol *RHS_A,
   return true;
 }
 
-bool MCExpr::EvaluateAsRelocatable(MCValue &Res) const {
+bool MCExpr::EvaluateAsRelocatable(MCValue &Res,
+                                   const MCAsmLayout *Layout) const {
   switch (getKind()) {
+  case Target:
+    return cast<MCTargetExpr>(this)->EvaluateAsRelocatableImpl(Res, Layout);
+      
   case Constant:
     Res = MCValue::get(cast<MCConstantExpr>(this)->getValue());
     return true;
@@ -182,8 +191,24 @@ bool MCExpr::EvaluateAsRelocatable(MCValue &Res) const {
     const MCSymbol &Sym = cast<MCSymbolRefExpr>(this)->getSymbol();
 
     // Evaluate recursively if this is a variable.
-    if (Sym.isVariable())
-      return Sym.getValue()->EvaluateAsRelocatable(Res);
+    if (Sym.isVariable()) {
+      if (!Sym.getValue()->EvaluateAsRelocatable(Res, Layout))
+        return false;
+
+      // Absolutize symbol differences between defined symbols when we have a
+      // layout object and the target requests it.
+      if (Layout && Res.getSymB() &&
+          Layout->getAssembler().getBackend().hasAbsolutizedSet() &&
+          Res.getSymA()->isDefined() && Res.getSymB()->isDefined()) {
+        MCSymbolData &A = Layout->getAssembler().getSymbolData(*Res.getSymA());
+        MCSymbolData &B = Layout->getAssembler().getSymbolData(*Res.getSymB());
+        Res = MCValue::get(+ A.getFragment()->getAddress() + A.getOffset()
+                           - B.getFragment()->getAddress() - B.getOffset()
+                           + Res.getConstant());
+      }
+
+      return true;
+    }
 
     Res = MCValue::get(&Sym, 0, 0);
     return true;
@@ -193,7 +218,7 @@ bool MCExpr::EvaluateAsRelocatable(MCValue &Res) const {
     const MCUnaryExpr *AUE = cast<MCUnaryExpr>(this);
     MCValue Value;
 
-    if (!AUE->getSubExpr()->EvaluateAsRelocatable(Value))
+    if (!AUE->getSubExpr()->EvaluateAsRelocatable(Value, Layout))
       return false;
 
     switch (AUE->getOpcode()) {
@@ -226,8 +251,8 @@ bool MCExpr::EvaluateAsRelocatable(MCValue &Res) const {
     const MCBinaryExpr *ABE = cast<MCBinaryExpr>(this);
     MCValue LHSValue, RHSValue;
     
-    if (!ABE->getLHS()->EvaluateAsRelocatable(LHSValue) ||
-        !ABE->getRHS()->EvaluateAsRelocatable(RHSValue))
+    if (!ABE->getLHS()->EvaluateAsRelocatable(LHSValue, Layout) ||
+        !ABE->getRHS()->EvaluateAsRelocatable(RHSValue, Layout))
       return false;
 
     // We only support a few operations on non-constant expressions, handle
@@ -252,8 +277,8 @@ bool MCExpr::EvaluateAsRelocatable(MCValue &Res) const {
     }
 
     // FIXME: We need target hooks for the evaluation. It may be limited in
-    // width, and gas defines the result of comparisons differently from Apple
-    // as (the result is sign extended).
+    // width, and gas defines the result of comparisons and right shifts
+    // differently from Apple as.
     int64_t LHS = LHSValue.getConstant(), RHS = RHSValue.getConstant();
     int64_t Result = 0;
     switch (ABE->getOpcode()) {

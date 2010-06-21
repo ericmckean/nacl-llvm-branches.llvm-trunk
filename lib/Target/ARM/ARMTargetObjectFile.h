@@ -10,30 +10,32 @@
 #ifndef LLVM_TARGET_ARM_TARGETOBJECTFILE_H
 #define LLVM_TARGET_ARM_TARGETOBJECTFILE_H
 
-#include "llvm/Target/TargetLoweringObjectFile.h"
-#include "llvm/MC/MCSectionELF.h"
+#include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
 
 namespace llvm {
 
-  class ARMElfTargetObjectFile : public TargetLoweringObjectFileELF {
-  public:
-    ARMElfTargetObjectFile() : TargetLoweringObjectFileELF() {}
+class MCContext;
+class TargetMachine;
 
-    void Initialize(MCContext &Ctx, const TargetMachine &TM) {
-      TargetLoweringObjectFileELF::Initialize(Ctx, TM);
+class ARMElfTargetObjectFile : public TargetLoweringObjectFileELF {
+public:
+  ARMElfTargetObjectFile() : TargetLoweringObjectFileELF() {}
 
-      if (TM.getSubtarget<ARMSubtarget>().isAAPCS_ABI()) {
-        StaticCtorSection =
-          getELFSection(".init_array", MCSectionELF::SHT_INIT_ARRAY, 
-                        MCSectionELF::SHF_WRITE | MCSectionELF::SHF_ALLOC,
-                        SectionKind::getDataRel());
-        StaticDtorSection =
-          getELFSection(".fini_array", MCSectionELF::SHT_FINI_ARRAY,
-                        MCSectionELF::SHF_WRITE | MCSectionELF::SHF_ALLOC,
-                        SectionKind::getDataRel());
-      }
-    }
-  };
+  virtual void Initialize(MCContext &Ctx, const TargetMachine &TM);
+};
+
+// FIXME: This subclass isn't 100% necessary. It will become obsolete once we
+//        can place all LSDAs into the TEXT section. See
+//        <rdar://problem/6804645>.
+class ARMMachOTargetObjectFile : public TargetLoweringObjectFileMachO {
+public:
+  ARMMachOTargetObjectFile() : TargetLoweringObjectFileMachO() {}
+
+  virtual void Initialize(MCContext &Ctx, const TargetMachine &TM);
+
+  virtual unsigned getTTypeEncoding() const;
+};
+
 } // end namespace llvm
 
 #endif

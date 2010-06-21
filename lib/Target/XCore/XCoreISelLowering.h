@@ -28,7 +28,7 @@ namespace llvm {
   namespace XCoreISD {
     enum NodeType {
       // Start the numbering where the builtin ops and target ops leave off.
-      FIRST_NUMBER = ISD::BUILTIN_OP_END+XCore::INSTRUCTION_LIST_END,
+      FIRST_NUMBER = ISD::BUILTIN_OP_END,
 
       // Branch and link (call)
       BL,
@@ -52,7 +52,22 @@ namespace llvm {
       LADD,
 
       // Corresponds to LSUB instruction
-      LSUB
+      LSUB,
+
+      // Corresponds to LMUL instruction
+      LMUL,
+
+      // Corresponds to MACCU instruction
+      MACCU,
+
+      // Corresponds to MACCS instruction
+      MACCS,
+
+      // Jumptable branch.
+      BR_JT,
+
+      // Jumptable branch using long branches for each entry.
+      BR_JT32
     };
   }
 
@@ -64,6 +79,8 @@ namespace llvm {
   public:
 
     explicit XCoreTargetLowering(XCoreTargetMachine &TM);
+
+    virtual unsigned getJumpTableEncoding() const;
 
     /// LowerOperation - Provide custom lowering hooks for some operations.
     virtual SDValue LowerOperation(SDValue Op, SelectionDAG &DAG);
@@ -120,11 +137,14 @@ namespace llvm {
     SDValue LowerSTORE(SDValue Op, SelectionDAG &DAG);
     SDValue LowerGlobalAddress(SDValue Op, SelectionDAG &DAG);
     SDValue LowerGlobalTLSAddress(SDValue Op, SelectionDAG &DAG);
+    SDValue LowerBlockAddress(SDValue Op, SelectionDAG &DAG);
     SDValue LowerConstantPool(SDValue Op, SelectionDAG &DAG);
-    SDValue LowerJumpTable(SDValue Op, SelectionDAG &DAG);
+    SDValue LowerBR_JT(SDValue Op, SelectionDAG &DAG);
     SDValue LowerSELECT_CC(SDValue Op, SelectionDAG &DAG);
     SDValue LowerVAARG(SDValue Op, SelectionDAG &DAG);
     SDValue LowerVASTART(SDValue Op, SelectionDAG &DAG);
+    SDValue LowerUMUL_LOHI(SDValue Op, SelectionDAG &DAG);
+    SDValue LowerSMUL_LOHI(SDValue Op, SelectionDAG &DAG);
     SDValue LowerFRAMEADDR(SDValue Op, SelectionDAG &DAG);
   
     // Inline asm support
@@ -133,9 +153,17 @@ namespace llvm {
               EVT VT) const;
   
     // Expand specifics
+    SDValue TryExpandADDWithMul(SDNode *Op, SelectionDAG &DAG);
     SDValue ExpandADDSUB(SDNode *Op, SelectionDAG &DAG);
 
     virtual SDValue PerformDAGCombine(SDNode *N, DAGCombinerInfo &DCI) const;
+
+    virtual void computeMaskedBitsForTargetNode(const SDValue Op,
+                                                const APInt &Mask,
+                                                APInt &KnownZero,
+                                                APInt &KnownOne,
+                                                const SelectionDAG &DAG,
+                                                unsigned Depth = 0) const;
 
     virtual SDValue
       LowerFormalArguments(SDValue Chain,
@@ -148,7 +176,7 @@ namespace llvm {
     virtual SDValue
       LowerCall(SDValue Chain, SDValue Callee,
                 CallingConv::ID CallConv, bool isVarArg,
-                bool isTailCall,
+                bool &isTailCall,
                 const SmallVectorImpl<ISD::OutputArg> &Outs,
                 const SmallVectorImpl<ISD::InputArg> &Ins,
                 DebugLoc dl, SelectionDAG &DAG,
@@ -159,6 +187,12 @@ namespace llvm {
                   CallingConv::ID CallConv, bool isVarArg,
                   const SmallVectorImpl<ISD::OutputArg> &Outs,
                   DebugLoc dl, SelectionDAG &DAG);
+
+    virtual bool
+      CanLowerReturn(CallingConv::ID CallConv, bool isVarArg,
+                     const SmallVectorImpl<EVT> &OutTys,
+                     const SmallVectorImpl<ISD::ArgFlagsTy> &ArgsFlags,
+                     SelectionDAG &DAG);
   };
 }
 

@@ -158,22 +158,22 @@ let Namespace = "X86" in {
   def XMM15: Register<"xmm15">, DwarfRegNum<[32, -2, -2]>;
 
   // YMM Registers, used by AVX instructions
-  def YMM0: Register<"ymm0">, DwarfRegNum<[17, 21, 21]>;
-  def YMM1: Register<"ymm1">, DwarfRegNum<[18, 22, 22]>;
-  def YMM2: Register<"ymm2">, DwarfRegNum<[19, 23, 23]>;
-  def YMM3: Register<"ymm3">, DwarfRegNum<[20, 24, 24]>;
-  def YMM4: Register<"ymm4">, DwarfRegNum<[21, 25, 25]>;
-  def YMM5: Register<"ymm5">, DwarfRegNum<[22, 26, 26]>;
-  def YMM6: Register<"ymm6">, DwarfRegNum<[23, 27, 27]>;
-  def YMM7: Register<"ymm7">, DwarfRegNum<[24, 28, 28]>;
-  def YMM8:  Register<"ymm8">,  DwarfRegNum<[25, -2, -2]>;
-  def YMM9:  Register<"ymm9">,  DwarfRegNum<[26, -2, -2]>;
-  def YMM10: Register<"ymm10">, DwarfRegNum<[27, -2, -2]>;
-  def YMM11: Register<"ymm11">, DwarfRegNum<[28, -2, -2]>;
-  def YMM12: Register<"ymm12">, DwarfRegNum<[29, -2, -2]>;
-  def YMM13: Register<"ymm13">, DwarfRegNum<[30, -2, -2]>;
-  def YMM14: Register<"ymm14">, DwarfRegNum<[31, -2, -2]>;
-  def YMM15: Register<"ymm15">, DwarfRegNum<[32, -2, -2]>;
+  def YMM0: RegisterWithSubRegs<"ymm0", [XMM0]>, DwarfRegNum<[17, 21, 21]>;
+  def YMM1: RegisterWithSubRegs<"ymm1", [XMM1]>, DwarfRegNum<[18, 22, 22]>;
+  def YMM2: RegisterWithSubRegs<"ymm2", [XMM2]>, DwarfRegNum<[19, 23, 23]>;
+  def YMM3: RegisterWithSubRegs<"ymm3", [XMM3]>, DwarfRegNum<[20, 24, 24]>;
+  def YMM4: RegisterWithSubRegs<"ymm4", [XMM4]>, DwarfRegNum<[21, 25, 25]>;
+  def YMM5: RegisterWithSubRegs<"ymm5", [XMM5]>, DwarfRegNum<[22, 26, 26]>;
+  def YMM6: RegisterWithSubRegs<"ymm6", [XMM6]>, DwarfRegNum<[23, 27, 27]>;
+  def YMM7: RegisterWithSubRegs<"ymm7", [XMM7]>, DwarfRegNum<[24, 28, 28]>;
+  def YMM8:  RegisterWithSubRegs<"ymm8", [XMM8]>,  DwarfRegNum<[25, -2, -2]>;
+  def YMM9:  RegisterWithSubRegs<"ymm9", [XMM9]>,  DwarfRegNum<[26, -2, -2]>;
+  def YMM10: RegisterWithSubRegs<"ymm10", [XMM10]>, DwarfRegNum<[27, -2, -2]>;
+  def YMM11: RegisterWithSubRegs<"ymm11", [XMM11]>, DwarfRegNum<[28, -2, -2]>;
+  def YMM12: RegisterWithSubRegs<"ymm12", [XMM12]>, DwarfRegNum<[29, -2, -2]>;
+  def YMM13: RegisterWithSubRegs<"ymm13", [XMM13]>, DwarfRegNum<[30, -2, -2]>;
+  def YMM14: RegisterWithSubRegs<"ymm14", [XMM14]>, DwarfRegNum<[31, -2, -2]>;
+  def YMM15: RegisterWithSubRegs<"ymm15", [XMM15]>, DwarfRegNum<[32, -2, -2]>;
 
   // Floating point stack registers
   def ST0 : Register<"st(0)">, DwarfRegNum<[33, 12, 11]>;
@@ -195,6 +195,36 @@ let Namespace = "X86" in {
   def ES : Register<"es">;
   def FS : Register<"fs">;
   def GS : Register<"gs">;
+  
+  // Debug registers
+  def DR0 : Register<"dr0">;
+  def DR1 : Register<"dr1">;
+  def DR2 : Register<"dr2">;
+  def DR3 : Register<"dr3">;
+  def DR4 : Register<"dr4">;
+  def DR5 : Register<"dr5">;
+  def DR6 : Register<"dr6">;
+  def DR7 : Register<"dr7">;
+  
+  // Condition registers
+  def ECR0 : Register<"ecr0">;
+  def ECR1 : Register<"ecr1">;
+  def ECR2 : Register<"ecr2">;
+  def ECR3 : Register<"ecr3">;
+  def ECR4 : Register<"ecr4">;
+  def ECR5 : Register<"ecr5">;
+  def ECR6 : Register<"ecr6">;
+  def ECR7 : Register<"ecr7">;
+
+  def RCR0 : Register<"rcr0">;
+  def RCR1 : Register<"rcr1">;
+  def RCR2 : Register<"rcr2">;
+  def RCR3 : Register<"rcr3">;
+  def RCR4 : Register<"rcr4">;
+  def RCR5 : Register<"rcr5">;
+  def RCR6 : Register<"rcr6">;
+  def RCR7 : Register<"rcr7">;
+  def RCR8 : Register<"rcr8">; 
 }
 
 
@@ -207,6 +237,10 @@ def x86_subreg_8bit    : PatLeaf<(i32 1)>;
 def x86_subreg_8bit_hi : PatLeaf<(i32 2)>;
 def x86_subreg_16bit   : PatLeaf<(i32 3)>;
 def x86_subreg_32bit   : PatLeaf<(i32 4)>;
+
+def x86_subreg_ss   : PatLeaf<(i32 1)>;
+def x86_subreg_sd   : PatLeaf<(i32 2)>;
+def x86_subreg_xmm  : PatLeaf<(i32 3)>;
 
 def : SubRegSet<1, [AX, CX, DX, BX, SP,  BP,  SI,  DI,  
                     R8W, R9W, R10W, R11W, R12W, R13W, R14W, R15W],
@@ -247,9 +281,29 @@ def : SubRegSet<4, [RAX, RCX, RDX, RBX, RSP, RBP, RSI, RDI,
                    [EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI, 
                     R8D, R9D, R10D, R11D, R12D, R13D, R14D, R15D]>;
 
-def : SubRegSet<1, [YMM0, YMM1, YMM2, YMM3, YMM4, YMM5, YMM6, YMM7,  
+def : SubRegSet<1, [YMM0, YMM1, YMM2, YMM3, YMM4, YMM5, YMM6, YMM7,
+                    YMM8, YMM9, YMM10, YMM11, YMM12, YMM13, YMM14, YMM15],
+                   [XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
+                    XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15]>;
+
+def : SubRegSet<2, [YMM0, YMM1, YMM2, YMM3, YMM4, YMM5, YMM6, YMM7,
+                    YMM8, YMM9, YMM10, YMM11, YMM12, YMM13, YMM14, YMM15],
+                   [XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
+                    XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15]>;
+
+def : SubRegSet<3, [YMM0, YMM1, YMM2, YMM3, YMM4, YMM5, YMM6, YMM7,  
                     YMM8, YMM9, YMM10, YMM11, YMM12, YMM13, YMM14, YMM15],
                    [XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, 
+                    XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15]>;
+
+def : SubRegSet<1, [XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
+                    XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15],
+                   [XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
+                    XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15]>;
+
+def : SubRegSet<2, [XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
+                    XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15],
+                   [XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
                     XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15]>;
 
 //===----------------------------------------------------------------------===//
@@ -446,6 +500,22 @@ def GR64 : RegisterClass<"X86", [i64], 64,
 def SEGMENT_REG : RegisterClass<"X86", [i16], 16, [CS, DS, SS, ES, FS, GS]> {
 }
 
+// Debug registers.
+def DEBUG_REG : RegisterClass<"X86", [i32], 32, 
+                              [DR0, DR1, DR2, DR3, DR4, DR5, DR6, DR7]> {
+}
+
+// Control registers.
+def CONTROL_REG_32 : RegisterClass<"X86", [i32], 32,
+                                   [ECR0, ECR1, ECR2, ECR3, ECR4, ECR5, ECR6,
+                                    ECR7]> {
+}
+
+def CONTROL_REG_64 : RegisterClass<"X86", [i64], 64,
+                                   [RCR0, RCR1, RCR2, RCR3, RCR4, RCR5, RCR6,
+                                    RCR7, RCR8]> {
+}
+
 // GR8_ABCD_L, GR8_ABCD_H, GR16_ABCD, GR32_ABCD, GR64_ABCD - Subclasses of
 // GR8, GR16, GR32, and GR64 which contain just the "a" "b", "c", and "d"
 // registers. On x86-32, GR16_ABCD and GR32_ABCD are classes for registers
@@ -465,21 +535,25 @@ def GR32_ABCD : RegisterClass<"X86", [i32], 32, [EAX, ECX, EDX, EBX]> {
 def GR64_ABCD : RegisterClass<"X86", [i64], 64, [RAX, RCX, RDX, RBX]> {
   let SubRegClassList = [GR8_ABCD_L, GR8_ABCD_H, GR16_ABCD, GR32_ABCD];
 }
+def GR32_TC   : RegisterClass<"X86", [i32], 32, [EAX, ECX, EDX]> {
+  let SubRegClassList = [GR8, GR8, GR16];
+}
+def GR64_TC   : RegisterClass<"X86", [i64], 64, [RAX, RCX, RDX, RSI, RDI,
+                                                 R8, R9, R11]> {
+  let SubRegClassList = [GR8, GR8, GR16, GR32_TC];
+}
 
-// GR8_NOREX, GR16_NOREX, GR32_NOREX, GR64_NOREX - Subclasses of
-// GR8, GR16, GR32, and GR64 which contain only the first 8 GPRs.
-// On x86-64, GR64_NOREX, GR32_NOREX and GR16_NOREX are the classes
-// of registers which do not by themselves require a REX prefix.
+// GR8_NOREX - GR8 registers which do not require a REX prefix.
 def GR8_NOREX : RegisterClass<"X86", [i8], 8,
-                              [AL, CL, DL, AH, CH, DH, BL, BH,
-                               SIL, DIL, BPL, SPL]> {
+                              [AL, CL, DL, AH, CH, DH, BL, BH]> {
   let MethodProtos = [{
     iterator allocation_order_begin(const MachineFunction &MF) const;
     iterator allocation_order_end(const MachineFunction &MF) const;
   }];
   let MethodBodies = [{
+    // In 64-bit mode, it's not safe to blindly allocate H registers.
     static const unsigned X86_GR8_NOREX_AO_64[] = {
-      X86::AL, X86::CL, X86::DL, X86::SIL, X86::DIL, X86::BL, X86::BPL
+      X86::AL, X86::CL, X86::DL, X86::BL
     };
 
     GR8_NOREXClass::iterator
@@ -495,21 +569,15 @@ def GR8_NOREX : RegisterClass<"X86", [i8], 8,
     GR8_NOREXClass::iterator
     GR8_NOREXClass::allocation_order_end(const MachineFunction &MF) const {
       const TargetMachine &TM = MF.getTarget();
-      const TargetRegisterInfo *RI = TM.getRegisterInfo();
       const X86Subtarget &Subtarget = TM.getSubtarget<X86Subtarget>();
-      // Does the function dedicate RBP / EBP to being a frame ptr?
-      if (!Subtarget.is64Bit())
-        // In 32-mode, none of the 8-bit registers aliases EBP or ESP.
-        return begin() + 8;
-      else if (RI->hasFP(MF))
-        // If so, don't allocate SPL or BPL.
-        return array_endof(X86_GR8_NOREX_AO_64) - 1;
-      else
-        // If not, just don't allocate SPL.
+      if (Subtarget.is64Bit())
         return array_endof(X86_GR8_NOREX_AO_64);
+      else
+        return end();
     }
   }];
 }
+// GR16_NOREX - GR16 registers which do not require a REX prefix.
 def GR16_NOREX : RegisterClass<"X86", [i16], 16,
                                [AX, CX, DX, SI, DI, BX, BP, SP]> {
   let SubRegClassList = [GR8_NOREX, GR8_NOREX];
@@ -661,7 +729,8 @@ def GR64_NOREX_NOSP : RegisterClass<"X86", [i64], 64,
   }];
   let MethodBodies = [{
     GR64_NOREX_NOSPClass::iterator
-    GR64_NOREX_NOSPClass::allocation_order_end(const MachineFunction &MF) const {
+    GR64_NOREX_NOSPClass::allocation_order_end(const MachineFunction &MF) const
+  {
       const TargetMachine &TM = MF.getTarget();
       const TargetRegisterInfo *RI = TM.getRegisterInfo();
       // Does the function dedicate RBP to being a frame ptr?
@@ -755,6 +824,7 @@ def VR128 : RegisterClass<"X86", [v16i8, v8i16, v4i32, v2i64, v4f32, v2f64],128,
                           [XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
                            XMM8, XMM9, XMM10, XMM11,
                            XMM12, XMM13, XMM14, XMM15]> {
+  let SubRegClassList = [FR32, FR64];
   let MethodProtos = [{
     iterator allocation_order_end(const MachineFunction &MF) const;
   }];
@@ -773,7 +843,9 @@ def VR128 : RegisterClass<"X86", [v16i8, v8i16, v4i32, v2i64, v4f32, v2f64],128,
 def VR256 : RegisterClass<"X86", [ v8i32, v4i64, v8f32, v4f64],256,
                           [YMM0, YMM1, YMM2, YMM3, YMM4, YMM5, YMM6, YMM7,
                            YMM8, YMM9, YMM10, YMM11,
-                           YMM12, YMM13, YMM14, YMM15]>;
+                           YMM12, YMM13, YMM14, YMM15]> {
+  let SubRegClassList = [FR32, FR64, VR128];
+}
 
 // Status flags registers.
 def CCR : RegisterClass<"X86", [i32], 32, [EFLAGS]> {

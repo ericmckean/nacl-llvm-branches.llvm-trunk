@@ -24,7 +24,7 @@ using namespace llvm;
 //  malloc Call Utility Functions.
 //
 
-/// isMalloc - Returns true if the the value is either a malloc call or a
+/// isMalloc - Returns true if the value is either a malloc call or a
 /// bitcast of the result of a malloc call.
 bool llvm::isMalloc(const Value *I) {
   return extractMallocCall(I) || extractMallocCallFromBitCast(I);
@@ -105,9 +105,8 @@ static Value *computeArraySize(const CallInst *CI, const TargetData *TD,
   // return the multiple.  Otherwise, return NULL.
   Value *MallocArg = CI->getOperand(1);
   Value *Multiple = NULL;
-  APInt Val(TD->getTypeSizeInBits(MallocArg->getType()->getScalarType()), 0);
   if (ComputeMultiple(MallocArg, ElementSize, Multiple,
-                      Val, LookThroughSExt, TD))
+                      LookThroughSExt))
     return Multiple;
 
   return NULL;
@@ -184,7 +183,7 @@ Value *llvm::getMallocArraySize(CallInst *CI, const TargetData *TD,
 //  free Call Utility Functions.
 //
 
-/// isFreeCall - Returns true if the the value is a call to the builtin free()
+/// isFreeCall - Returns true if the value is a call to the builtin free()
 bool llvm::isFreeCall(const Value *I) {
   const CallInst *CI = dyn_cast<CallInst>(I);
   if (!CI)

@@ -15,7 +15,6 @@
 #define DEBUG_TYPE "hello"
 #include "llvm/Pass.h"
 #include "llvm/Function.h"
-#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/ADT/Statistic.h"
 using namespace llvm;
@@ -56,7 +55,7 @@ namespace {
     // We don't modify the program, so we preserve all analyses
     virtual void getAnalysisUsage(AnalysisUsage &AU) const {
       AU.setPreservesAll();
-    };
+    }
   };
 }
 

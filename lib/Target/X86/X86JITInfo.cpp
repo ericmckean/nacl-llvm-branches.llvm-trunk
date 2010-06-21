@@ -19,6 +19,7 @@
 #include "llvm/Function.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/System/Valgrind.h"
 #include <cstdlib>
 #include <cstring>
 using namespace llvm;
@@ -37,6 +38,10 @@ void X86JITInfo::replaceMachineCodeForFunction(void *Old, void *New) {
   unsigned NewAddr = (intptr_t)New;
   unsigned OldAddr = (intptr_t)OldWord;
   *OldWord = NewAddr - OldAddr - 4; // Emit PC-relative addr of New code.
+
+  // X86 doesn't need to invalidate the processor cache, so just invalidate
+  // Valgrind's cache directly.
+  sys::ValgrindDiscardTranslations(Old, 5);
 }
 
 
@@ -297,6 +302,7 @@ extern "C" {
       push  edx
       push  ecx
       and   esp, -16
+      sub   esp, 16
       mov   eax, dword ptr [ebp+4]
       mov   dword ptr [esp+4], eax
       mov   dword ptr [esp], ebp
@@ -348,7 +354,7 @@ X86CompilationCallback2(intptr_t *StackPtr, intptr_t RetAddr) {
 #endif
 
 #if 0
-  DEBUG(errs() << "In callback! Addr=" << (void*)RetAddr
+  DEBUG(dbgs() << "In callback! Addr=" << (void*)RetAddr
                << " ESP=" << (void*)StackPtr
                << ": Resolving call to function: "
                << TheVM->getFunctionReferencedName((void*)RetAddr) << "\n");
@@ -367,8 +373,9 @@ X86CompilationCallback2(intptr_t *StackPtr, intptr_t RetAddr) {
   // Rewrite the call target... so that we don't end up here every time we
   // execute the call.
 #if defined (X86_64_JIT)
-  if (!isStub)
-    *(intptr_t *)(RetAddr - 0xa) = NewVal;
+  assert(isStub &&
+         "X86-64 doesn't support rewriting non-stub lazy compilation calls:"
+         " the call instruction varies too much.");
 #else
   *(intptr_t *)RetAddr = (intptr_t)(NewVal-RetAddr-4);
 #endif
@@ -391,8 +398,10 @@ X86CompilationCallback2(intptr_t *StackPtr, intptr_t RetAddr) {
       *(intptr_t *)(RetAddr - 0xa) = NewVal;
       ((unsigned char*)RetAddr)[0] = (2 | (4 << 3) | (3 << 6));
     }
+    sys::ValgrindDiscardTranslations((void*)(RetAddr-0xc), 0xd);
 #else
     ((unsigned char*)RetAddr)[-1] = 0xE9;
+    sys::ValgrindDiscardTranslations((void*)(RetAddr-1), 5);
 #endif
   }
 
@@ -426,82 +435,78 @@ X86JITInfo::X86JITInfo(X86TargetMachine &tm) : TM(tm) {
 void *X86JITInfo::emitGlobalValueIndirectSym(const GlobalValue* GV, void *ptr,
                                              JITCodeEmitter &JCE) {
 #if defined (X86_64_JIT)
-  JCE.startGVStub(GV, 8, 8);
-  JCE.emitWordLE((unsigned)(intptr_t)ptr);
-  JCE.emitWordLE((unsigned)(((intptr_t)ptr) >> 32));
+  const unsigned Alignment = 8;
+  uint8_t Buffer[8];
+  uint8_t *Cur = Buffer;
+  MachineCodeEmitter::emitWordLEInto(Cur, (unsigned)(intptr_t)ptr);
+  MachineCodeEmitter::emitWordLEInto(Cur, (unsigned)(((intptr_t)ptr) >> 32));
 #else
-  JCE.startGVStub(GV, 4, 4);
-  JCE.emitWordLE((intptr_t)ptr);
+  const unsigned Alignment = 4;
+  uint8_t Buffer[4];
+  uint8_t *Cur = Buffer;
+  MachineCodeEmitter::emitWordLEInto(Cur, (intptr_t)ptr);
 #endif
-  return JCE.finishGVStub(GV);
+  return JCE.allocIndirectGV(GV, Buffer, sizeof(Buffer), Alignment);
 }
 
-void *X86JITInfo::emitFunctionStub(const Function* F, void *Fn,
+TargetJITInfo::StubLayout X86JITInfo::getStubLayout() {
+  // The 64-bit stub contains:
+  //   movabs r10 <- 8-byte-target-address  # 10 bytes
+  //   call|jmp *r10  # 3 bytes
+  // The 32-bit stub contains a 5-byte call|jmp.
+  // If the stub is a call to the compilation callback, an extra byte is added
+  // to mark it as a stub.
+  StubLayout Result = {14, 4};
+  return Result;
+}
+
+void *X86JITInfo::emitFunctionStub(const Function* F, void *Target,
                                    JITCodeEmitter &JCE) {
   // Note, we cast to intptr_t here to silence a -pedantic warning that 
   // complains about casting a function pointer to a normal pointer.
 #if defined (X86_32_JIT) && !defined (_MSC_VER)
-  bool NotCC = (Fn != (void*)(intptr_t)X86CompilationCallback &&
-                Fn != (void*)(intptr_t)X86CompilationCallback_SSE);
+  bool NotCC = (Target != (void*)(intptr_t)X86CompilationCallback &&
+                Target != (void*)(intptr_t)X86CompilationCallback_SSE);
 #else
-  bool NotCC = Fn != (void*)(intptr_t)X86CompilationCallback;
+  bool NotCC = Target != (void*)(intptr_t)X86CompilationCallback;
 #endif
+  JCE.emitAlignment(4);
+  void *Result = (void*)JCE.getCurrentPCValue();
   if (NotCC) {
 #if defined (X86_64_JIT)
-    JCE.startGVStub(F, 13, 4);
     JCE.emitByte(0x49);          // REX prefix
     JCE.emitByte(0xB8+2);        // movabsq r10
-    JCE.emitWordLE((unsigned)(intptr_t)Fn);
-    JCE.emitWordLE((unsigned)(((intptr_t)Fn) >> 32));
+    JCE.emitWordLE((unsigned)(intptr_t)Target);
+    JCE.emitWordLE((unsigned)(((intptr_t)Target) >> 32));
     JCE.emitByte(0x41);          // REX prefix
     JCE.emitByte(0xFF);          // jmpq *r10
     JCE.emitByte(2 | (4 << 3) | (3 << 6));
 #else
-    JCE.startGVStub(F, 5, 4);
     JCE.emitByte(0xE9);
-    JCE.emitWordLE((intptr_t)Fn-JCE.getCurrentPCValue()-4);
+    JCE.emitWordLE((intptr_t)Target-JCE.getCurrentPCValue()-4);
 #endif
-    return JCE.finishGVStub(F);
+    return Result;
   }
 
 #if defined (X86_64_JIT)
-  JCE.startGVStub(F, 14, 4);
   JCE.emitByte(0x49);          // REX prefix
   JCE.emitByte(0xB8+2);        // movabsq r10
-  JCE.emitWordLE((unsigned)(intptr_t)Fn);
-  JCE.emitWordLE((unsigned)(((intptr_t)Fn) >> 32));
+  JCE.emitWordLE((unsigned)(intptr_t)Target);
+  JCE.emitWordLE((unsigned)(((intptr_t)Target) >> 32));
   JCE.emitByte(0x41);          // REX prefix
   JCE.emitByte(0xFF);          // callq *r10
   JCE.emitByte(2 | (2 << 3) | (3 << 6));
 #else
-  JCE.startGVStub(F, 6, 4);
   JCE.emitByte(0xE8);   // Call with 32 bit pc-rel destination...
 
-  JCE.emitWordLE((intptr_t)Fn-JCE.getCurrentPCValue()-4);
+  JCE.emitWordLE((intptr_t)Target-JCE.getCurrentPCValue()-4);
 #endif
 
   // This used to use 0xCD, but that value is used by JITMemoryManager to
   // initialize the buffer with garbage, which means it may follow a
   // noreturn function call, confusing X86CompilationCallback2.  PR 4929.
   JCE.emitByte(0xCE);   // Interrupt - Just a marker identifying the stub!
-  return JCE.finishGVStub(F);
-}
-
-void X86JITInfo::emitFunctionStubAtAddr(const Function* F, void *Fn, void *Stub,
-                                        JITCodeEmitter &JCE) {
-  // Note, we cast to intptr_t here to silence a -pedantic warning that 
-  // complains about casting a function pointer to a normal pointer.
-  JCE.startGVStub(F, Stub, 5);
-  JCE.emitByte(0xE9);
-#if defined (X86_64_JIT) && !defined (NDEBUG)
-  // Yes, we need both of these casts, or some broken versions of GCC (4.2.4)
-  // get the signed-ness of the expression wrong.  Go figure.
-  intptr_t Displacement = (intptr_t)Fn - (intptr_t)JCE.getCurrentPCValue() - 5;
-  assert(((Displacement << 32) >> 32) == Displacement
-         && "PIC displacement does not fit in displacement field!");
-#endif
-  JCE.emitWordLE((intptr_t)Fn-JCE.getCurrentPCValue()-4);
-  JCE.finishGVStub(F);
+  return Result;
 }
 
 /// getPICJumpTableEntry - Returns the value of the jumptable entry for the

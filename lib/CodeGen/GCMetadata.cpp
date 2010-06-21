@@ -17,6 +17,8 @@
 #include "llvm/Pass.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/Function.h"
+#include "llvm/MC/MCSymbol.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace llvm;
@@ -92,7 +94,7 @@ GCStrategy *GCModuleInfo::getOrCreateStrategy(const Module *M,
     }
   }
  
-  errs() << "unsupported GC: " << Name << "\n";
+  dbgs() << "unsupported GC: " << Name << "\n";
   llvm_unreachable(0);
 }
 
@@ -149,30 +151,31 @@ static const char *DescKind(GC::PointKind Kind) {
 }
 
 bool Printer::runOnFunction(Function &F) {
-  if (!F.hasGC()) {
-    GCFunctionInfo *FD = &getAnalysis<GCModuleInfo>().getFunctionInfo(F);
+  if (F.hasGC()) return false;
+  
+  GCFunctionInfo *FD = &getAnalysis<GCModuleInfo>().getFunctionInfo(F);
+  
+  OS << "GC roots for " << FD->getFunction().getNameStr() << ":\n";
+  for (GCFunctionInfo::roots_iterator RI = FD->roots_begin(),
+                                      RE = FD->roots_end(); RI != RE; ++RI)
+    OS << "\t" << RI->Num << "\t" << RI->StackOffset << "[sp]\n";
+  
+  OS << "GC safe points for " << FD->getFunction().getNameStr() << ":\n";
+  for (GCFunctionInfo::iterator PI = FD->begin(),
+                                PE = FD->end(); PI != PE; ++PI) {
     
-    OS << "GC roots for " << FD->getFunction().getNameStr() << ":\n";
-    for (GCFunctionInfo::roots_iterator RI = FD->roots_begin(),
-                                        RE = FD->roots_end(); RI != RE; ++RI)
-      OS << "\t" << RI->Num << "\t" << RI->StackOffset << "[sp]\n";
+    OS << "\t" << PI->Label->getName() << ": "
+       << DescKind(PI->Kind) << ", live = {";
     
-    OS << "GC safe points for " << FD->getFunction().getNameStr() << ":\n";
-    for (GCFunctionInfo::iterator PI = FD->begin(),
-                                  PE = FD->end(); PI != PE; ++PI) {
-      
-      OS << "\tlabel " << PI->Num << ": " << DescKind(PI->Kind) << ", live = {";
-      
-      for (GCFunctionInfo::live_iterator RI = FD->live_begin(PI),
-                                         RE = FD->live_end(PI);;) {
-        OS << " " << RI->Num;
-        if (++RI == RE)
-          break;
-        OS << ",";
-      }
-      
-      OS << " }\n";
+    for (GCFunctionInfo::live_iterator RI = FD->live_begin(PI),
+                                       RE = FD->live_end(PI);;) {
+      OS << " " << RI->Num;
+      if (++RI == RE)
+        break;
+      OS << ",";
     }
+    
+    OS << " }\n";
   }
   
   return false;

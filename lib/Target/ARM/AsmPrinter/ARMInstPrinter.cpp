@@ -31,7 +31,6 @@ extern cl::opt<bool> FlagSfiStore;
 // Include the auto-generated portion of the assembly writer.
 #define MachineInstr MCInst
 #define ARMAsmPrinter ARMInstPrinter  // FIXME: REMOVE.
-#define NO_ASM_WRITER_BOILERPLATE
 #include "ARMGenAsmWriter.inc"
 #undef MachineInstr
 #undef ARMAsmPrinter
@@ -69,7 +68,7 @@ void ARMInstPrinter::printOperand(const MCInst *MI, unsigned OpNo,
   } else {
     assert((Modifier == 0 || Modifier[0] == 0) && "No modifiers supported");
     assert(Op.isExpr() && "unknown operand kind in printOperand");
-    Op.getExpr()->print(O, &MAI);
+    O << *Op.getExpr();
   }
 }
 
@@ -333,6 +332,12 @@ void ARMInstPrinter::printPredicateOperand(const MCInst *MI, unsigned OpNum) {
     O << ARMCondCodeToString(CC);
 }
 
+void ARMInstPrinter::printMandatoryPredicateOperand(const MCInst *MI, 
+                                                    unsigned OpNum) {
+  ARMCC::CondCodes CC = (ARMCC::CondCodes)MI->getOperand(OpNum).getImm();
+  O << ARMCondCodeToString(CC);
+}
+
 void ARMInstPrinter::printSBitModifierOperand(const MCInst *MI, unsigned OpNum){
   if (MI->getOperand(OpNum).getReg()) {
     assert(MI->getOperand(OpNum).getReg() == ARM::CPSR &&
@@ -357,4 +362,8 @@ void ARMInstPrinter::printNoHashImmediate(const MCInst *MI, unsigned OpNum) {
 void ARMInstPrinter::printPCLabel(const MCInst *MI, unsigned OpNum) {
   // FIXME: remove this.
   abort();
+}
+
+void ARMInstPrinter::printThumbS4ImmOperand(const MCInst *MI, unsigned OpNum) {
+  O << "#" <<  MI->getOperand(OpNum).getImm() * 4;
 }
