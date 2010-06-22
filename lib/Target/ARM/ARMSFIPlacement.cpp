@@ -173,6 +173,9 @@ static bool IsDangerousStore(const MachineInstr &MI, int *AddrIdx) {
   case ARM::STRH_PRE:
   case ARM::STRH_POST:
   case ARM::STRD:
+  case ARM::STREX:
+  case ARM::STREXB:
+  case ARM::STREXH:
     *AddrIdx = 2;
     break;
   }
