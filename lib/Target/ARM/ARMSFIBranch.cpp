@@ -121,9 +121,6 @@ bool ARMSFIBranch::SandboxBranchesInBlock(MachineBasicBlock &MBB) {
        ++MBBI) {
     MachineInstr &MI = *MBBI;
 
-    // TODO: move this into a validator pass
-    assert(MI.getOpcode() != ARM::INLINEASM);
-
     if (IsReturn(MI)) {
       ARMCC::CondCodes Pred = GetPredicate(MI);
       BuildMI(MBB, MBBI, MI.getDebugLoc(),
