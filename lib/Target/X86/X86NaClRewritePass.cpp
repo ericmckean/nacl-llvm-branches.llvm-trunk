@@ -589,6 +589,12 @@ bool X86NaClRewritePass::PassSandboxingPopRbp(MachineBasicBlock &MBB,
 }
 
 
+static void UnexpectedControlFlow(const MachineInstr &MI) {
+  dbgs() << "@PassSandboxingControlFlow UNEXPECTED CONTROL FLOW CHANGE\n\n";
+  DumpInstructionVerbose(MI);
+  assert(false);
+}
+
 /*
  * Sandboxes stack changes (64 bit only)
  */
@@ -608,9 +614,7 @@ bool X86NaClRewritePass::PassSandboxingControlFlow(MachineBasicBlock &MBB,
     const unsigned Opcode = MI.getOpcode();
     switch (Opcode) {
      default:
-      dbgs() << "@PassSandboxingStack UNEXPECTED CONTROL FLOW CHANGE\n\n";
-      DumpInstructionVerbose(MI);
-      assert(0);
+       UnexpectedControlFlow(MI);
      case X86::CALL32r:
 // Made unnecessary by pattern matching
 #if 0
@@ -653,6 +657,16 @@ bool X86NaClRewritePass::PassSandboxingControlFlow(MachineBasicBlock &MBB,
       }
       Modified = true;
       break;
+
+     case X86::RETI:
+       if (is64Bit) {
+         // Not yet sure when this is needed.
+         UnexpectedControlFlow(MI);
+       } else {
+         MI.setDesc(TII->get(X86::NACL_RETI32));
+       }
+       Modified = true;
+       break;
 
      case X86::JMP64r:{
        MI.setDesc(TII->get(X86::NACL_JMP64r));
