@@ -27,6 +27,12 @@ let isTerminator = 1, isReturn = 1, isBarrier = 1,
                     "pop %ecx\n\tnacljmp %ecx",
                     [(X86retflag 0)]>, 
                     Requires<[IsNaCl32]>;
+  def NACL_RETI32   : I<0, Pseudo, (outs), (ins i16imm:$amt, variable_ops),
+                    "pop %ecx\n"
+                    "\tadd $amt,%esp\n"
+                    "\tnacljmp %ecx",
+                    []>, 
+                    Requires<[IsNaCl32]>;
 }
 
 let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
