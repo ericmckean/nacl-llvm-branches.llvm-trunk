@@ -1312,12 +1312,15 @@ void X86RegisterInfo::emitEpilogue(MachineFunction &MF,
       // @LOCALMOD-START
     } else if (RetOpcode == X86::NACL_TCRETURNdi ||
                RetOpcode == X86::NACL_TCRETURNdi64) {
+      // This particular (direct jump) is currently the same across NaCl
+      // and non-NaCl targets, but a separate case is added for consistency.
       BuildMI(MBB, MBBI, DL, TII.get((RetOpcode == X86::TCRETURNdi)
                                      ? X86::NACL_TAILJMPd
                                      : X86::NACL_TAILJMPd64)).
         addGlobalAddress(JumpTarget.getGlobal(), JumpTarget.getOffset(),
                          JumpTarget.getTargetFlags());
     } else if (RetOpcode == X86::NACL_TCRETURNri) {
+      // These NACL indirect jumps require sandboxing.
       BuildMI(MBB, MBBI, DL, TII.get(X86::NACL_TAILJMPr),
               JumpTarget.getReg());
     } else if (RetOpcode == X86::NACL_TCRETURNri64) {

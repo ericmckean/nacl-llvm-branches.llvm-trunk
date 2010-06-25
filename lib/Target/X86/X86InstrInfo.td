@@ -4369,7 +4369,12 @@ def : Pat<(store (i32 (X86Wrapper tblockaddress:$src)), addr:$dst),
 // tailcall stuff
 def : Pat<(X86tcret GR32_TC:$dst, imm:$off),
           (TCRETURNri GR32_TC:$dst, imm:$off)>,
-	  Requires<[In32BitMode, NotNaCl]>; // @LOCALMOD
+      // @LOCALMOD-START 
+      // These are marked NotNaCl so that there is no ambiguity about
+      // whether this pattern should fire, or the NACL_TCRETURN[64]ri.
+	  Requires<[In32BitMode, NotNaCl]>;
+      // @LOCALMOD-END
+      
 
 def : Pat<(X86tcret (load addr:$dst), imm:$off),
           (TCRETURNmi addr:$dst, imm:$off)>,
