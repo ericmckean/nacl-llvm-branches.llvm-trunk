@@ -1926,7 +1926,11 @@ def : Pat<(X86call (i64 texternalsym:$dst)),
 // tailcall stuff
 def : Pat<(X86tcret GR64_TC:$dst, imm:$off),
           (TCRETURNri64 GR64_TC:$dst, imm:$off)>,
-	  Requires<[In64BitMode, NotNaCl]>; // @LOCALMOD
+      // @LOCALMOD-START
+      // These are marked NotNaCl as more of a precaution. Since NaCl 
+      // uses 32-bit pointers we should not expect this to fire for NaCl. 
+	  Requires<[In64BitMode, NotNaCl]>;
+      // @LOCALMOD-END
 
 def : Pat<(X86tcret (load addr:$dst), imm:$off),
           (TCRETURNmi64 addr:$dst, imm:$off)>,
