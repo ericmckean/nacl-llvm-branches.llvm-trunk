@@ -3948,7 +3948,7 @@ def CMPXCHG8B : I<0xC7, MRM1m, (outs), (ins i64mem:$dst),
 
 // Optimized codegen when the non-memory output is not used.
 // FIXME: Use normal add / sub instructions and add lock prefix dynamically.
-let Defs = [EFLAGS] in {
+let Defs = [EFLAGS], mayStore = 1, mayLoad = 1 in {
 def LOCK_ADD8mr  : I<0x00, MRMDestMem, (outs), (ins i8mem:$dst, GR8:$src2),
                     "lock\n\t"
                     "add{b}\t{$src2, $dst|$dst, $src2}", []>, LOCK;
