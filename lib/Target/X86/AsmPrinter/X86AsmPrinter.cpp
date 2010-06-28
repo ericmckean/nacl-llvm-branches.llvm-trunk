@@ -34,7 +34,6 @@
 #include "llvm/CodeGen/MachineJumpTableInfo.h"
 #include "llvm/CodeGen/MachineModuleInfoImpls.h"
 #include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
-#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FormattedStream.h"
 #include "llvm/Target/Mangler.h"
@@ -42,8 +41,6 @@
 #include "llvm/Target/TargetRegistry.h"
 #include "llvm/ADT/SmallString.h"
 using namespace llvm;
-
-cl::opt<bool> FlagSfiAlignFuncEnd("sfi-align-func-end");
 
 //===----------------------------------------------------------------------===//
 // Primitive Helper Functions.
@@ -475,7 +472,7 @@ bool X86AsmPrinter::PrintAsmMemoryOperand(const MachineInstr *MI,
 }
 
 void X86AsmPrinter::EmitFunctionBodyEnd() {
-  if (FlagSfiAlignFuncEnd)
+  if (Subtarget->isTargetNaCl())
     EmitAlignment(5);
 }
 
