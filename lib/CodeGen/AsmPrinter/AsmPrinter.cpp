@@ -425,7 +425,6 @@ void AsmPrinter::EmitFunctionBody() {
         printLabelInst(II);
         break;
       case TargetOpcode::INLINEASM:
-        assert(0 && "no inline assembler support in pnacl"); // @LOCALMOD
         printInlineAsm(II);
         break;
       case TargetOpcode::IMPLICIT_DEF:
