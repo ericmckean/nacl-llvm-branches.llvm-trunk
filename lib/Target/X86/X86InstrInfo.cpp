@@ -232,8 +232,10 @@ X86InstrInfo::X86InstrInfo(X86TargetMachine &tm)
     { X86::BT16ri8,     X86::BT16mi8, 1, 0 },
     { X86::BT32ri8,     X86::BT32mi8, 1, 0 },
     { X86::BT64ri8,     X86::BT64mi8, 1, 0 },
-    { X86::CALL32r,     X86::CALL32m, 1, 0 },
-    { X86::CALL64r,     X86::CALL64m, 1, 0 },
+    // @LOCALMOD-START
+    // { X86::CALL32r,     X86::CALL32m, 1, 0 },
+    // { X86::CALL64r,     X86::CALL64m, 1, 0 },
+    // @LOCALMOD-END
     { X86::CMP16ri,     X86::CMP16mi, 1, 0 },
     { X86::CMP16ri8,    X86::CMP16mi8, 1, 0 },
     { X86::CMP16rr,     X86::CMP16mr, 1, 0 },
@@ -260,8 +262,10 @@ X86InstrInfo::X86InstrInfo(X86TargetMachine &tm)
     { X86::IMUL32r,     X86::IMUL32m, 1, 0 },
     { X86::IMUL64r,     X86::IMUL64m, 1, 0 },
     { X86::IMUL8r,      X86::IMUL8m, 1, 0 },
-    { X86::JMP32r,      X86::JMP32m, 1, 0 },
-    { X86::JMP64r,      X86::JMP64m, 1, 0 },
+    // @LOCALMOD-START
+    //{ X86::JMP32r,      X86::JMP32m, 1, 0 },
+    //{ X86::JMP64r,      X86::JMP64m, 1, 0 },
+    // @LOCALMOD-END
     { X86::MOV16ri,     X86::MOV16mi, 0, 0 },
     { X86::MOV16rr,     X86::MOV16mr, 0, 0 },
     { X86::MOV32ri,     X86::MOV32mi, 0, 0 },

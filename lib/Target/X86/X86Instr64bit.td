@@ -147,16 +147,17 @@ let isCall = 1 in
     def CALL64pcrel32 : Ii32<0xE8, RawFrm,
                           (outs), (ins i64i32imm_pcrel:$dst, variable_ops),
                           "call{q}\t$dst", []>,
-                        Requires<[In64BitMode, NotWin64]>;
-    def CALL64r       : I<0xFF, MRM2r, (outs), (ins GR64:$dst, variable_ops),
+                        Requires<[In64BitMode, NotWin64, NotNaCl]>; // @LOCALMOD
+    def CALL64r     : I<0xFF, MRM2r, (outs), (ins GR64:$dst, variable_ops),
                           "call{q}\t{*}$dst", [(X86call GR64:$dst)]>,
                         Requires<[NotWin64]>;
     def CALL64m       : I<0xFF, MRM2m, (outs), (ins i64mem:$dst, variable_ops),
                           "call{q}\t{*}$dst", [(X86call (loadi64 addr:$dst))]>,
-                        Requires<[NotWin64]>;
+                        Requires<[NotWin64, NotNaCl]>;   // @LOCALMOD
                         
     def FARCALL64   : RI<0xFF, MRM3m, (outs), (ins opaque80mem:$dst),
-                         "lcall{q}\t{*}$dst", []>;
+                         "lcall{q}\t{*}$dst", []>,
+                        Requires<[NotNaCl]>; // @LOCALMOD
   }
 
   // FIXME: We need to teach codegen about single list of call-clobbered 
@@ -219,9 +220,11 @@ let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
   def JMP64r     : I<0xFF, MRM4r, (outs), (ins GR64:$dst), "jmp{q}\t{*}$dst",
                      [(brind GR64:$dst)]>;
   def JMP64m     : I<0xFF, MRM4m, (outs), (ins i64mem:$dst), "jmp{q}\t{*}$dst",
-                     [(brind (loadi64 addr:$dst))]>;
+                     [(brind (loadi64 addr:$dst))]>,
+                   Requires<[NotNaCl]>; // @LOCALMOD
   def FARJMP64   : RI<0xFF, MRM5m, (outs), (ins opaque80mem:$dst),
-                      "ljmp{q}\t{*}$dst", []>;
+                     "ljmp{q}\t{*}$dst", []>,
+                   Requires<[NotNaCl]>;  // @LOCALMOD
 }
 
 //===----------------------------------------------------------------------===//
@@ -1685,12 +1688,14 @@ def TLS_addr64 : I<0, Pseudo, (outs), (ins lea64mem:$sym),
 let AddedComplexity = 5, isCodeGenOnly = 1 in
 def MOV64GSrm : RI<0x8B, MRMSrcMem, (outs GR64:$dst), (ins i64mem:$src),
                  "movq\t%gs:$src, $dst",
-                 [(set GR64:$dst, (gsload addr:$src))]>, SegGS;
+                 [(set GR64:$dst, (gsload addr:$src))]>, SegGS,
+                 Requires<[NotNaCl]>; // @LOCALMOD
 
 let AddedComplexity = 5, isCodeGenOnly = 1 in
 def MOV64FSrm : RI<0x8B, MRMSrcMem, (outs GR64:$dst), (ins i64mem:$src),
                  "movq\t%fs:$src, $dst",
-                 [(set GR64:$dst, (fsload addr:$src))]>, SegFS;
+                 [(set GR64:$dst, (fsload addr:$src))]>, SegFS,
+                 Requires<[NotNaCl]>; // @LOCALMOD
 
 //===----------------------------------------------------------------------===//
 // Atomic Instructions
@@ -1909,9 +1914,9 @@ def : Pat<(store (i64 (X86Wrapper tblockaddress:$src)), addr:$dst),
 // Direct PC relative function call for small code model. 32-bit displacement
 // sign extended to 64-bit.
 def : Pat<(X86call (i64 tglobaladdr:$dst)),
-          (CALL64pcrel32 tglobaladdr:$dst)>, Requires<[NotWin64]>;
+          (CALL64pcrel32 tglobaladdr:$dst)>, Requires<[NotWin64,NotNaCl]>;
 def : Pat<(X86call (i64 texternalsym:$dst)),
-          (CALL64pcrel32 texternalsym:$dst)>, Requires<[NotWin64]>;
+          (CALL64pcrel32 texternalsym:$dst)>, Requires<[NotWin64,NotNaCl]>;
 
 def : Pat<(X86call (i64 tglobaladdr:$dst)),
           (WINCALL64pcrel32 tglobaladdr:$dst)>, Requires<[IsWin64]>;

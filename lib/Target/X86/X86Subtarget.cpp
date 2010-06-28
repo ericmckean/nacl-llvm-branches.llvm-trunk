@@ -292,7 +292,7 @@ X86Subtarget::X86Subtarget(const std::string &TT, const std::string &FS,
   // FIXME: this is a known good value for Yonah. How about others?
   , MaxInlineSizeThreshold(128)
   , Is64Bit(is64Bit)
-  , TargetType(isELF) { // Default to ELF unless otherwise specified.
+  , TargetType(isGenericELF) { // Default to ELF unless otherwise specified.
 
   // default to hard float ABI
   if (FloatABIType == FloatABI::Default)
@@ -343,7 +343,10 @@ X86Subtarget::X86Subtarget(const std::string &TT, const std::string &FS,
         DarwinVers = 8;  // Minimum supported darwin is Tiger.
     } else if (TT.find("linux") != std::string::npos) {
       // Linux doesn't imply ELF, but we don't currently support anything else.
-      TargetType = isELF;
+      TargetType = isGenericELF;
+      TargetType = isNativeClient; // @LOCALMOD: Remove when scripts are fixed
+    } else if (TT.find("nacl") != std::string::npos) { // @LOCALMOD
+      TargetType = isNativeClient;
     } else if (TT.find("cygwin") != std::string::npos) {
       TargetType = isCygwin;
     } else if (TT.find("mingw") != std::string::npos) {

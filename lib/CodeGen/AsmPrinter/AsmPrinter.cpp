@@ -292,7 +292,11 @@ void AsmPrinter::EmitFunctionHeader() {
   EmitVisibility(CurrentFnSym, F->getVisibility());
 
   EmitLinkage(F->getLinkage(), CurrentFnSym);
-  EmitAlignment(MF->getAlignment(), F);
+  // @LOCALMOD-START
+  // TODO(robertm): move alignment decissions to the backend
+  //                16 for arm and 32 for x86
+  EmitAlignment(5, /* MF->getAlignment() */ F);
+  // @LOCALMOD-END
 
   if (MAI->hasDotTypeDotSizeDirective())
     OutStreamer.EmitSymbolAttribute(CurrentFnSym, MCSA_ELF_TypeFunction);
@@ -393,10 +397,19 @@ void AsmPrinter::EmitFunctionBody() {
   bool HasAnyRealCode = false;
   for (MachineFunction::const_iterator I = MF->begin(), E = MF->end();
        I != E; ++I) {
+    // @LOCALMOD-START
+    // NOTE: using const_cast to not have to change prototype
+    //       cast is safe
+    if(I->isLandingPad() || I->hasAddressTaken()) {
+      const MachineBasicBlock* mbb = I;
+      const_cast<MachineBasicBlock*>(mbb)->setAlignment(32);
+    }
+    // @LOCALMOD-END
     // Print a label for the basic block.
     EmitBasicBlockStart(I);
     for (MachineBasicBlock::const_iterator II = I->begin(), IE = I->end();
          II != IE; ++II) {
+      
       // Print the assembly for the instruction.
       if (!II->isLabel())
         HasAnyRealCode = true;
@@ -416,6 +429,9 @@ void AsmPrinter::EmitFunctionBody() {
         printLabelInst(II);
         break;
       case TargetOpcode::INLINEASM:
+        // This currently causes problems on the ARM side when we are building
+        // libgcc
+        // assert(0 && "no inline assembler support in pnacl"); // @LOCALMOD
         printInlineAsm(II);
         break;
       case TargetOpcode::IMPLICIT_DEF:
@@ -648,6 +664,7 @@ void AsmPrinter::EmitConstantPool() {
 /// by the current function to the current output stream.  
 ///
 void AsmPrinter::EmitJumpTableInfo() {
+  O << "# @LOCALMOD: JUMPTABLE\n"; // @LOCALMOD
   const MachineJumpTableInfo *MJTI = MF->getJumpTableInfo();
   if (MJTI == 0) return;
   if (MJTI->getEntryKind() == MachineJumpTableInfo::EK_Inline) return;
@@ -666,7 +683,15 @@ void AsmPrinter::EmitJumpTableInfo() {
       // in discardable section
       // FIXME: this isn't the right predicate, should be based on the MCSection
       // for the function.
-      F->isWeakForLinker()) {
+      // @LOCALMOD-START
+      // the original code is a hack
+      // jumptables usually end up in .rodata
+      // but for functions with weak linkage there is a chance that the are no needed.
+      // So in order to be discard the function AND the jumptable they keep them both in .text
+      // This fix only works if we never discard weak functions. 
+      // This is guaranteed because the bitcode linker already throws out unused ones.
+      // @LOCALMOD-END
+      false /* F->isWeakForLinker()  */) { // @LOCALMOD
     OutStreamer.SwitchSection(getObjFileLowering().SectionForGlobal(F,Mang,TM));
   } else {
     // Otherwise, drop it in the readonly section.
@@ -1813,4 +1838,3 @@ GCMetadataPrinter *AsmPrinter::GetOrCreateGCPrinter(GCStrategy *S) {
   llvm_report_error("no GCMetadataPrinter registered for GC: " + Twine(Name));
   return 0;
 }
-

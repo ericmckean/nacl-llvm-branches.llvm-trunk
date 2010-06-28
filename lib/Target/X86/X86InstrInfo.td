@@ -316,6 +316,10 @@ def In32BitMode  : Predicate<"!Subtarget->is64Bit()">;
 def In64BitMode  : Predicate<"Subtarget->is64Bit()">;
 def IsWin64      : Predicate<"Subtarget->isTargetWin64()">;
 def NotWin64     : Predicate<"!Subtarget->isTargetWin64()">;
+def IsNaCl       : Predicate<"Subtarget->isTargetNaCl()">;     // @LOCALMOD
+def IsNaCl32     : Predicate<"Subtarget->isTargetNaCl32()">;   // @LOCALMOD
+def IsNaCl64     : Predicate<"Subtarget->isTargetNaCl64()">;   // @LOCALMOD
+def NotNaCl      : Predicate<"!Subtarget->isTargetNaCl()">;    // @LOCALMOD
 def SmallCode    : Predicate<"TM.getCodeModel() == CodeModel::Small">;
 def KernelCode   : Predicate<"TM.getCodeModel() == CodeModel::Kernel">;
 def FarData      : Predicate<"TM.getCodeModel() != CodeModel::Small &&"
@@ -516,6 +520,8 @@ def shld : PatFrag<(ops node:$src1, node:$amt1, node:$src2, node:$amt2),
 // Instruction list...
 //
 
+
+
 // ADJCALLSTACKDOWN/UP implicitly use/def ESP because they may be expanded into
 // a stack adjustment and the codegen must know that they may modify the stack
 // pointer before prolog-epilog rewriting occurs.
@@ -586,6 +592,7 @@ let neverHasSideEffects = 1, isNotDuplicable = 1, Uses = [ESP] in
 // Return instructions.
 let isTerminator = 1, isReturn = 1, isBarrier = 1,
     hasCtrlDep = 1, FPForm = SpecialFP, FPFormBits = SpecialFP.Value in {
+   // @LOCALMOD TODO: indicate that rcx is clobbered after NACL rewrite of RET
   def RET    : I   <0xC3, RawFrm, (outs), (ins variable_ops),
                     "ret",
                     [(X86retflag 0)]>;
@@ -643,9 +650,9 @@ let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
   def JMP32r     : I<0xFF, MRM4r, (outs), (ins GR32:$dst), "jmp{l}\t{*}$dst",
                      [(brind GR32:$dst)]>;
   def JMP32m     : I<0xFF, MRM4m, (outs), (ins i32mem:$dst), "jmp{l}\t{*}$dst",
-                     [(brind (loadi32 addr:$dst))]>;
-                     
-  def FARJMP16i  : Iseg16<0xEA, RawFrm, (outs), 
+                     [(brind (loadi32 addr:$dst))]>,
+                   Requires<[NotNaCl]>;  // @LOCALMOD
+  def FARJMP16i  : Iseg16<0xEA, RawFrm, (outs),
                           (ins i16imm:$seg, i16imm:$off),
                           "ljmp{w}\t$seg, $off", []>, OpSize;
   def FARJMP32i  : Iseg32<0xEA, RawFrm, (outs),
@@ -673,20 +680,23 @@ let isCall = 1 in
   // a use to prevent stack-pointer assignments that appear immediately
   // before calls from potentially appearing dead. Uses for argument
   // registers are added manually.
-  let Defs = [EAX, ECX, EDX, FP0, FP1, FP2, FP3, FP4, FP5, FP6, ST0,
+  let Defs = [EAX, ECX, EDX,
+              FP0, FP1, FP2, FP3, FP4, FP5, FP6, ST0,
               MM0, MM1, MM2, MM3, MM4, MM5, MM6, MM7,
               XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
               XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15, EFLAGS],
       Uses = [ESP] in {
     def CALLpcrel32 : Ii32PCRel<0xE8, RawFrm,
                            (outs), (ins i32imm_pcrel:$dst,variable_ops),
-                           "call\t$dst", []>;
+                           "call\t$dst", []>,
+                      Requires<[NotNaCl]>; // @LOCALMOD
     def CALL32r     : I<0xFF, MRM2r, (outs), (ins GR32:$dst, variable_ops),
-                        "call\t{*}$dst", [(X86call GR32:$dst)]>;
+                        "call\t{*}$dst", [(X86call GR32:$dst)]>,
+                      Requires<[NotNaCl]>; // @LOCALMOD
     def CALL32m     : I<0xFF, MRM2m, (outs), (ins i32mem:$dst, variable_ops),
-                        "call\t{*}$dst", [(X86call (loadi32 addr:$dst))]>;
-  
-    def FARCALL16i  : Iseg16<0x9A, RawFrm, (outs), 
+                        "call\t{*}$dst", [(X86call (loadi32 addr:$dst))]>,
+                      Requires<[NotNaCl]>; // @LOCALMOD
+    def FARCALL16i  : Iseg16<0x9A, RawFrm, (outs),
                              (ins i16imm:$seg, i16imm:$off),
                              "lcall{w}\t$seg, $off", []>, OpSize;
     def FARCALL32i  : Iseg32<0x9A, RawFrm, (outs),
@@ -707,7 +717,11 @@ def ENTER : I<0xC8, RawFrm, (outs), (ins i16imm:$len, i8imm:$lvl),
 // Tail call stuff.
 
 let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1 in
-  let Defs = [EAX, ECX, EDX, FP0, FP1, FP2, FP3, FP4, FP5, FP6, ST0,
+  let Defs = [EAX, ECX, EDX,
+//@ LOCALMOD-START
+              ESI, EDI, R8D, R9D, R10D, R11D, // if x64 is forced to use 32-bit
+//@ LOCALMOD-END
+              FP0, FP1, FP2, FP3, FP4, FP5, FP6, ST0,
               MM0, MM1, MM2, MM3, MM4, MM5, MM6, MM7,
               XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
               XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15, EFLAGS],
@@ -3805,12 +3819,14 @@ def TLS_addr32 : I<0, Pseudo, (outs), (ins lea32mem:$sym),
 let AddedComplexity = 5, isCodeGenOnly = 1 in
 def GS_MOV32rm : I<0x8B, MRMSrcMem, (outs GR32:$dst), (ins i32mem:$src),
                    "movl\t%gs:$src, $dst",
-                   [(set GR32:$dst, (gsload addr:$src))]>, SegGS;
+                   [(set GR32:$dst, (gsload addr:$src))]>, SegGS,
+                   Requires<[NotNaCl]>; // @LOCALMOD
 
 let AddedComplexity = 5, isCodeGenOnly = 1 in
 def FS_MOV32rm : I<0x8B, MRMSrcMem, (outs GR32:$dst), (ins i32mem:$src),
                    "movl\t%fs:$src, $dst",
-                   [(set GR32:$dst, (fsload addr:$src))]>, SegFS;
+                   [(set GR32:$dst, (fsload addr:$src))]>, SegFS,
+                   Requires<[NotNaCl]>; // @LOCALMOD
 
 //===----------------------------------------------------------------------===//
 // EH Pseudo Instructions
@@ -4373,11 +4389,11 @@ def : Pat<(X86tcret (i32 texternalsym:$dst), imm:$off),
 
 // Normal calls, with various flavors of addresses.
 def : Pat<(X86call (i32 tglobaladdr:$dst)),
-          (CALLpcrel32 tglobaladdr:$dst)>;
+          (CALLpcrel32 tglobaladdr:$dst)>, Requires<[NotNaCl]>;
 def : Pat<(X86call (i32 texternalsym:$dst)),
-          (CALLpcrel32 texternalsym:$dst)>;
+          (CALLpcrel32 texternalsym:$dst)>, Requires<[NotNaCl]>;
 def : Pat<(X86call (i32 imm:$dst)),
-          (CALLpcrel32 imm:$dst)>, Requires<[CallImmAddr]>;
+          (CALLpcrel32 imm:$dst)>, Requires<[CallImmAddr,NotNaCl]>;
 
 // X86 specific add which produces a flag.
 def : Pat<(addc GR32:$src1, GR32:$src2),
@@ -5248,6 +5264,12 @@ include "X86InstrFPStack.td"
 //===----------------------------------------------------------------------===//
 
 include "X86Instr64bit.td"
+
+//===----------------------------------------------------------------------===//
+// NaCl support (@LOCALMOD)
+//===----------------------------------------------------------------------===//
+
+include "X86InstrNaCl.td"
 
 //===----------------------------------------------------------------------===//
 // SIMD support (SSE, MMX and AVX)

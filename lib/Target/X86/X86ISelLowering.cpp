@@ -121,7 +121,8 @@ static TargetLoweringObjectFile *createTLOF(X86TargetMachine &TM) {
     if (TM.getSubtarget<X86Subtarget>().is64Bit())
       return new X8664_MachoTargetObjectFile();
     return new TargetLoweringObjectFileMachO();
-  case X86Subtarget::isELF:
+  case X86Subtarget::isGenericELF:   // @LOCALMOD
+  case X86Subtarget::isNativeClient: // @LOCALMOD
    if (TM.getSubtarget<X86Subtarget>().is64Bit())
      return new X8664_ELFTargetObjectFile(TM);
     return new X8632_ELFTargetObjectFile(TM);
@@ -137,7 +138,11 @@ X86TargetLowering::X86TargetLowering(X86TargetMachine &TM)
   Subtarget = &TM.getSubtarget<X86Subtarget>();
   X86ScalarSSEf64 = Subtarget->hasSSE2();
   X86ScalarSSEf32 = Subtarget->hasSSE1();
-  X86StackPtr = Subtarget->is64Bit() ? X86::RSP : X86::ESP;
+  // LOCALMOD
+  //X86StackPtr = Subtarget->is64Bit() ? X86::RSP : X86::ESP;
+  X86StackPtr = X86::ESP;
+  //X86StackPtrTy = Subtarget->is64Bit() ? MVT::i64 : MVT::i32;
+  X86StackPtrTy = MVT::i32;
 
   RegInfo = TM.getRegisterInfo();
   TD = getTargetData();
@@ -1534,6 +1539,13 @@ X86TargetLowering::LowerFormalArguments(SDValue Chain,
       Fn->getName() == "main")
     FuncInfo->setForceFramePointer(true);
 
+
+  // @LOCALMOD-START
+  if (Subtarget->isTargetNaCl64()) {
+    FuncInfo->setForceFramePointer(true);
+  }
+  // @LOCALMOD-END
+  
   MachineFrameInfo *MFI = MF.getFrameInfo();
   bool Is64Bit = Subtarget->is64Bit();
   bool IsWin64 = Subtarget->isTargetWin64();
@@ -1765,8 +1777,10 @@ X86TargetLowering::LowerMemOpCallTo(SDValue Chain,
                                     ISD::ArgFlagsTy Flags) {
   const unsigned FirstStackArgOffset = (Subtarget->isTargetWin64() ? 32 : 0);
   unsigned LocMemOffset = FirstStackArgOffset + VA.getLocMemOffset();
-  SDValue PtrOff = DAG.getIntPtrConstant(LocMemOffset);
-  PtrOff = DAG.getNode(ISD::ADD, dl, getPointerTy(), StackPtr, PtrOff);
+  // LOCALMOD-START
+  SDValue PtrOff = DAG.getConstant(LocMemOffset, X86StackPtrTy, false);
+  PtrOff = DAG.getNode(ISD::ADD, dl, X86StackPtrTy, StackPtr, PtrOff);
+  // LOCALMOD-END
   if (Flags.isByVal()) {
     return CreateCopyOfByValArgument(Arg, PtrOff, Chain, Flags, DAG, dl);
   }
@@ -1930,7 +1944,8 @@ X86TargetLowering::LowerCall(SDValue Chain, SDValue Callee,
     } else if (!IsSibcall && (!isTailCall || isByVal)) {
       assert(VA.isMemLoc());
       if (StackPtr.getNode() == 0)
-        StackPtr = DAG.getCopyFromReg(Chain, dl, X86StackPtr, getPointerTy());
+        // @LOCALMOD
+        StackPtr = DAG.getCopyFromReg(Chain, dl, X86StackPtr, X86StackPtrTy);
       MemOpChains.push_back(LowerMemOpCallTo(Chain, StackPtr, Arg,
                                              dl, DAG, VA, Flags));
     }
@@ -2039,10 +2054,11 @@ X86TargetLowering::LowerCall(SDValue Chain, SDValue Callee,
           // Copy relative to framepointer.
           SDValue Source = DAG.getIntPtrConstant(VA.getLocMemOffset());
           if (StackPtr.getNode() == 0)
+            // @LOCALMOD-START
             StackPtr = DAG.getCopyFromReg(Chain, dl, X86StackPtr,
-                                          getPointerTy());
-          Source = DAG.getNode(ISD::ADD, dl, getPointerTy(), StackPtr, Source);
-
+                                          X86StackPtrTy);
+          Source = DAG.getNode(ISD::ADD, dl, X86StackPtrTy, StackPtr, Source);
+          // @LOCALMOD-END
           MemOpChains2.push_back(CreateCopyOfByValArgument(Source, FIN,
                                                            ArgChain,
                                                            Flags, DAG, dl));
@@ -5192,6 +5208,15 @@ LowerToTLSGeneralDynamicModel64(GlobalAddressSDNode *GA, SelectionDAG &DAG,
                     X86::RAX, X86II::MO_TLSGD);
 }
 
+// @LOCALMOD-START
+static SDValue
+LowerToTLSNaClModel64(GlobalAddressSDNode *GA, SelectionDAG &DAG,
+                                const EVT PtrVT) {
+  return GetTLSADDR(DAG, DAG.getEntryNode(), GA, NULL, PtrVT,
+                    X86::EAX, X86II::MO_TPOFF);
+}
+// @LOCALMOD-END
+
 // Lower ISD::GlobalTLSAddress using the "initial exec" (for no-pic) or
 // "local exec" model.
 static SDValue LowerToTLSExecModel(GlobalAddressSDNode *GA, SelectionDAG &DAG,
@@ -5253,6 +5278,11 @@ X86TargetLowering::LowerGlobalTLSAddress(SDValue Op, SelectionDAG &DAG) {
 
   TLSModel::Model model = getTLSModel(GV,
                                       getTargetMachine().getRelocationModel());
+
+  // @LOCAMOD-START
+  if (Subtarget->isTargetNaCl64())
+    return LowerToTLSNaClModel64(GA, DAG, getPointerTy());
+  // @LOCALMOD-END
 
   switch (model) {
   case TLSModel::GeneralDynamic:
@@ -5929,6 +5959,9 @@ SDValue X86TargetLowering::EmitCmp(SDValue Op0, SDValue Op1, unsigned X86CC,
 /// if it's possible.
 static SDValue LowerToBT(SDValue And, ISD::CondCode CC,
                          DebugLoc dl, SelectionDAG &DAG) {
+  
+  return SDValue(); // @LOCALMOD disable bt usage for now
+  
   SDValue Op0 = And.getOperand(0);
   SDValue Op1 = And.getOperand(1);
   if (Op0.getOpcode() == ISD::TRUNCATE)
@@ -6455,7 +6488,8 @@ X86TargetLowering::LowerDYNAMIC_STACKALLOC(SDValue Op,
   SDValue Flag;
 
   EVT IntPtr = getPointerTy();
-  EVT SPTy = Subtarget->is64Bit() ? MVT::i64 : MVT::i32;
+  // LOCALMOD
+  EVT SPTy = X86StackPtrTy;
 
   Chain = DAG.getCopyToReg(Chain, dl, X86::EAX, Size, Flag);
   Flag = Chain.getValue(1);
