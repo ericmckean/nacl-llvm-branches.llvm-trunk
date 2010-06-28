@@ -56,6 +56,8 @@ class VISIBILITY_HIDDEN X86AsmPrinter : public AsmPrinter {
 
   virtual void EmitStartOfAsmFile(Module &M);
 
+  virtual void EmitFunctionBodyEnd();
+
   virtual void EmitEndOfAsmFile(Module &M);
   
   virtual void EmitInstruction(const MachineInstr *MI);
