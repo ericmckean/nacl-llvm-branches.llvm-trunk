@@ -108,6 +108,7 @@ def VLDMS_UPD : AXSI5<(outs GPR:$wb), (ins addrmode5:$addr, pred:$p,
 }
 } // mayLoad, hasExtraDefRegAllocReq
 
+
 let mayStore = 1, hasExtraSrcRegAllocReq = 1 in {
 def VSTMD : AXDI5<(outs), (ins addrmode5:$addr, pred:$p, reglist:$srcs,
                            variable_ops), IndexModeNone, IIC_fpStorem,

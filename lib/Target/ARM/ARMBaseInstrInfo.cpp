@@ -35,6 +35,9 @@
 #include "llvm/Support/ErrorHandling.h"
 using namespace llvm;
 
+
+extern cl::opt<bool> FlagSfiStack; // @LOCALMOD
+
 static cl::opt<bool>
 EnableARM3Addr("enable-arm-3-addr-conv", cl::Hidden,
                cl::desc("Enable ARM 2-addr to 3-addr conv"));
@@ -428,6 +431,9 @@ static unsigned getNumJTEntries(const std::vector<MachineJumpTableEntry> &JT,
   return JT[JTI].MBBs.size();
 }
 
+// @LOCALMOD-START
+// @NOTE: this needs to be fixe to make the constand island estimates better
+// @LOCALMOD-END
 /// GetInstSize - Return the size of the specified MachineInstr.
 ///
 unsigned ARMBaseInstrInfo::GetInstSizeInBytes(const MachineInstr *MI) const {
@@ -661,8 +667,17 @@ ARMBaseInstrInfo::copyRegToReg(MachineBasicBlock &MBB,
   }
 
   if (DestRC == ARM::GPRRegisterClass) {
+    // @LOCALMOD-START
+    // NOTE: rename stack loads/moves so we have an sfi hook
+    if (FlagSfiStack && DestReg == ARM::SP ) {
+      AddDefaultCC(AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::STACK_MOVr),
+					  DestReg).addReg(SrcReg)));
+    } else {
+      // ORGIGNAL
     AddDefaultCC(AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::MOVr),
                                         DestReg).addReg(SrcReg)));
+    }
+    // @LOCALMOD-END
   } else if (DestRC == ARM::SPRRegisterClass) {
     AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::VMOVS), DestReg)
                    .addReg(SrcReg));
@@ -1118,7 +1133,17 @@ void llvm::emitARMRegPlusImmediate(MachineBasicBlock &MBB,
     assert(ARM_AM::getSOImmVal(ThisVal) != -1 && "Bit extraction didn't work?");
 
     // Build the new ADD / SUB.
-    unsigned Opc = isSub ? ARM::SUBri : ARM::ADDri;
+    // @LOCALMOD-START
+    // NOTE: add stackhook
+    unsigned Opc;
+    if (FlagSfiStack && DestReg == ARM::SP ) {
+      Opc = isSub ? ARM::STACK_SUBri : ARM::STACK_ADDri;
+
+      /* assert(BaseReg == DestReg); */
+    } else {
+      Opc = isSub ? ARM::SUBri : ARM::ADDri;
+    }
+    // @LOCALMOD-END
     BuildMI(MBB, MBBI, dl, TII.get(Opc), DestReg)
       .addReg(BaseReg, RegState::Kill).addImm(ThisVal)
       .addImm((unsigned)Pred).addReg(PredReg).addReg(0);
