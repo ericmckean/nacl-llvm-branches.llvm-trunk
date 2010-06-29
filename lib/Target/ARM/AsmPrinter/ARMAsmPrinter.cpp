@@ -58,6 +58,20 @@ static cl::opt<bool>
 EnableMCInst("enable-arm-mcinst-printer", cl::Hidden,
             cl::desc("enable experimental asmprinter gunk in the arm backend"));
 
+// @LOCALMOD
+cl::opt<bool> FlagSfiZeroMask("sfi-zero-mask");
+
+extern cl::opt<bool> FlagSfiStore;
+extern cl::opt<bool> FlagSfiStack;
+extern cl::opt<bool> FlagSfiBranch;
+cl::opt<bool> FlagSfiData("sfi-data",
+                          cl::desc("use illegal at data bundle beginning"));
+
+// @LOCALMOD-END
+
+
+
+
 namespace {
   class ARMAsmPrinter : public AsmPrinter {
 
@@ -191,6 +205,12 @@ namespace {
         raw_svector_ostream(TmpNameStr) << MAI->getPrivateGlobalPrefix() <<
           "_LSDA_" << getFunctionNumber();
         O << TmpNameStr.str();
+      // @LOCALMOD-START
+      } else if (ACPV->isJumpTable()) {
+        O << std::string(MAI->getPrivateGlobalPrefix()) + "JTI" +
+               utostr(getFunctionNumber()) + '_' +
+               utostr(*ACPV->getJumpTableIndex());
+      // @LOCALMOD-END
       } else if (ACPV->isBlockAddress()) {
         O << GetBlockAddressSymbol(ACPV->getBlockAddress())->getName();
       } else if (ACPV->isGlobalValue()) {
@@ -241,6 +261,46 @@ namespace {
 
 #include "ARMGenAsmWriter.inc"
 
+// @LOCALMOD-START
+// Make sure all jump targets are aligned and also all constant pools
+void NaclAlignAllJumpTargetsAndConstantPools(MachineFunction &MF) {
+  // JUMP TABLE TARGETS  
+  MachineJumpTableInfo *jt_info = MF.getJumpTableInfo();
+  if (jt_info) {
+    const std::vector<MachineJumpTableEntry> &JT = jt_info->getJumpTables();
+    for (unsigned i=0; i < JT.size(); ++i) {
+      std::vector<MachineBasicBlock*> MBBs = JT[i].MBBs;
+      
+      for (unsigned j=0; j < MBBs.size(); ++j) {
+        if (MBBs[j]->begin()->getOpcode() == ARM::CONSTPOOL_ENTRY) {
+          continue;
+        }
+        MBBs[j]->setAlignment(16);
+      }
+    }
+  }
+  
+  // FIRST ENTRY IN A ConstanPool
+  bool last_bb_was_constant_pool = false;
+  for (MachineFunction::iterator I = MF.begin(), E = MF.end();
+       I != E; ++I) {
+    if (I->isLandingPad()) {
+        I->setAlignment(16);
+    }
+    
+    if (I->empty()) continue;
+    
+    bool is_constant_pool = I->begin()->getOpcode() == ARM::CONSTPOOL_ENTRY;
+
+    if (last_bb_was_constant_pool != is_constant_pool) {
+      I->setAlignment(16);
+    }
+    
+    last_bb_was_constant_pool = is_constant_pool;
+  }
+}
+// @LOCALMOD-END
+
 void ARMAsmPrinter::EmitFunctionEntryLabel() {
   if (AFI->isThumbFunction()) {
     O << "\t.code\t16\n";
@@ -249,6 +309,16 @@ void ARMAsmPrinter::EmitFunctionEntryLabel() {
       O << '\t' << *CurrentFnSym;
     O << '\n';
   }
+
+  // @LOCALMOD-START
+  // make sure function entry is aligned. We use  XmagicX as our basis
+  // for alignment decisions (c.f. assembler sfi macros)
+  int alignment = MF->getAlignment();
+  if (alignment < 4) alignment = 4;
+  EmitAlignment(alignment);
+  O << "\t.set XmagicX, .\n";
+  // @LOCALMOD-END
+
   
   OutStreamer.EmitLabel(CurrentFnSym);
 }
@@ -260,6 +330,11 @@ bool ARMAsmPrinter::runOnMachineFunction(MachineFunction &MF) {
   AFI = MF.getInfo<ARMFunctionInfo>();
   MCP = MF.getConstantPool();
 
+  // @LOCALMOD-START
+  if (FlagSfiBranch) {
+    NaclAlignAllJumpTargetsAndConstantPools(MF);
+  }
+  // @LOCALMOD-END
   return AsmPrinter::runOnMachineFunction(MF);
 }
 
@@ -533,6 +608,10 @@ void ARMAsmPrinter::printAddrMode4Operand(const MachineInstr *MI, int Op,
     ARM_AM::AMSubMode Mode = ARM_AM::getAM4SubMode(MO2.getImm());
     if (Mode == ARM_AM::ia)
       O << ".w";
+  // @LOCALMOD-START
+  } else if (Modifier && strcmp(Modifier, "base") == 0) {
+    printOperand(MI, Op);
+  // @LOCALMOD-END
   } else {
     printOperand(MI, Op);
     if (ARM_AM::getAM4WBFlag(MO2.getImm()))
@@ -832,6 +911,23 @@ void ARMAsmPrinter::printCPInstOperand(const MachineInstr *MI, int OpNum,
   // There are two aspects to a CONSTANTPOOL_ENTRY operand, the label and the
   // data itself.
   if (!strcmp(Modifier, "label")) {
+    // @LOCALMOD-START
+    // NOTE: we also should make sure that the first data item
+    // is not in a code bundle
+    // NOTE: there may be issues with alignment constraints
+    const unsigned size = MI->getOperand(2).getImm();
+    //assert(size == 4 || size == 8 && "Unsupported data item size");
+    if (size == 8) {
+      // we cannot generate a size 8 constant at offset 12 (mod 16)
+      O << "sfi_nop_if_at_bundle_end\n";
+    }
+
+    if (FlagSfiData) {
+      O << "sfi_illegal_if_at_bundle_begining  @ ========== SFI (" <<
+        size << ")\n";
+    }
+    // @LOCALMOD-END
+
     unsigned ID = MI->getOperand(OpNum).getImm();
     OutStreamer.EmitLabel(GetCPISymbol(ID));
   } else {
@@ -841,6 +937,10 @@ void ARMAsmPrinter::printCPInstOperand(const MachineInstr *MI, int OpNum,
     const MachineConstantPoolEntry &MCPE = MCP->getConstants()[CPI];
 
     if (MCPE.isMachineConstantPoolEntry()) {
+      // @LOCALMOD-START
+      // Handy for debugging
+      // O << "@ Const pool\n";
+      // @LOCALMOD-END
       EmitMachineConstantPoolValue(MCPE.Val.MachineCPVal);
     } else {
       EmitGlobalConstant(MCPE.Val.ConstVal);
@@ -1114,6 +1214,234 @@ void ARMAsmPrinter::EmitStartOfAsmFile(Module &M) {
 
     // FIXME: Should we signal R9 usage?
   }
+
+  O << " @ ========================================\n";
+  O << "@ Branch: " << FlagSfiBranch << "\n";
+  O << "@ Stack: " << FlagSfiStack << "\n";
+  O << "@ Store: " << FlagSfiStore << "\n";
+  O << "@ Data: " << FlagSfiData << "\n";
+
+  O << " @ ========================================\n";
+  // NOTE: this macro does bundle alignment as follows
+  //       if current bundle pos is X emit pX data items of value "val"
+  // NOTE: that pos will be one of: 0,4,8,12
+  //
+  O <<
+    "\t.macro sfi_long_based_on_pos p0 p1 p2 p3 val\n"
+    "\t.set pos, (. - XmagicX) % 16\n"
+    "\t.fill  (((\\p3<<12)|(\\p2<<8)|(\\p1<<4)|\\p0)>>pos) & 15, 4, \\val\n"
+    "\t.endm\n"
+    "\n\n";
+
+  O <<
+    "\t.macro sfi_illegal_if_at_bundle_begining\n"
+    "\tsfi_long_based_on_pos 1 0 0 0 0xe1277777\n"
+    "\t.endm\n"
+    "\n\n";
+
+  O <<
+    "\t.macro sfi_nop_if_at_bundle_end\n"
+    "\tsfi_long_based_on_pos 0 0 0 1 0xe1a00000\n"
+    "\t.endm\n"
+      "\n\n";
+
+  O <<
+    "\t.macro sfi_nops_to_force_slot3\n"
+    "\tsfi_long_based_on_pos 3 2 1 0 0xe1a00000\n"
+    "\t.endm\n"
+    "\n\n";
+
+  O <<
+    "\t.macro sfi_nops_to_force_slot2\n"
+    "\tsfi_long_based_on_pos 2 1 0 3 0xe1a00000\n"
+    "\t.endm\n"
+    "\n\n";
+
+  O <<
+    "\t.macro sfi_nops_to_force_slot1\n"
+    "\tsfi_long_based_on_pos 1 0 3 2 0xe1a00000\n"
+    "\t.endm\n"
+    "\n\n";
+
+  O << " @ ========================================\n";
+  if (FlagSfiZeroMask) {
+    O <<
+      "\t.macro sfi_data_mask reg cond\n"
+      "\tbic\\cond \\reg, \\reg, #0\n"
+      "\t.endm\n"
+      "\n\n";
+
+    O <<
+      "\t.macro sfi_code_mask reg cond=\n"
+      "\tbic\\cond \\reg, \\reg, #0\n"
+      "\t.endm\n"
+      "\n\n";
+
+  } else {
+    O <<
+      "\t.macro sfi_data_mask reg cond\n"
+      "\tbic\\cond \\reg, \\reg, #0xc0000000\n"
+      "\t.endm\n"
+      "\n\n";
+
+    O <<
+      "\t.macro sfi_data_tst reg\n"
+      "\ttst \\reg, #0xc0000000\n"
+      "\t.endm\n"
+      "\n\n";
+
+    O <<
+      "\t.macro sfi_code_mask reg cond=\n"
+      "\tbic\\cond \\reg, \\reg, #0xc000000f\n"
+      "\t.endm\n"
+      "\n\n";
+  }
+
+  O << " @ ========================================\n";
+  if (FlagSfiBranch) {
+    O <<
+      "\t.macro sfi_call_preamble cond=\n"
+      "\tsfi_nops_to_force_slot3\n"
+      "\t.endm\n"
+      "\n\n";
+
+    O <<
+      "\t.macro sfi_return_preamble reg cond=\n"
+      "\tsfi_nop_if_at_bundle_end\n"
+      "\tsfi_code_mask \\reg \\cond\n"
+      "\t.endm\n"
+      "\n\n";
+    
+    // This is used just before "bx rx"
+    O <<
+      "\t.macro sfi_indirect_jump_preamble link cond=\n"
+      "\tsfi_nop_if_at_bundle_end\n"
+      "\tsfi_code_mask \\link \\cond\n"
+      "\t.endm\n"
+      "\n\n";
+
+    // This is use just before "blx rx"
+    O <<
+      "\t.macro sfi_indirect_call_preamble link cond=\n"
+      "\tsfi_nops_to_force_slot2\n"
+      "\tsfi_code_mask \\link \\cond\n"
+      "\t.endm\n"
+      "\n\n";
+
+  }
+
+  if (FlagSfiStore) {
+    O << " @ ========================================\n";
+
+    O <<
+      "\t.macro sfi_store_preamble reg cond\n"
+      "\tsfi_nop_if_at_bundle_end\n"
+      "\tsfi_data_mask \\reg, \\cond\n"
+      "\t.endm\n"
+      "\n\n";
+
+    O <<
+      "\t.macro sfi_cstore_preamble reg\n"
+      "\tsfi_nop_if_at_bundle_end\n"
+      "\tsfi_data_tst \\reg\n"
+      "\t.endm\n"
+      "\n\n";
+  } else {
+    O <<
+      "\t.macro sfi_store_preamble reg cond\n"
+      "\t.endm\n"
+      "\n\n";
+
+    O <<
+      "\t.macro sfi_cstore_preamble reg cond\n"
+      "\t.endm\n"
+      "\n\n";
+  }
+
+  const char* kPreds[] = {
+    "eq",
+    "ne",
+    "lt",
+    "le",
+    "ls",
+    "ge",
+    "gt",
+    "hs",
+    "hi",
+    "lo",
+    "mi",
+    "pl",
+    NULL,
+  };
+
+  if (FlagSfiStack) {
+
+    O << " @ ========================================\n";
+
+    O <<
+      "\t.macro sfi_add rega regb imm rot=0\n"
+      "\tsfi_nop_if_at_bundle_end\n"
+      "\tadd \\rega, \\regb, \\imm, \\rot\n"
+      "\tsfi_data_mask \\rega\n"
+      "\t.endm\n"
+      "\n\n";
+
+    for (int p=0; kPreds[p] != NULL; ++p) {
+      O <<
+        "\t.macro sfi_add" << kPreds[p] << " rega regb imm rot=0\n"
+        "\tsfi_nop_if_at_bundle_end\n"
+        "\tadd" << kPreds[p] << " \\rega, \\regb, \\imm, \\rot\n"
+        "\tsfi_data_mask \\rega, " << kPreds[p] << "\n"
+        "\t.endm\n"
+        "\n\n";
+    }
+
+    O << " @ ========================================\n";
+    O <<
+      "\t.macro sfi_sub rega regb imm rot=0\n"
+      "\tsfi_nop_if_at_bundle_end\n"
+      "\tsub \\rega, \\regb, \\imm, \\rot\n"
+      "\tsfi_data_mask \\rega\n"
+      "\t.endm\n"
+      "\n\n";
+
+    for (int p=0; kPreds[p] != NULL; ++ p) {
+      O <<
+        "\t.macro sfi_sub" << kPreds[p] << " rega regb imm rot=0\n"
+        "\tsfi_nop_if_at_bundle_end\n"
+        "\tsub" << kPreds[p] << " \\rega, \\regb, \\imm, \\rot\n"
+        "\tsfi_data_mask \\rega, " << kPreds[p] << "\n"
+        "\t.endm\n"
+        "\n\n";
+    }
+
+    O << " @ ========================================\n";
+
+    O <<
+      "\t.macro sfi_mov rega regb\n"
+      "\tsfi_nop_if_at_bundle_end\n"
+      "\tmov \\rega, \\regb\n"
+      "\tsfi_data_mask \\rega\n"
+      "\t.endm\n"
+      "\n\n";
+
+    for (int p=0; kPreds[p] != NULL; ++ p) {
+      O <<
+        "\t.macro mov_sub" << kPreds[p] << " rega regb imm rot=0\n"
+        "\tsfi_nop_if_at_bundle_end\n"
+        "\tmov" << kPreds[p] << " \\rega, \\regb, \\imm, \\rot\n"
+        "\tsfi_data_mask \\rega, " << kPreds[p] << "\n"
+        "\t.endm\n"
+        "\n\n";
+    }
+
+  } // FlagSfiStack
+  
+  O << " @ ========================================\n";
+  O << "\t.text\n";
+
+
+  // @LOCALMOD-END  
 }
 
 
@@ -1332,4 +1660,3 @@ extern "C" void LLVMInitializeARMAsmPrinter() {
   TargetRegistry::RegisterMCInstPrinter(TheARMTarget, createARMMCInstPrinter);
   TargetRegistry::RegisterMCInstPrinter(TheThumbTarget, createARMMCInstPrinter);
 }
-

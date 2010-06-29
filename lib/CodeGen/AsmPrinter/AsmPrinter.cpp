@@ -292,7 +292,11 @@ void AsmPrinter::EmitFunctionHeader() {
   EmitVisibility(CurrentFnSym, F->getVisibility());
 
   EmitLinkage(F->getLinkage(), CurrentFnSym);
-  EmitAlignment(5, /* MF->getAlignment() */ F);  // @LOCALMOD
+  // @LOCALMOD-START
+  // TODO(robertm): move alignment decissions to the backend
+  //                16 for arm and 32 for x86
+  EmitAlignment(5, /* MF->getAlignment() */ F);
+  // @LOCALMOD-END
 
   if (MAI->hasDotTypeDotSizeDirective())
     OutStreamer.EmitSymbolAttribute(CurrentFnSym, MCSA_ELF_TypeFunction);
@@ -425,6 +429,9 @@ void AsmPrinter::EmitFunctionBody() {
         printLabelInst(II);
         break;
       case TargetOpcode::INLINEASM:
+        // This currently causes problems on the ARM side when we are building
+        // libgcc
+        // assert(0 && "no inline assembler support in pnacl"); // @LOCALMOD
         printInlineAsm(II);
         break;
       case TargetOpcode::IMPLICIT_DEF:

@@ -8,7 +8,7 @@
 ##===----------------------------------------------------------------------===##
 
 LEVEL = ../..
-LIBRARYNAME = libLLVMgold
+LIBRARYNAME = LLVMgold
 
 # Include this here so we can get the configuration of the targets
 # that have been configured for construction. We have to do this 

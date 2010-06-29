@@ -19,7 +19,13 @@
 #include "llvm/Support/FormattedStream.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/Target/TargetRegistry.h"
+#include "llvm/Support/CommandLine.h" // @LOCALMOD
 using namespace llvm;
+
+// @LOCALMOD-START
+extern cl::opt<bool> FlagSfiStore;
+extern cl::opt<bool> FlagSfiBranch;
+// @LOCALMOD-END
 
 static const MCAsmInfo *createMCAsmInfo(const Target &T, StringRef TT) {
   Triple TheTriple(TT);
@@ -128,6 +134,14 @@ bool ARMBaseTargetMachine::addPreEmitPass(PassManagerBase &PM,
   }
 
   PM.add(createARMConstantIslandPass());
+
+  // @LOCALMOD-START
+  if (FlagSfiStore)
+    PM.add(createARMSFIPlacementPass());
+  if (FlagSfiBranch)
+    PM.add(createARMSFIBranchPass());
+  // @LOCALMOD-END
+
   return true;
 }
 
