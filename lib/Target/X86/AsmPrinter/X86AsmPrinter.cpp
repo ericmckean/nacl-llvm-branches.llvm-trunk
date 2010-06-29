@@ -471,6 +471,11 @@ bool X86AsmPrinter::PrintAsmMemoryOperand(const MachineInstr *MI,
   return false;
 }
 
+void X86AsmPrinter::EmitFunctionBodyEnd() {
+  if (Subtarget->isTargetNaCl())
+    EmitAlignment(5);
+}
+
 void X86AsmPrinter::EmitStartOfAsmFile(Module &M) {
   if (Subtarget->isTargetDarwin())
     OutStreamer.SwitchSection(getObjFileLowering().getTextSection());
