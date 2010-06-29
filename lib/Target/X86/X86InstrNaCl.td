@@ -70,6 +70,7 @@ def : Pat<(X86call (i32 imm:$dst)),
           (NACL_CALLpcrel32 imm:$dst)>, Requires<[CallImmAddr,IsNaCl32]>;
 
 
+// Tail calls
 let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1 in
   let Defs = [EAX, ECX, EDX, FP0, FP1, FP2, FP3, FP4, FP5, FP6, ST0,
               MM0, MM1, MM2, MM3, MM4, MM5, MM6, MM7,
@@ -77,10 +78,37 @@ let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1 in
               XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15, EFLAGS],
       Uses = [ESP] in {
 
- def NACL_TAILJMPr : I<0, Pseudo, (outs), (ins GR32_TC:$dst, variable_ops),
+  def NACL_TCRETURNdi : I<0, Pseudo, (outs), 
+                         (ins i32imm_pcrel:$dst, i32imm:$offset, variable_ops),
+                         "#TC_RETURN $dst $offset", []>,
+                        Requires<[IsNaCl32]>;
+  def NACL_TCRETURNri : I<0, Pseudo, (outs), 
+                          (ins GR32_TC:$dst, i32imm:$offset, variable_ops),
+                         "#TC_RETURN $dst $offset", []>,
+                        Requires<[IsNaCl32]>;
+
+  def NACL_TAILJMPd : Ii32<0xE9, RawFrm, (outs),
+                           (ins i32imm_pcrel:$dst, variable_ops),
+                           "jmp\t$dst  # TAILCALL", []>,
+                        Requires<[IsNaCl32]>;
+  def NACL_TAILJMPr : I<0, Pseudo, (outs), (ins GR32_TC:$dst, variable_ops),
                    "nacljmp\t $dst  # TAILCALL",
                    []>, Requires<[IsNaCl32]>;
 }
+
+// More tail call stuff
+def : Pat<(X86tcret GR32_TC:$dst, imm:$off),
+          (NACL_TCRETURNri GR32_TC:$dst, imm:$off)>,
+	  Requires<[IsNaCl32]>;
+
+def : Pat<(X86tcret (i32 tglobaladdr:$dst), imm:$off),
+          (NACL_TCRETURNdi texternalsym:$dst, imm:$off)>,
+	  Requires<[IsNaCl32]>;
+
+def : Pat<(X86tcret (i32 texternalsym:$dst), imm:$off),
+          (NACL_TCRETURNdi texternalsym:$dst, imm:$off)>,
+	  Requires<[IsNaCl32]>;
+
 
 let AddedComplexity = 5, isCodeGenOnly = 1 in
 def NACL_GS_MOV32rm : I<0x8B, MRMSrcMem, (outs GR32:$dst), (ins i32mem:$src),
@@ -155,7 +183,7 @@ let isTerminator = 1, isReturn = 1, isBarrier = 1,
                      Requires<[IsNaCl64]>;
 }
 
-
+// Tail calls
 let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1 in
   let Defs = [RAX, RCX, RDX, RSI, RDI, R8, R9, R10, R11,
               FP0, FP1, FP2, FP3, FP4, FP5, FP6, ST0, ST1,
@@ -164,12 +192,41 @@ let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1 in
               XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15, EFLAGS],
       Uses = [RSP] in {
 
-  def NACL_TAILJMPr64 : I<0, Pseudo, (outs), (ins GR64_TC:$dst, variable_ops),
-                        "nacljmp\t$dst,%r15  # TAILCALL",
-                        []>,
-                        Requires<[IsNaCl64]>;
+  def NACL_TCRETURNdi64 : I<0, Pseudo, (outs),
+                           (ins i32imm_pcrel:$dst, i32imm:$offset, 
+                            variable_ops),
+                           "#TC_RETURN $dst $offset", []>,
+                          Requires<[IsNaCl64]>;
+  def NACL_TCRETURNri64 : I<0, Pseudo, (outs), 
+                           (ins GR32_TC:$dst, i32imm:$offset, variable_ops),
+                           "#TC_RETURN $dst $offset", []>,
+                          Requires<[IsNaCl64]>;
 
+  def NACL_TAILJMPd64 : Ii32<0xE9, RawFrm, (outs),
+                            (ins i32imm_pcrel:$dst, variable_ops),
+                            "jmp\t$dst  # TAILCALL", []>,
+                        Requires<[IsNaCl64]>;
+  def NACL_TAILJMPr64 : I<0, Pseudo, (outs), (ins GR32_TC:$dst, variable_ops),
+                          "nacljmp\t$dst,%r15  # TAILCALL", []>,
+                        Requires<[IsNaCl64]>;
 }
+
+
+// More tail call stuff
+
+def : Pat<(X86tcret (i32 tglobaladdr:$dst), imm:$off),
+          (NACL_TCRETURNdi64 tglobaladdr:$dst, imm:$off)>,
+	  Requires<[IsNaCl64]>;
+
+def : Pat<(X86tcret (i32 texternalsym:$dst), imm:$off),
+          (NACL_TCRETURNdi64 texternalsym:$dst, imm:$off)>,
+	  Requires<[IsNaCl64]>;
+
+def : Pat<(X86tcret GR32_TC:$dst, imm:$off),
+          (NACL_TCRETURNri64 GR32_TC:$dst, imm:$off)>,
+	  Requires<[IsNaCl64]>;
+
+
 
 let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
   def NACL_JMP64r     : I<0, Pseudo, (outs), (ins GR64:$dst),

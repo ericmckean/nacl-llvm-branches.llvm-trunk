@@ -1170,6 +1170,12 @@ void X86RegisterInfo::emitEpilogue(MachineFunction &MF,
   case X86::TCRETURNdi64:
   case X86::TCRETURNri64:
   case X86::TCRETURNmi64:
+    // @LOCALMOD-START
+  case X86::NACL_TCRETURNdi:
+  case X86::NACL_TCRETURNri:
+  case X86::NACL_TCRETURNdi64:
+  case X86::NACL_TCRETURNri64:
+    // @LOCALMOD-END
   case X86::EH_RETURN:
   case X86::EH_RETURN64:
     break;  // These are ok
@@ -1258,7 +1264,14 @@ void X86RegisterInfo::emitEpilogue(MachineFunction &MF,
   } else if (RetOpcode == X86::TCRETURNri || RetOpcode == X86::TCRETURNdi ||
              RetOpcode == X86::TCRETURNmi ||
              RetOpcode == X86::TCRETURNri64 || RetOpcode == X86::TCRETURNdi64 ||
-             RetOpcode == X86::TCRETURNmi64) {
+             RetOpcode == X86::TCRETURNmi64 ||
+             // @LOCALMOD-START
+             RetOpcode == X86::NACL_TCRETURNri ||
+             RetOpcode == X86::NACL_TCRETURNdi ||
+             RetOpcode == X86::NACL_TCRETURNri64 ||
+             RetOpcode == X86::NACL_TCRETURNdi64
+             // @LOCALMOD-END
+             ) {
     bool isMem = RetOpcode == X86::TCRETURNmi || RetOpcode == X86::TCRETURNmi64;
     // Tail call return: adjust the stack pointer and jump to callee.
     MBBI = prior(MBB.end());
@@ -1296,6 +1309,24 @@ void X86RegisterInfo::emitEpilogue(MachineFunction &MF,
         MIB.addOperand(MBBI->getOperand(i));
     } else if (RetOpcode == X86::TCRETURNri64) {
       BuildMI(MBB, MBBI, DL, TII.get(X86::TAILJMPr64), JumpTarget.getReg());
+      // @LOCALMOD-START
+    } else if (RetOpcode == X86::NACL_TCRETURNdi ||
+               RetOpcode == X86::NACL_TCRETURNdi64) {
+      // This particular (direct jump) is currently the same across NaCl
+      // and non-NaCl targets, but a separate case is added for consistency.
+      BuildMI(MBB, MBBI, DL, TII.get((RetOpcode == X86::TCRETURNdi)
+                                     ? X86::NACL_TAILJMPd
+                                     : X86::NACL_TAILJMPd64)).
+        addGlobalAddress(JumpTarget.getGlobal(), JumpTarget.getOffset(),
+                         JumpTarget.getTargetFlags());
+    } else if (RetOpcode == X86::NACL_TCRETURNri) {
+      // These NACL indirect jumps require sandboxing.
+      BuildMI(MBB, MBBI, DL, TII.get(X86::NACL_TAILJMPr),
+              JumpTarget.getReg());
+    } else if (RetOpcode == X86::NACL_TCRETURNri64) {
+      BuildMI(MBB, MBBI, DL, TII.get(X86::NACL_TAILJMPr64),
+              JumpTarget.getReg());
+      // @LOCALMOD-END
     } else {
       BuildMI(MBB, MBBI, DL, TII.get(X86::TAILJMPr), JumpTarget.getReg());
     }

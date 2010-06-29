@@ -1743,7 +1743,7 @@ def XCHG64ar : RI<0x90, AddRegFrm, (outs), (ins GR64:$src),
                   "xchg{q}\t{$src, %rax|%rax, $src}", []>;
 
 // Optimized codegen when the non-memory output is not used.
-let Defs = [EFLAGS] in {
+let Defs = [EFLAGS], mayStore = 1, mayLoad = 1 in {
 // FIXME: Use normal add / sub instructions and add lock prefix dynamically.
 def LOCK_ADD64mr : RI<0x03, MRMDestMem, (outs), (ins i64mem:$dst, GR64:$src2),
                       "lock\n\t"
@@ -1926,7 +1926,11 @@ def : Pat<(X86call (i64 texternalsym:$dst)),
 // tailcall stuff
 def : Pat<(X86tcret GR64_TC:$dst, imm:$off),
           (TCRETURNri64 GR64_TC:$dst, imm:$off)>,
-	  Requires<[In64BitMode]>;
+      // @LOCALMOD-START
+      // These are marked NotNaCl as more of a precaution. Since NaCl 
+      // uses 32-bit pointers we should not expect this to fire for NaCl. 
+	  Requires<[In64BitMode, NotNaCl]>;
+      // @LOCALMOD-END
 
 def : Pat<(X86tcret (load addr:$dst), imm:$off),
           (TCRETURNmi64 addr:$dst, imm:$off)>,
@@ -1934,11 +1938,11 @@ def : Pat<(X86tcret (load addr:$dst), imm:$off),
 
 def : Pat<(X86tcret (i64 tglobaladdr:$dst), imm:$off),
           (TCRETURNdi64 tglobaladdr:$dst, imm:$off)>,
-	  Requires<[In64BitMode]>;
+	  Requires<[In64BitMode, NotNaCl]>; // @LOCALMOD
 
 def : Pat<(X86tcret (i64 texternalsym:$dst), imm:$off),
           (TCRETURNdi64 texternalsym:$dst, imm:$off)>,
-	  Requires<[In64BitMode]>;
+	  Requires<[In64BitMode, NotNaCl]>; // @LOCALMOD
 
 // Comparisons.
 

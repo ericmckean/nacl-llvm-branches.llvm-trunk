@@ -717,11 +717,7 @@ def ENTER : I<0xC8, RawFrm, (outs), (ins i16imm:$len, i8imm:$lvl),
 // Tail call stuff.
 
 let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1 in
-  let Defs = [EAX, ECX, EDX,
-//@ LOCALMOD-START
-              ESI, EDI, R8D, R9D, R10D, R11D, // if x64 is forced to use 32-bit
-//@ LOCALMOD-END
-              FP0, FP1, FP2, FP3, FP4, FP5, FP6, ST0,
+  let Defs = [EAX, ECX, EDX, FP0, FP1, FP2, FP3, FP4, FP5, FP6, ST0,
               MM0, MM1, MM2, MM3, MM4, MM5, MM6, MM7,
               XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
               XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15, EFLAGS],
@@ -3952,7 +3948,7 @@ def CMPXCHG8B : I<0xC7, MRM1m, (outs), (ins i64mem:$dst),
 
 // Optimized codegen when the non-memory output is not used.
 // FIXME: Use normal add / sub instructions and add lock prefix dynamically.
-let Defs = [EFLAGS] in {
+let Defs = [EFLAGS], mayStore = 1, mayLoad = 1 in {
 def LOCK_ADD8mr  : I<0x00, MRMDestMem, (outs), (ins i8mem:$dst, GR8:$src2),
                     "lock\n\t"
                     "add{b}\t{$src2, $dst|$dst, $src2}", []>, LOCK;
@@ -4373,7 +4369,12 @@ def : Pat<(store (i32 (X86Wrapper tblockaddress:$src)), addr:$dst),
 // tailcall stuff
 def : Pat<(X86tcret GR32_TC:$dst, imm:$off),
           (TCRETURNri GR32_TC:$dst, imm:$off)>,
-	  Requires<[In32BitMode]>;
+      // @LOCALMOD-START 
+      // These are marked NotNaCl so that there is no ambiguity about
+      // whether this pattern should fire, or the NACL_TCRETURN[64]ri.
+	  Requires<[In32BitMode, NotNaCl]>;
+      // @LOCALMOD-END
+      
 
 def : Pat<(X86tcret (load addr:$dst), imm:$off),
           (TCRETURNmi addr:$dst, imm:$off)>,
@@ -4381,11 +4382,11 @@ def : Pat<(X86tcret (load addr:$dst), imm:$off),
 
 def : Pat<(X86tcret (i32 tglobaladdr:$dst), imm:$off),
           (TCRETURNdi texternalsym:$dst, imm:$off)>,
-	  Requires<[In32BitMode]>;
+	  Requires<[In32BitMode, NotNaCl]>; // @LOCALMOD
 
 def : Pat<(X86tcret (i32 texternalsym:$dst), imm:$off),
           (TCRETURNdi texternalsym:$dst, imm:$off)>,
-	  Requires<[In32BitMode]>;
+	  Requires<[In32BitMode, NotNaCl]>; // @LOCALMOD
 
 // Normal calls, with various flavors of addresses.
 def : Pat<(X86call (i32 tglobaladdr:$dst)),
