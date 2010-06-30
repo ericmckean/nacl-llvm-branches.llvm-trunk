@@ -2140,19 +2140,21 @@ def : Pat<(store (i8 (trunc_su (srl_su GR64:$src, (i8 8)))), addr:$dst),
           (MOV8mr_NOREX
             addr:$dst,
             (EXTRACT_SUBREG (i64 (COPY_TO_REGCLASS GR64:$src, GR64_ABCD)),
-                            x86_subreg_8bit_hi))>;
+                            x86_subreg_8bit_hi))>,
+      Requires<[NotNaCl]>;
+      // @LOCALMOD: NaCl will slip in R15, which breaks the no-REX req.
 def : Pat<(store (i8 (trunc_su (srl_su GR32:$src, (i8 8)))), addr:$dst),
           (MOV8mr_NOREX
             addr:$dst,
             (EXTRACT_SUBREG (i32 (COPY_TO_REGCLASS GR32:$src, GR32_ABCD)),
                             x86_subreg_8bit_hi))>,
-      Requires<[In64BitMode]>;
+      Requires<[In64BitMode, NotNaCl]>; // @LOCALMOD
 def : Pat<(store (i8 (trunc_su (srl_su GR16:$src, (i8 8)))), addr:$dst),
           (MOV8mr_NOREX
             addr:$dst,
             (EXTRACT_SUBREG (i16 (COPY_TO_REGCLASS GR16:$src, GR16_ABCD)),
                             x86_subreg_8bit_hi))>,
-      Requires<[In64BitMode]>;
+      Requires<[In64BitMode, NotNaCl]>; // @LOCALMOD
 
 // (shl x, 1) ==> (add x, x)
 def : Pat<(shl GR64:$src1, (i8 1)), (ADD64rr GR64:$src1, GR64:$src1)>;
