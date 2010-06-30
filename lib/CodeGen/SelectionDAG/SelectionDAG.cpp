@@ -3446,6 +3446,11 @@ static SDValue getMemsetStores(SelectionDAG &DAG, DebugLoc dl,
                      &OutChains[0], OutChains.size());
 }
 
+static cl::opt<bool>
+InlineAllConstantMemcpy("inline-all-const-memcpy",
+			cl::desc("Expand all memcpy inline"),
+			cl::init(false));
+
 SDValue SelectionDAG::getMemcpy(SDValue Chain, DebugLoc dl, SDValue Dst,
                                 SDValue Src, SDValue Size,
                                 unsigned Align, bool AlwaysInline,
@@ -3479,7 +3484,7 @@ SDValue SelectionDAG::getMemcpy(SDValue Chain, DebugLoc dl, SDValue Dst,
 
   // If we really need inline code and the target declined to provide it,
   // use a (potentially long) sequence of loads and stores.
-  if (AlwaysInline) {
+  if (AlwaysInline || (ConstantSize && InlineAllConstantMemcpy)) {
     assert(ConstantSize && "AlwaysInline requires a constant size!");
     return getMemcpyLoadsAndStores(*this, dl, Chain, Dst, Src,
                                    ConstantSize->getZExtValue(), Align, true,
