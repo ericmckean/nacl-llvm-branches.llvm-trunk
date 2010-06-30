@@ -140,6 +140,14 @@ let Defs = [RSP, EFLAGS], Uses = [RSP] in {
                       "naclssp{q}\t{$src2, %r15|%r15, $src2}",
                       []>, Requires<[IsNaCl64]>;
 
+   def NACL_ADJ_SP   : I<0, Pseudo, (outs GR64:$dst),
+                      // We only need the offset. However, we are rewriting
+                      // an LEA, so we should keep the num of operands the same.
+                      // see lea64mem for operands.
+                      (ins GR64:$base, i8imm:$scale, GR64:$index, i32imm:$off),
+                      "naclspadj{q}\t{$off, %r15|%r15, $off}",
+                      []>, Requires<[IsNaCl64]>;
+
 }
 
 let isCall = 1 in

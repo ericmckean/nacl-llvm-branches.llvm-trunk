@@ -319,6 +319,7 @@ static bool IsSandboxedStackChange(MachineInstr &MI) {
     return false;
    case X86::NACL_ADD_SP:
    case X86::NACL_SUB_SP:
+   case X86::NACL_ADJ_SP:
     return true;
 
    // trivially sandboxed
@@ -326,6 +327,12 @@ static bool IsSandboxedStackChange(MachineInstr &MI) {
    case X86::POP64r:
    case X86::NACL_POP_RBP:
     return true;
+
+   // copy from safe regs
+   case X86::MOV64rr:
+     const MachineOperand &DestReg = MI.getOperand(0);
+     const MachineOperand &SrcReg = MI.getOperand(1);
+     return DestReg.getReg() == X86::RSP && SrcReg.getReg() == X86::RBP;
   }
 }
 
@@ -392,14 +399,28 @@ void X86NaClRewritePass::PassLighweightValidator(MachineBasicBlock &MBB,
 }
 
 /*
+ * True if this MI restores RSP from RBP with a slight adjustment offset.
+ */
+static bool MatchesSPAdj(const MachineInstr &MI) {
+  assert (MI.getOpcode() == X86::LEA64r && "Call to MatchesSPAdj w/ non LEA");
+  const MachineOperand &DestReg = MI.getOperand(0);
+  const MachineOperand &BaseReg = MI.getOperand(1);
+  const MachineOperand &Scale = MI.getOperand(2);
+  const MachineOperand &IndexReg = MI.getOperand(3);
+  const MachineOperand &Offset = MI.getOperand(4);
+  return (DestReg.isReg() && DestReg.getReg() == X86::RSP &&
+          BaseReg.isReg() && BaseReg.getReg() == X86::RBP &&
+          Scale.isImm() && Scale.getImm() == 1 &&
+          IndexReg.isReg() && IndexReg.getReg() == 0 &&
+          Offset.isImm());
+}
+
+/*
  * Sandboxes stack changes (64 bit only)
  */
-
 bool X86NaClRewritePass::PassSandboxingStack(MachineBasicBlock &MBB,
                                              const TargetInstrInfo* TII) {
   bool Modified = false;
-  // TODO: disable this once we are more confident
-  bool verbose = 0;
 
   for (MachineBasicBlock::iterator MBBI = MBB.begin(), E = MBB.end();
        MBBI != E;
@@ -411,38 +432,45 @@ bool X86NaClRewritePass::PassSandboxingStack(MachineBasicBlock &MBB,
       const unsigned Opcode = MI.getOpcode();
       switch (Opcode) {
        default:
-        dbgs() << "@PassSandboxingStack UNEXPECTED STACK CHANGE\n\n";
-        DumpInstructionVerbose(MI);
-        assert(0);
+         dbgs() << "@PassSandboxingStack UNEXPECTED STACK CHANGE\n\n";
+         DumpInstructionVerbose(MI);
+         assert(0);
+         break;
 
        case X86::ADD64ri8:
        case X86::ADD64ri32:
-        if (verbose) {
-          dbgs() << "@PassSandboxingStack: BEFORE\n";
-          DumpInstructionVerbose(MI);
-        }
-        MI.setDesc(TII->get(X86::NACL_ADD_SP));
-        if (verbose) {
-          dbgs() << "@PassSandboxingStack: AFTER\n";
-          DumpInstructionVerbose(MI);
-        }
-        Modified = true;
-        break;
+         DEBUG(dbgs() << "@PassSandboxingStack: BEFORE\n");
+         DEBUG(DumpInstructionVerbose(MI));
+         MI.setDesc(TII->get(X86::NACL_ADD_SP));
+         DEBUG(dbgs() << "@PassSandboxingStack: AFTER\n");
+         DEBUG(DumpInstructionVerbose(MI));
+         Modified = true;
+         break;
 
        case X86::SUB64ri8:
        case X86::SUB64ri32:
-        if (verbose) {
-          dbgs() << "@PassSandboxingStack: BEFORE\n";
-          DumpInstructionVerbose(MI);
-        }
-        MI.setDesc(TII->get(X86::NACL_SUB_SP));
-        if (verbose) {
-          dbgs() << "@PassSandboxingStack: AFTER\n";
-          DumpInstructionVerbose(MI);
-        }
+         DEBUG(dbgs() << "@PassSandboxingStack: BEFORE\n");
+         DEBUG(DumpInstructionVerbose(MI));
+         MI.setDesc(TII->get(X86::NACL_SUB_SP));
+         DEBUG(dbgs() << "@PassSandboxingStack: AFTER\n");
+         DEBUG(DumpInstructionVerbose(MI));
+         Modified = true;
+         break;
 
-        Modified = true;
-        break;
+       // Restore from RBP with adjustment
+       case X86::LEA64r:
+         if (MatchesSPAdj(MI)) {
+           DEBUG(dbgs() << "@PassSandboxingStack: BEFORE\n");
+           DEBUG(DumpInstructionVerbose(MI));
+           MI.setDesc(TII->get(X86::NACL_ADJ_SP));
+           DEBUG(dbgs() << "@PassSandboxingStack: AFTER\n");
+           DEBUG(DumpInstructionVerbose(MI));
+         } else {
+           dbgs() << "@PassSandboxingStack UNEXPECTED STACK CHANGE\n\n";
+           DumpInstructionVerbose(MI);
+           assert(false);
+           break;
+         }
       }
     }
   }
