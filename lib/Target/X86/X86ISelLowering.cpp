@@ -138,11 +138,9 @@ X86TargetLowering::X86TargetLowering(X86TargetMachine &TM)
   Subtarget = &TM.getSubtarget<X86Subtarget>();
   X86ScalarSSEf64 = Subtarget->hasSSE2();
   X86ScalarSSEf32 = Subtarget->hasSSE1();
-  // LOCALMOD
-  //X86StackPtr = Subtarget->is64Bit() ? X86::RSP : X86::ESP;
+  // @LOCALMOD
   X86StackPtr = X86::ESP;
-  //X86StackPtrTy = Subtarget->is64Bit() ? MVT::i64 : MVT::i32;
-  X86StackPtrTy = MVT::i32;
+  X86StackPtrTy = getPointerTy(); //MVT::i32;
 
   RegInfo = TM.getRegisterInfo();
   TD = getTargetData();
@@ -1290,12 +1288,23 @@ X86TargetLowering::LowerReturn(SDValue Chain,
     X86MachineFunctionInfo *FuncInfo = MF.getInfo<X86MachineFunctionInfo>();
     unsigned Reg = FuncInfo->getSRetReturnReg();
     if (!Reg) {
-      Reg = MRI.createVirtualRegister(getRegClassFor(MVT::i64));
+      // @LOCALMOD
+      MVT sRetPtrTy = getPointerTy();
+      Reg = MRI.createVirtualRegister(getRegClassFor(sRetPtrTy));
       FuncInfo->setSRetReturnReg(Reg);
     }
     SDValue Val = DAG.getCopyFromReg(Chain, dl, Reg, getPointerTy());
 
-    Chain = DAG.getCopyToReg(Chain, dl, X86::RAX, Val, Flag);
+    // @LOCALMOD-START
+    if (Subtarget->isTargetNaCl()) {
+      // NaCl 64 uses 32-bit pointers, so there might be some zero-ext needed.
+      SDValue Zext = DAG.getZExtOrTrunc(Val, dl, MVT::i64);
+      Chain = DAG.getCopyToReg(Chain, dl, X86::RAX, Zext, Flag);
+    } else {
+      Chain = DAG.getCopyToReg(Chain, dl, X86::RAX, Val, Flag);
+    }
+    // @LOCALMOD-END
+
     Flag = Chain.getValue(1);
 
     // RAX now acts like a return value.
@@ -1631,7 +1640,9 @@ X86TargetLowering::LowerFormalArguments(SDValue Chain,
     X86MachineFunctionInfo *FuncInfo = MF.getInfo<X86MachineFunctionInfo>();
     unsigned Reg = FuncInfo->getSRetReturnReg();
     if (!Reg) {
-      Reg = MF.getRegInfo().createVirtualRegister(getRegClassFor(MVT::i64));
+      // @LOCALMOD
+      MVT sRetPtrTy = getPointerTy();
+      Reg = MF.getRegInfo().createVirtualRegister(getRegClassFor(sRetPtrTy));
       FuncInfo->setSRetReturnReg(Reg);
     }
     SDValue Copy = DAG.getCopyToReg(DAG.getEntryNode(), dl, Reg, InVals[0]);
