@@ -190,7 +190,7 @@ static unsigned Get32BitRegFor64BitReg(unsigned reg64) {
         dbgs() << "Missed 64bit reg case in Get32BitRegFor64BitReg: "
                << reg64 << "\n";
       } else if (is32BitReg(reg64)) {
-        dbgs() << "Get 32bit reg given 32bit reg\n";
+        DEBUG(dbgs() << "Get 32bit reg given 32bit reg\n");
         return reg64;
       } else {
         dbgs() << "Get 32bit Reg for 64bit reg, not given 64bit reg "
@@ -199,6 +199,7 @@ static unsigned Get32BitRegFor64BitReg(unsigned reg64) {
       return 0;
     }
 
+  case 0: return 0; // no reg actually specified.
   CASE(RAX,EAX);
   CASE(RDX,EDX);
   CASE(RCX,ECX);
@@ -227,7 +228,7 @@ static unsigned Get64BitRegFor32BitReg(unsigned reg32) {
         dbgs() << "Missed 32bit reg case in Get64BitRegFor32BitReg: "
                << reg32 << "\n";
       } else if (is64BitReg(reg32)) {
-        dbgs() << "Get 64bit reg given 64bit reg\n";
+        DEBUG(dbgs() << "Get 64bit reg given 64bit reg\n");
         return reg32;
       } else {
         dbgs() << "Get 64bit Reg for 32bit reg, not given 32bit reg "
@@ -236,6 +237,7 @@ static unsigned Get64BitRegFor32BitReg(unsigned reg32) {
       return 0;
     }
 
+  case 0: return 0; // no reg actually specified.
   CASE(EAX,RAX);
   CASE(EDX,RDX);
   CASE(ECX,RCX);
@@ -376,10 +378,8 @@ void X86NaClRewritePass::PassLighweightValidator(MachineBasicBlock &MBB,
 
       if (IsFunctionCall(MI)) {
         // TODO(robertm): add proper test
-        // for now, we are restricting 64-bit to 32-bit regs
-        // so we do get 32-bit calls
         dbgs() << "@VALIDATOR: BAD 64-bit FUNCTION CALL\n\n";
-        //DumpInstructionVerbose(MI);
+        DumpInstructionVerbose(MI);
       }
 
       if (IsStore(MI) && !IsPushPop(MI) ) {
@@ -544,9 +544,6 @@ static bool MassageMemoryOp(MachineInstr &MI, int Op,
 
 bool X86NaClRewritePass::PassSandboxingMassageLoadStore(MachineBasicBlock &MBB) {
   bool Modified = false;
-  // TODO: disable this once we are more confident
-  bool verbose = 0;
-
 
   for (MachineBasicBlock::iterator MBBI = MBB.begin(), E = MBB.end();
        MBBI != E;
@@ -560,16 +557,14 @@ bool X86NaClRewritePass::PassSandboxingMassageLoadStore(MachineBasicBlock &MBB) 
       bool found = false;
       unsigned memOperand = FindMemoryOperand(MI, found);
       if (found) {
-        dbgs() << "Massage Store Operand# " << memOperand << "\n";
         if (MassageMemoryOp(MI, memOperand, true, true, true)) {
-          if (verbose) {
-            dbgs() << "@PassSandboxingMassageLoadStore after massage";
-            DumpInstructionVerbose(MI);
-          }
+          DEBUG(dbgs() << "@PassSandboxingMassageLoadStore after massage op #"
+                << memOperand << "\n");
+          DEBUG(DumpInstructionVerbose(MI));
+          Modified = true;
         }
-        Modified = true;
       } else {
-        dbgs() << "@PassSandboxingMassageLoadStore: UNEXPECTED memory operand location\n";
+        dbgs() << "@MassageLoadStore: UNEXPECTED memory operand\n";
         DumpInstructionVerbose(MI);
       }
     }
@@ -578,16 +573,14 @@ bool X86NaClRewritePass::PassSandboxingMassageLoadStore(MachineBasicBlock &MBB) 
       bool found = false;
       unsigned memOperand = FindMemoryOperand(MI, found);
       if (found) {
-        dbgs() << "Massage Load Operand# " << memOperand << "\n";
         if (MassageMemoryOp(MI, memOperand, true, true, false)) {
-            if (verbose) {
-              dbgs() << "@PassSandboxingMassageLoadStore after massage\n";
-              DumpInstructionVerbose(MI);
-            }
-            Modified = true;
-          }
+          DEBUG(dbgs() << "@PassSandboxingMassageLoadStore after massage op #"
+                << memOperand << "\n");
+          DEBUG(DumpInstructionVerbose(MI));
+          Modified = true;
+        }
       } else {
-        dbgs() << "@PassSandboxingMassageLoadStore: UNEXPECTED memory operand location\n";
+        dbgs() << "@MassageLoadStore: UNEXPECTED memory operand\n";
         DumpInstructionVerbose(MI);
       }
     }
@@ -737,6 +730,7 @@ bool X86NaClRewritePass::runOnMachineFunction(MachineFunction &MF) {
   const TargetInstrInfo* TII = TM.getInstrInfo();
 
   const bool is64bit = TM.getSubtarget<X86Subtarget>().is64Bit();
+  DEBUG(dbgs() << "*************** NaCl Rewrite Pass ***************\n");
   for (MachineFunction::iterator MFI = MF.begin(), E = MF.end();
        MFI != E;
        ++MFI) {
