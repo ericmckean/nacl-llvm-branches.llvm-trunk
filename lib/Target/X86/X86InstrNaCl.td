@@ -265,3 +265,13 @@ def NACL_TLS_addr64 : I<0, Pseudo, (outs), (ins lea32mem:$sym),
                      [(X86tlsaddr tls32addr:$sym)]>,
                      Requires<[IsNaCl64]>;
 
+let usesCustomInserter = 1 in
+def NACL_VAARG_64 : I<0, Pseudo,
+                 (outs GR32:$dst),
+                 (ins i8mem:$ap, i32imm:$size, i8imm:$mode, i32imm:$align),
+                 "#NACL_VAARG_64 $dst, $ap, $size, $mode, $align",
+                 [(set GR32:$dst,
+                    (X86vaarg64 addr:$ap, imm:$size, imm:$mode, imm:$align))]>,
+                 Requires<[IsNaCl64]>;
+
+

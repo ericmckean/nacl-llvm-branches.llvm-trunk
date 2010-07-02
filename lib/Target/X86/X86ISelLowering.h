@@ -248,6 +248,7 @@ namespace llvm {
       // according to %al. An operator is needed so that this can be expanded
       // with control flow.
       VASTART_SAVE_XMM_REGS,
+      VAARG_64,
 
       // MINGW_ALLOCA - MingW's __alloca call to do stack probing.
       MINGW_ALLOCA,
@@ -378,7 +379,19 @@ namespace llvm {
     int RegSaveFrameIndex;            // X86-64 vararg func register save area.
     unsigned VarArgsGPOffset;         // X86-64 vararg func int reg offset.
     unsigned VarArgsFPOffset;         // X86-64 vararg func fp reg offset.
+
+    // @LOCALMOD-BEGIN
+    struct VarArgInfo {               // va_arg calling convention info
+      unsigned TotalNumIntRegs;
+      unsigned TotalNumXMMRegs;
+      const unsigned *GPR64ArgRegs;
+      const unsigned *XMMArgRegs;
+      bool NoImplicitFloatOps;
+    };
+   // @LOCALMOD-END
+
     int BytesToPopOnReturn;           // Number of arg bytes ret should pop.
+
 
   public:
     explicit X86TargetLowering(X86TargetMachine &TM);
@@ -701,6 +714,9 @@ namespace llvm {
     SDValue LowerLOAD_SUB(SDValue Op, SelectionDAG &DAG);
     SDValue LowerREADCYCLECOUNTER(SDValue Op, SelectionDAG &DAG);
 
+    // @LOCALMOD
+    void GetVarArgInfo(const Function *Fn, VarArgInfo *VAInfo) const;
+
     virtual SDValue
       LowerFormalArguments(SDValue Chain,
                            CallingConv::ID CallConv, bool isVarArg,
@@ -782,6 +798,14 @@ namespace llvm {
     MachineBasicBlock *EmitAtomicMinMaxWithCustomInserter(MachineInstr *BInstr,
                                                           MachineBasicBlock *BB,
                                                         unsigned cmovOpc) const;
+
+    // @LOCALMOD-BEGIN
+    // Emit the instructions needed to get the next va_arg
+    MachineBasicBlock *EmitVAARG64WithCustomInserter(
+                       MachineInstr *MI,
+                       MachineBasicBlock *MBB,
+                       DenseMap<MachineBasicBlock*, MachineBasicBlock*> *EM) const;
+    // @LOCALMOD-END
 
     /// Utility function to emit the xmm reg save portion of va_start.
     MachineBasicBlock *EmitVAStartSaveXMMRegsWithCustomInserter(

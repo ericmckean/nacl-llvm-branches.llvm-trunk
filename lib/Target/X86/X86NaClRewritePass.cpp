@@ -573,7 +573,7 @@ bool X86NaClRewritePass::PassSandboxingMassageLoadStore(MachineBasicBlock &MBB) 
       bool found = false;
       unsigned memOperand = FindMemoryOperand(MI, found);
       if (found) {
-        if (MassageMemoryOp(MI, memOperand, true, true, false)) {
+        if (MassageMemoryOp(MI, memOperand, true, true, true)) {
           DEBUG(dbgs() << "@PassSandboxingMassageLoadStore after massage op #"
                 << memOperand << "\n");
           DEBUG(DumpInstructionVerbose(MI));
