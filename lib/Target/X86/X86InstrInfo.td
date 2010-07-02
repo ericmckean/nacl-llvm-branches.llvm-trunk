@@ -64,6 +64,14 @@ def SDT_X86VASTART_SAVE_XMM_REGS : SDTypeProfile<0, -1, [SDTCisVT<0, i8>,
                                                          SDTCisVT<1, iPTR>,
                                                          SDTCisVT<2, iPTR>]>;
 
+// @LOCALMOD-BEGIN
+def SDT_X86VAARG_64 : SDTypeProfile<1, -1, [SDTCisPtrTy<0>,
+                                            SDTCisPtrTy<1>,
+                                            SDTCisVT<2, i32>,
+                                            SDTCisVT<3, i8>,
+                                            SDTCisVT<4, i32>]>;
+// @LOCALMOD-END
+
 def SDTX86RepStr  : SDTypeProfile<0, 1, [SDTCisVT<0, OtherVT>]>;
 
 def SDTX86Void    : SDTypeProfile<0, 0, []>;
@@ -126,7 +134,11 @@ def X86vastart_save_xmm_regs :
                  SDNode<"X86ISD::VASTART_SAVE_XMM_REGS",
                         SDT_X86VASTART_SAVE_XMM_REGS,
                         [SDNPHasChain]>;
-
+// @LOCALMOD-BEGIN
+def X86vaarg64 :
+                 SDNode<"X86ISD::VAARG_64", SDT_X86VAARG_64, 
+                        [SDNPHasChain, SDNPMayLoad, SDNPMayStore]>;
+// @LOCALMOD-END
 def X86callseq_start :
                  SDNode<"ISD::CALLSEQ_START", SDT_X86CallSeqStart,
                         [SDNPHasChain, SDNPOutFlag]>;
@@ -538,8 +550,8 @@ def ADJCALLSTACKUP32   : I<0, Pseudo, (outs), (ins i32imm:$amt1, i32imm:$amt2),
                           Requires<[In32BitMode]>;
 }
 
-// x86-64 va_start lowering magic.
-let usesCustomInserter = 1 in {
+// x86-64 va_start and va_arg lowering magic.
+let usesCustomInserter = 1 in
 def VASTART_SAVE_XMM_REGS : I<0, Pseudo,
                               (outs),
                               (ins GR8:$al,
@@ -550,6 +562,19 @@ def VASTART_SAVE_XMM_REGS : I<0, Pseudo,
                                                          imm:$regsavefi,
                                                          imm:$offset)]>;
 
+// @LOCALMOD-BEGIN
+// The VAARG_64 pseudo-instruction takes the address of the va_list,
+// and places the next element address into a register.
+let usesCustomInserter = 1 in
+def VAARG_64 : I<0, Pseudo,
+                 (outs GR64:$dst),
+                 (ins i8mem:$ap, i32imm:$size, i8imm:$mode, i32imm:$align),
+                 "#VAARG_64 $dst, $ap, $size, $mode, $align",
+                 [(set GR64:$dst,
+                    (X86vaarg64 addr:$ap, imm:$size, imm:$mode, imm:$align))]>,
+                 Requires<[NotNaCl]>;
+// @LOCALMOD-END
+
 // Dynamic stack allocation yields _alloca call for Cygwin/Mingw targets.  Calls
 // to _alloca is needed to probe the stack when allocating more than 4k bytes in
 // one go. Touching the stack at 4K increments is necessary to ensure that the
@@ -557,11 +582,10 @@ def VASTART_SAVE_XMM_REGS : I<0, Pseudo,
 // sequence.
 // The main point of having separate instruction are extra unmodelled effects
 // (compared to ordinary calls) like stack pointer change.
-
+let usesCustomInserter = 1 in
 def MINGW_ALLOCA : I<0, Pseudo, (outs), (ins),
                      "# dynamic stack allocation",
                      [(X86MingwAlloca)]>;
-}
 
 // Nop
 let neverHasSideEffects = 1 in {
