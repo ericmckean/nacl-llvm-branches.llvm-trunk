@@ -2446,7 +2446,7 @@ void SelectionDAGLegalize::ExpandNode(SDNode *Node,
     Chain =  VAList.getValue(1);
     if (Align > 1) {
       // Align must be a power of 2 for this code to work.
-      assert((Align & (Align-1) == 0) && "Expected Align to be a power of 2");
+      assert(((Align & (Align-1)) == 0) && "Expected Align to be a power of 2");
 
       VAList = DAG.getNode(ISD::ADD, dl, PointerTy, VAList,
 			   DAG.getConstant(Align - 1, PointerTy));
