@@ -2432,17 +2432,9 @@ void SelectionDAGLegalize::ExpandNode(SDNode *Node,
     unsigned Align = Node->getConstantOperandVal(3);
     EVT PointerTy = TLI.getPointerTy();
 
-    // SrcPtr is a "va_list*", which is a pointer-to-a-pointer 
-    // to the argument area (on the stack).
-
-    // Load the address of the VAList
-    SDValue VAListAddr = DAG.getLoad(PointerTy, dl, Chain, SrcPtr, 
-                                       V, 0, false, false, 0);
-    Chain = VAListAddr.getValue(1);
-
-    // Load the actual contents of the VAList
-    SDValue VAList = DAG.getLoad(PointerTy, dl, Chain, VAListAddr,
-                                   NULL, 0, false, false, 0);
+    // Load the contents of the VAList
+    SDValue VAList = DAG.getLoad(PointerTy, dl, Chain, SrcPtr,
+                                   V, 0, false, false, 0);
     Chain =  VAList.getValue(1);
     if (Align > 1) {
       // Align must be a power of 2 for this code to work.
@@ -2461,8 +2453,8 @@ void SelectionDAGLegalize::ExpandNode(SDNode *Node,
     SDValue VAListNext = DAG.getNode(ISD::ADD, dl, PointerTy, VAList,
                                     DAG.getConstant(VarSize, PointerTy));
     // Store the incremented VAList to the legalized pointer
-    Chain = DAG.getStore(Chain, dl, VAListNext, VAListAddr, 
-                         NULL, 0, false, false, 0);
+    Chain = DAG.getStore(Chain, dl, VAListNext, SrcPtr, 
+                         V, 0, false, false, 0);
     // Load the actual argument out of the pointer VAList
     SDValue ArgLoad = DAG.getLoad(VarArgVT, dl, Chain, VAList, 
                                   NULL, 0, false, false, 0);

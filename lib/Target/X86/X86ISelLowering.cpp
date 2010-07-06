@@ -6830,16 +6830,11 @@ SDValue X86TargetLowering::LowerVAARG(SDValue Op, SelectionDAG &DAG) {
     VarArgMode = 0;  // Use overflow area only
   }
 
-  // Load the address of the va_list
-  SDValue VAListAddr = DAG.getLoad(getPointerTy(), dl, Chain, 
-                               SrcPtr, SV, 0, false, false, 0);
-  Chain = VAListAddr.getValue(1);
-
   // Insert VAARG_64 node into the DAG
   // VAARG_64 returns two values: Variable Argument Address, Chain
   SmallVector<SDValue, 11> InstOps;
   InstOps.push_back(Chain);
-  InstOps.push_back(VAListAddr);
+  InstOps.push_back(SrcPtr);
   InstOps.push_back(DAG.getConstant(VarArgSize, MVT::i32));
   InstOps.push_back(DAG.getConstant(VarArgMode, MVT::i8));
   InstOps.push_back(DAG.getConstant(Align, MVT::i32));
@@ -8631,7 +8626,7 @@ X86TargetLowering::EmitVAARG64WithCustomInserter(
   // Align the overflow address
   // aligned_addr = (addr + (align-1)) & ~(align-1)
   if (NeedAlign) {
-    assert( (Align & (Align-1) == 0) && "Alignment must be a power of 2");
+    assert( ((Align & (Align-1)) == 0) && "Alignment must be a power of 2");
     unsigned TmpReg = MRI.createVirtualRegister(PointerRegClass);
     Opc = IsPtr64Bits ? X86::ADD64ri32 : X86::ADD32ri;
     BuildMI(overflowMBB, DL, TII->get(Opc), TmpReg)
