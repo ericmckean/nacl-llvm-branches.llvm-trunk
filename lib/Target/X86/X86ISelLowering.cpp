@@ -8422,8 +8422,9 @@ X86TargetLowering::EmitVAARG64WithCustomInserter(
   // 6  ) VarArgSize    : Size (in bytes) of vararg type
   // 7  ) VarArgMode    : 0 = overflow only, 1 = use gp offset, 2 = use fp offset
   // 8  ) Align         : Alignment of type
+  // 9  ) EFLAGS (implicit-def)
 
-  assert(MI->getNumOperands() == 9 && "VAARG_64 should have 9 operands!");
+  assert(MI->getNumOperands() == 10 && "VAARG_64 should have 10 operands!");
   assert(X86AddrNumOperands == 5 && "VAARG_64 assumes 5 address operands");
 
   unsigned DestReg = MI->getOperand(0).getReg();
