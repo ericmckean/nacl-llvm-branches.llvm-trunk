@@ -565,13 +565,14 @@ def VASTART_SAVE_XMM_REGS : I<0, Pseudo,
 // @LOCALMOD-BEGIN
 // The VAARG_64 pseudo-instruction takes the address of the va_list,
 // and places the next element address into a register.
-let usesCustomInserter = 1 in
+let usesCustomInserter = 1, Defs = [EFLAGS] in
 def VAARG_64 : I<0, Pseudo,
                  (outs GR64:$dst),
                  (ins i8mem:$ap, i32imm:$size, i8imm:$mode, i32imm:$align),
                  "#VAARG_64 $dst, $ap, $size, $mode, $align",
                  [(set GR64:$dst,
-                    (X86vaarg64 addr:$ap, imm:$size, imm:$mode, imm:$align))]>,
+                    (X86vaarg64 addr:$ap, imm:$size, imm:$mode, imm:$align)),
+                  (implicit EFLAGS)]>,
                  Requires<[NotNaCl]>;
 // @LOCALMOD-END
 
