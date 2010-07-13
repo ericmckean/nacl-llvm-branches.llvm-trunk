@@ -2436,7 +2436,7 @@ void SelectionDAGLegalize::ExpandNode(SDNode *Node,
     SDValue VAList = DAG.getLoad(PointerTy, dl, Chain, SrcPtr,
                                    V, 0, false, false, 0);
     Chain =  VAList.getValue(1);
-    if (Align > 1) {
+    if (Align > TLI.getMinStackArgumentAlignment()) {
       // Align must be a power of 2 for this code to work.
       assert(((Align & (Align-1)) == 0) && "Expected Align to be a power of 2");
 
