@@ -482,6 +482,10 @@ ARMTargetLowering::ARMTargetLowering(TargetMachine &TM)
   // ARMConstantIslandPass and messes up branch relaxation and placement
   // of constant islands.
   // benefitFromCodePlacementOpt = true;
+
+  // On ARM arguments smaller than 4 bytes are extended, so all arguments
+  // are at least 4 bytes aligned.
+  setMinStackArgumentAlignment(4);
 }
 
 const char *ARMTargetLowering::getTargetNodeName(unsigned Opcode) const {

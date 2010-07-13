@@ -538,6 +538,7 @@ TargetLowering::TargetLowering(TargetMachine &tm,TargetLoweringObjectFile *tlof)
   IfCvtBlockSizeLimit = 2;
   IfCvtDupBlockSizeLimit = 0;
   PrefLoopAlignment = 0;
+  MinStackArgumentAlignment = 1;
 
   InitLibcallNames(LibcallRoutineNames);
   InitCmpLibcallCCs(CmpLibcallCCs);

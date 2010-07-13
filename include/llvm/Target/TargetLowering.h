@@ -723,6 +723,12 @@ public:
     return IfCvtDupBlockSizeLimit;
   }
 
+  /// getMinStackArgumentAlignment - return the minimum stack alignment of an
+  /// argument.
+  unsigned getMinStackArgumentAlignment() const {
+    return MinStackArgumentAlignment;
+  }
+
   /// getPrefLoopAlignment - return the preferred loop alignment.
   ///
   unsigned getPrefLoopAlignment() const {
@@ -1103,7 +1109,13 @@ protected:
   void setPrefLoopAlignment(unsigned Align) {
     PrefLoopAlignment = Align;
   }
-  
+
+  /// setMinStackArgumentAlignment - Set the minimum stack alignment of an
+  /// argument.
+  void setMinStackArgumentAlignment(unsigned Align) {
+    MinStackArgumentAlignment = Align;
+  }
+
 public:
 
   virtual const TargetSubtarget *getSubtarget() {
@@ -1615,6 +1627,11 @@ private:
   /// IfCvtDupBlockSizeLimit - The maximum allowed size for a block to be
   /// duplicated during if-conversion.
   unsigned IfCvtDupBlockSizeLimit;
+
+  /// MinStackArgumentAlignment - The minimum alginment that any argument
+  /// on the stack needs to have.
+  ///
+  unsigned MinStackArgumentAlignment;
 
   /// PrefLoopAlignment - The perferred loop alignment.
   ///
