@@ -244,6 +244,21 @@ let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
 
 }
 
+let Defs = [RSP] in
+def NACL_SET_SPr   : I<0, Pseudo,
+                     (outs GR32:$esp), (ins GR32:$src),
+                     "naclrestsp\t$src, %r15",
+                     []>,
+                     Requires<[IsNaCl64]>;
+
+let Defs = [RSP] in
+def NACL_SET_SPm  : I<0, Pseudo,
+                     (outs GR32:$esp), (ins i32mem:$src),
+                     "naclrestsp\t$src, %r15",
+                     []>,
+                     Requires<[IsNaCl64]>;
+          
+
 // TODO: indicate that we clobber rcx
 def NACL_POP_RBP   : I<0, Pseudo,
                      (outs GR64:$reg), (ins),
