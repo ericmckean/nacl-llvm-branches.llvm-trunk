@@ -223,6 +223,10 @@ namespace {
                              SDValue &Index, SDValue &Disp,
                              SDValue &Segment,
                              SDValue &NodeWithChain);
+    // @LOCALMOD-BEGIN
+    void PreventNegativeIndex(SDValue N, X86ISelAddressMode &AM);
+    // @LOCALMOD-END
+
     
     bool TryFoldLoad(SDNode *P, SDValue N,
                      SDValue &Base, SDValue &Scale,
@@ -584,8 +588,11 @@ bool X86DAGToDAGISel::MatchSegmentBaseAddress(SDValue N,
 
 bool X86DAGToDAGISel::MatchLoad(SDValue N, X86ISelAddressMode &AM) {
   // @LOCALMOD-START
-  // TODO: needs more work
-  return true;
+  // Disable this tls access optimization in Native Client, since
+  // gs:0 (or fs:0 on X86-64) does not exactly contain its own address.
+  if (Subtarget->isTargetNaCl()) {
+    return true;
+  }
   // @LOCALMOD-END
 
   // This optimization is valid because the GNU TLS model defines that
@@ -1160,8 +1167,15 @@ bool X86DAGToDAGISel::SelectAddr(SDNode *Op, SDValue N, SDValue &Base,
     return false;
 
   EVT VT = N.getValueType();
+
+  // @LOCALMOD-START
+  if (Subtarget->isTargetNaCl64()) {
+    // NaCl needs to zero the top 32-bits of the index, so we can't
+    // allow the index register to be negative.
+    PreventNegativeIndex(N, AM);
+  }
+  // @LOCALMOD-END
   
-  // @LOCALMOD: TODO this writes base reg and needs to be investigated
   if (AM.BaseType == X86ISelAddressMode::RegBase) {
     if (!AM.getBaseReg().getNode())
       AM.setBaseReg(CurDAG->getRegister(0, VT));
@@ -1325,6 +1339,75 @@ bool X86DAGToDAGISel::TryFoldLoad(SDNode *P, SDValue N,
   
   return SelectAddr(P, N.getOperand(1), Base, Scale, Index, Disp, Segment);
 }
+
+// @LOCALMOD-BEGIN
+// PreventNegativeIndex - NaCl specific addressing fix
+//
+//   Because NaCl needs to zero the top 32-bits of the index, we can't
+//   allow the index register to be negative. However, if we are using a base
+//   frame index, global address or the constant pool, and AM.Disp > 0, then
+//   negative values of "index" may be expected to legally occur.
+//   To avoid this, we fold the displacement (and scale) back into the 
+//   index. This results in a LEA before the current instruction.
+//   Unfortunately, this may add a requirement for an additional register.
+//
+//   For example, this sandboxed code is broken if %eax is negative:
+//
+//     movl %eax,%eax
+//     incl -30(%rbp,%rax,4)
+//
+//   Instead, we now generate:
+//     leal -30(%rbp,%rax,4), %tmp
+//     movl %tmp,%tmp
+//     incl (%r15,%tmp,1)
+void X86DAGToDAGISel::PreventNegativeIndex(SDValue N, X86ISelAddressMode &AM) {
+  bool NeedsFixing =
+       (AM.BaseType == X86ISelAddressMode::FrameIndexBase || AM.GV || AM.CP) &&
+       AM.IndexReg.getNode() && 
+       AM.Disp > 0;
+
+  if (!NeedsFixing) 
+    return;
+
+  DebugLoc dl = N->getDebugLoc();
+  static const unsigned LogTable[] = { ~0, 0, 1, ~0, 2, ~0, ~0, ~0, 3 };
+  assert(AM.Scale < sizeof(LogTable)/sizeof(LogTable[0]));
+  unsigned ScaleLog = LogTable[AM.Scale];
+  assert(ScaleLog <= 3);
+  SmallVector<SDNode*, 8> NewNodes;
+  
+  SDValue DispNode = CurDAG->getConstant(AM.Disp, N.getValueType());
+  NewNodes.push_back(DispNode.getNode());
+
+  SDValue NewIndex = AM.IndexReg;
+  if (ScaleLog > 0) {
+    SDValue ShlCount = CurDAG->getConstant(ScaleLog, MVT::i8);
+    NewNodes.push_back(ShlCount.getNode());
+    SDValue ShlNode = CurDAG->getNode(ISD::SHL, dl, N.getValueType(),
+                                      NewIndex, ShlCount);
+    NewNodes.push_back(ShlNode.getNode());
+    NewIndex = ShlNode;
+  }
+
+  SDValue AddNode = CurDAG->getNode(ISD::ADD, dl, N.getValueType(), 
+                                NewIndex, DispNode);
+  NewNodes.push_back(AddNode.getNode());
+  NewIndex = AddNode;
+
+  AM.Disp = 0;
+  AM.Scale = 1;
+  AM.IndexReg = NewIndex;
+
+  // Insert the new nodes into the topological ordering.
+  for (unsigned i=0; i < NewNodes.size(); i++) {
+    if (NewNodes[i]->getNodeId() == -1 ||
+        NewNodes[i]->getNodeId() > N.getNode()->getNodeId()) {
+      CurDAG->RepositionNode(N.getNode(), NewNodes[i]);
+      NewNodes[i]->setNodeId(N.getNode()->getNodeId());
+    }
+  }
+}
+// @LOCALMOD-END
 
 /// getGlobalBaseReg - Return an SDNode that returns the value of
 /// the global base register. Output instructions required to

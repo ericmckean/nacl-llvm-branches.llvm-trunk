@@ -40,15 +40,19 @@ namespace {
     }
 
   private:
+
+    const TargetMachine *TM;
+    const TargetInstrInfo *TII;
+    const X86Subtarget *Subtarget;
+
     bool PassSandboxingStack(MachineBasicBlock &MBB,
                              const TargetInstrInfo* TII);
     bool PassSandboxingControlFlow(MachineBasicBlock &MBB,
-                                   const TargetInstrInfo* TII,
-                                   bool is64bit);
+                                   const TargetInstrInfo* TII);
     bool PassSandboxingMassageLoadStore(MachineBasicBlock &MBB);
     bool PassSandboxingPopRbp(MachineBasicBlock &MBB,
                               const TargetInstrInfo* TII);
-    void PassLighweightValidator(MachineBasicBlock &MBB, bool is64bit);
+    void PassLightWeightValidator(MachineBasicBlock &MBB, bool is64bit);
   };
 
   char X86NaClRewritePass::ID = 0;
@@ -60,7 +64,7 @@ static void DumpInstructionVerbose(const MachineInstr &MI);
 
 // Note: this is a little adhoc and needs more work
 static bool IsStackChange(MachineInstr &MI) {
-  return MI.modifiesRegister(N86::ESP) ||
+  return MI.modifiesRegister(X86::ESP) ||
          MI.modifiesRegister(X86::RSP);
 }
 
@@ -319,6 +323,8 @@ static bool IsSandboxedStackChange(MachineInstr &MI) {
   switch (Opcode) {
    default:
     return false;
+   case X86::NACL_SET_SPr:
+   case X86::NACL_SET_SPm:
    case X86::NACL_ADD_SP:
    case X86::NACL_SUB_SP:
    case X86::NACL_ADJ_SP:
@@ -354,7 +360,7 @@ static void DumpInstructionVerbose(const MachineInstr &MI) {
 /*
  * A primitive validator to catch problems at compile time
  */
-void X86NaClRewritePass::PassLighweightValidator(MachineBasicBlock &MBB,
+void X86NaClRewritePass::PassLightWeightValidator(MachineBasicBlock &MBB,
                                                  bool is64bit) {
   for (MachineBasicBlock::iterator MBBI = MBB.begin(), E = MBB.end();
        MBBI != E;
@@ -428,6 +434,11 @@ bool X86NaClRewritePass::PassSandboxingStack(MachineBasicBlock &MBB,
 
     MachineInstr &MI = *MBBI;
 
+    // TODO(pdox): We really need to generalize these modifications
+    //             instead of handling them case-by-case.
+    //             Unfortunately, this will have to wait until we can
+    //             do bundle-aware assembly/code emission.
+
     if (IsStackChange(MI) && !IsSandboxedStackChange(MI)) {
       const unsigned Opcode = MI.getOpcode();
       switch (Opcode) {
@@ -435,6 +446,22 @@ bool X86NaClRewritePass::PassSandboxingStack(MachineBasicBlock &MBB,
          dbgs() << "@PassSandboxingStack UNEXPECTED STACK CHANGE\n\n";
          DumpInstructionVerbose(MI);
          assert(0);
+         break;
+       case X86::MOV32rr:
+         DEBUG(dbgs() << "@PassSandboxingStack: BEFORE\n");
+         DEBUG(DumpInstructionVerbose(MI));
+         MI.setDesc(TII->get(X86::NACL_SET_SPr));
+         DEBUG(dbgs() << "@PassSandboxingStack: AFTER\n");
+         DEBUG(DumpInstructionVerbose(MI));
+         Modified = true;
+         break;
+       case X86::MOV32rm:
+         DEBUG(dbgs() << "@PassSandboxingStack: BEFORE\n");
+         DEBUG(DumpInstructionVerbose(MI));
+         MI.setDesc(TII->get(X86::NACL_SET_SPm));
+         DEBUG(dbgs() << "@PassSandboxingStack: AFTER\n");
+         DEBUG(DumpInstructionVerbose(MI));
+         Modified = true;
          break;
 
        case X86::ADD64ri8:
@@ -479,45 +506,44 @@ bool X86NaClRewritePass::PassSandboxingStack(MachineBasicBlock &MBB,
 
 
 /*
- * Sandboxes loads and stores via extra MachineOperand &BaseRegMachineOperand &BaseRegMachineOperand &BaseRegMachineOperand &BaseRegbase reg (64 bit only)
+ * Sandboxes loads and stores (64-bit only)
  */
-static bool MassageMemoryOp(MachineInstr &MI, int Op,
-                            bool doBase, bool doIndex, bool doSeg) {
+static bool SandBoxMemoryOperand(MachineBasicBlock &MBB,
+                                 MachineBasicBlock::iterator MBBI,
+                                 unsigned Op) {
   bool Modified = false;
+  MachineInstr &MI = *MBBI;
   assert(isMem(&MI, Op));
   MachineOperand &BaseReg  = MI.getOperand(Op + 0);
+  MachineOperand &Scale = MI.getOperand(Op + 1);
   MachineOperand &IndexReg  = MI.getOperand(Op + 2);
+  MachineOperand &Disp = MI.getOperand(Op + 3);
   MachineOperand &SegmentReg = MI.getOperand(Op + 4);
 
   // We need to make sure the index is using a 64-bit reg.
-  if (doIndex){
-    const unsigned reg64bit = Get64BitRegFor32BitReg(IndexReg.getReg());
-    if (reg64bit) {
-      IndexReg.setReg(reg64bit);
+  const unsigned reg64bit = Get64BitRegFor32BitReg(IndexReg.getReg());
+  if (reg64bit) {
+    IndexReg.setReg(reg64bit);
 
-      DEBUG(dbgs() << "MassageMemoryOp doIndex on (64 vs 32) "
-            << reg64bit << " vs " << IndexReg.getReg() << "\n");
+    DEBUG(dbgs() << "SandBoxMemoryOperand doIndex on (64 vs 32) "
+          << reg64bit << " vs " << IndexReg.getReg() << "\n");
 
-      DEBUG(DumpInstructionVerbose(MI));
-
-      Modified = true;
-    }
+    DEBUG(DumpInstructionVerbose(MI));
+    Modified = true;
   }
 
   bool isIndexAbsolute = (IndexReg.getReg() == X86::RSP ||
                           IndexReg.getReg() == X86::RBP ||
                           IndexReg.getReg() == X86::RIP);
 
-  // sneak in r15 as the base if possible
+  // Sneak in r15 as the base if needed
   // TODO: if a base reg is present, check whether it is a permissible reg
-  if (doBase) {
-    if (!isIndexAbsolute && !BaseReg.getReg()) {
-      BaseReg.setReg(X86::R15);
+  if (!isIndexAbsolute && !BaseReg.getReg()) {
+    BaseReg.setReg(X86::R15);
 
-      DEBUG(dbgs() << "MassageMemoryOp doBase\n");
-      DEBUG(DumpInstructionVerbose(MI));
-      Modified = true;
-    }
+    DEBUG(dbgs() << "SandBoxMemoryOperand doBase\n");
+    DEBUG(DumpInstructionVerbose(MI));
+    Modified = true;
   }
 
   if (isIndexAbsolute)
@@ -528,15 +554,14 @@ static bool MassageMemoryOp(MachineInstr &MI, int Op,
   // Otherwise, we need to clear the upper 32bits...
   bool isIndexSafe = IndexReg.getReg() == 0 || isIndexAbsolute;
 
-  if (doSeg) {
-    if (!isIndexSafe && !SegmentReg.getReg()) {
-      SegmentReg.setReg(X86::PSEUDO_NACL_SEG);
+  // Add an instruction immediately prior to truncate the upper 32-bits
+  if (!isIndexSafe && !SegmentReg.getReg()) {
+    SegmentReg.setReg(X86::PSEUDO_NACL_SEG);
 
-      DEBUG(dbgs() << "MassageMemoryOp doSeg\n");
-      DEBUG(DumpInstructionVerbose(MI));
+    DEBUG(dbgs() << "SandBoxMemoryOperand doSeg\n");
+    DEBUG(DumpInstructionVerbose(MI));
 
-      Modified = true;
-    }
+    Modified = true;
   }
   return Modified;
 }
@@ -545,9 +570,10 @@ static bool MassageMemoryOp(MachineInstr &MI, int Op,
 bool X86NaClRewritePass::PassSandboxingMassageLoadStore(MachineBasicBlock &MBB) {
   bool Modified = false;
 
-  for (MachineBasicBlock::iterator MBBI = MBB.begin(), E = MBB.end();
-       MBBI != E;
-       ++MBBI) {
+  assert(Subtarget->isTargetNaCl64());
+
+  for (MachineBasicBlock::iterator MBBI = MBB.begin(); 
+                                   MBBI != MBB.end(); ++MBBI) {
     MachineInstr &MI = *MBBI;
 
     if (IsPushPop(MI))
@@ -557,7 +583,7 @@ bool X86NaClRewritePass::PassSandboxingMassageLoadStore(MachineBasicBlock &MBB) 
       bool found = false;
       unsigned memOperand = FindMemoryOperand(MI, found);
       if (found) {
-        if (MassageMemoryOp(MI, memOperand, true, true, true)) {
+        if (SandBoxMemoryOperand(MBB, MBBI, memOperand)) {
           DEBUG(dbgs() << "@PassSandboxingMassageLoadStore after massage op #"
                 << memOperand << "\n");
           DEBUG(DumpInstructionVerbose(MI));
@@ -573,7 +599,7 @@ bool X86NaClRewritePass::PassSandboxingMassageLoadStore(MachineBasicBlock &MBB) 
       bool found = false;
       unsigned memOperand = FindMemoryOperand(MI, found);
       if (found) {
-        if (MassageMemoryOp(MI, memOperand, true, true, true)) {
+        if (SandBoxMemoryOperand(MBB, MBBI, memOperand)) {
           DEBUG(dbgs() << "@PassSandboxingMassageLoadStore after massage op #"
                 << memOperand << "\n");
           DEBUG(DumpInstructionVerbose(MI));
@@ -619,9 +645,10 @@ static void UnexpectedControlFlow(const MachineInstr &MI) {
 /*
  * Sandboxes stack changes (64 bit only)
  */
-bool X86NaClRewritePass::PassSandboxingControlFlow(MachineBasicBlock &MBB,
-                                                   const TargetInstrInfo* TII,
-                                                   bool is64Bit) {
+bool X86NaClRewritePass::PassSandboxingControlFlow(
+                             MachineBasicBlock &MBB, 
+                             const TargetInstrInfo* TII) {
+  bool is64Bit = Subtarget->is64Bit();
   bool Modified = false;
 
   for (MachineBasicBlock::iterator MBBI = MBB.begin(), E = MBB.end();
@@ -726,23 +753,26 @@ bool X86NaClRewritePass::PassSandboxingControlFlow(MachineBasicBlock &MBB,
 bool X86NaClRewritePass::runOnMachineFunction(MachineFunction &MF) {
   bool Modified = false;
 
-  const TargetMachine &TM = MF.getTarget();
-  const TargetInstrInfo* TII = TM.getInstrInfo();
+  TM = &MF.getTarget();
+  TII = TM->getInstrInfo();
+  Subtarget = &TM->getSubtarget<X86Subtarget>();
 
-  const bool is64bit = TM.getSubtarget<X86Subtarget>().is64Bit();
+
+  assert(Subtarget->isTargetNaCl() &&
+         "Unexpected target type in NaClRewritePass!");
+
   DEBUG(dbgs() << "*************** NaCl Rewrite Pass ***************\n");
   for (MachineFunction::iterator MFI = MF.begin(), E = MF.end();
        MFI != E;
        ++MFI) {
-    // TODO: the passes should be controllable by a command line flag
-    if (is64bit) {
+    if (Subtarget->isTargetNaCl64()) {
       Modified |= PassSandboxingStack(*MFI, TII);
       Modified |= PassSandboxingMassageLoadStore(*MFI);
       Modified |= PassSandboxingPopRbp(*MFI, TII);
     }
 
-    Modified |= PassSandboxingControlFlow(*MFI, TII, is64bit);
-    PassLighweightValidator(*MFI, is64bit);
+    Modified |= PassSandboxingControlFlow(*MFI, TII);
+    PassLightWeightValidator(*MFI, Subtarget->is64Bit());
   }
 
   return Modified;
@@ -755,3 +785,4 @@ FunctionPass* createX86NaClRewritePass() {
   return new X86NaClRewritePass();
 }
 }
+
