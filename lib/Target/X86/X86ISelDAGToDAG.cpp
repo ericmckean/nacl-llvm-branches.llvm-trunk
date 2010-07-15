@@ -1360,6 +1360,13 @@ bool X86DAGToDAGISel::TryFoldLoad(SDNode *P, SDValue N,
 //     leal -30(%rbp,%rax,4), %tmp
 //     movl %tmp,%tmp
 //     incl (%r15,%tmp,1)
+//
+//  TODO(espindola): This might not be complete since the matcher can select
+//  any dag node to go in the index. This is also not how the rest of the
+//  matcher logic works, if the matcher selects something, it must be
+//  valid and not depend on further patching. A more desirable fix is
+//  probably to update the matching code to avoid assigning a register
+//  to a value that we cannot prove is positive.
 void X86DAGToDAGISel::PreventNegativeIndex(SDValue N, X86ISelAddressMode &AM) {
   bool NeedsFixing =
        (AM.BaseType == X86ISelAddressMode::FrameIndexBase || AM.GV || AM.CP) &&
