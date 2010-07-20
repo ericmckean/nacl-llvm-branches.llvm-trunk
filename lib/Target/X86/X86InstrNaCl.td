@@ -109,7 +109,6 @@ def : Pat<(X86tcret (i32 texternalsym:$dst), imm:$off),
           (NACL_TCRETURNdi texternalsym:$dst, imm:$off)>,
 	  Requires<[IsNaCl32]>;
 
-
 let AddedComplexity = 5, isCodeGenOnly = 1 in
 def NACL_GS_MOV32rm : I<0x8B, MRMSrcMem, (outs GR32:$dst), (ins i32mem:$src),
                    "movl\t%gs:$src, $dst",
@@ -187,7 +186,7 @@ let isTerminator = 1, isReturn = 1, isBarrier = 1,
 
   def NACL_RET64    : I<0, Pseudo, (outs), (ins variable_ops),
                      "pop %rcx\n\tnacljmp %ecx, %r15",
-                     []>, 
+                     []>,
                      Requires<[IsNaCl64]>;
 }
 
@@ -205,16 +204,17 @@ let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1 in
                             variable_ops),
                            "#TC_RETURN $dst $offset", []>,
                           Requires<[IsNaCl64]>;
-  def NACL_TCRETURNri64 : I<0, Pseudo, (outs), 
-                           (ins GR32_TC:$dst, i32imm:$offset, variable_ops),
-                           "#TC_RETURN $dst $offset", []>,
+  def NACL_TCRETURNri64 : I<0, Pseudo, (outs),
+                          (ins GR32_TC_64:$dst, i32imm:$offset, variable_ops),
+                          "#TC_RETURN $dst $offset", []>,
                           Requires<[IsNaCl64]>;
 
   def NACL_TAILJMPd64 : Ii32<0xE9, RawFrm, (outs),
                             (ins i32imm_pcrel:$dst, variable_ops),
                             "jmp\t$dst  # TAILCALL", []>,
                         Requires<[IsNaCl64]>;
-  def NACL_TAILJMPr64 : I<0, Pseudo, (outs), (ins GR32_TC:$dst, variable_ops),
+  def NACL_TAILJMPr64 : I<0, Pseudo, (outs),
+                          (ins GR32_TC_64:$dst, variable_ops),
                           "nacljmp\t$dst,%r15  # TAILCALL", []>,
                         Requires<[IsNaCl64]>;
 }
@@ -230,11 +230,37 @@ def : Pat<(X86tcret (i32 texternalsym:$dst), imm:$off),
           (NACL_TCRETURNdi64 texternalsym:$dst, imm:$off)>,
 	  Requires<[IsNaCl64]>;
 
-def : Pat<(X86tcret GR32_TC:$dst, imm:$off),
-          (NACL_TCRETURNri64 GR32_TC:$dst, imm:$off)>,
+def : Pat<(X86tcret GR32_TC_64:$dst, imm:$off),
+          (NACL_TCRETURNri64 GR32_TC_64:$dst, imm:$off)>,
 	  Requires<[IsNaCl64]>;
 
 
+// Special i32mem for addresses of load folding tail calls. These are not
+// allowed to use callee-saved registers since they must be scheduled
+// after callee-saved register are popped.
+def i32mem_TC_64 : Operand<i32> {
+  let PrintMethod = "printi32mem";
+  let MIOperandInfo = (ops GR32_TC_64, i8imm, GR32_TC_64, i32imm, i8imm);
+  let ParserMatchClass = X86MemAsmOperand;
+}
+
+/// Versions of MOV32rr, MOV32rm, and MOV32mr for i32mem_TC_64 and GR32_TC_64.
+let neverHasSideEffects = 1 in
+def MOV32rr_TC_64 : I<0x89, MRMDestReg, (outs GR32_TC_64:$dst),
+                    (ins GR32_TC_64:$src),
+                    "mov{l}\t{$src, $dst|$dst, $src}", []>;
+
+let mayLoad = 1, canFoldAsLoad = 1, isReMaterializable = 1 in
+def MOV32rm_TC_64 : I<0x8B, MRMSrcMem, (outs GR32_TC_64:$dst),
+                    (ins i32mem_TC_64:$src),
+                    "mov{l}\t{$src, $dst|$dst, $src}",
+                    []>;
+
+let mayStore = 1 in
+def MOV32mr_TC_64 : I<0x89, MRMDestMem, (outs),
+                    (ins i32mem_TC_64:$dst, GR32_TC_64:$src),
+                    "mov{l}\t{$src, $dst|$dst, $src}",
+                    []>;
 
 let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
   def NACL_JMP64r     : I<0, Pseudo, (outs), (ins GR64:$dst),
@@ -244,25 +270,29 @@ let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
 
 }
 
+
 let Defs = [RSP] in
 def NACL_SET_SPr   : I<0, Pseudo,
                      (outs GR32:$esp), (ins GR32:$src),
-                     "naclrestsp\t$src, %r15",
+                     "naclrestsp_noflags\t$src, %r15",
                      []>,
                      Requires<[IsNaCl64]>;
 
 let Defs = [RSP] in
 def NACL_SET_SPm  : I<0, Pseudo,
                      (outs GR32:$esp), (ins i32mem:$src),
-                     "naclrestsp\t$src, %r15",
+                     "naclrestsp_noflags\t$src, %r15",
                      []>,
                      Requires<[IsNaCl64]>;
           
 
-// TODO: indicate that we clobber rcx
+// Important: Be careful with what you clobber in NACL_POP_RBP.
+// During tail calls, all parameter registers and callee saved
+// registers are potentially live. (we clobber EFLAGS, but that seems ok)
 def NACL_POP_RBP   : I<0, Pseudo,
                      (outs GR64:$reg), (ins),
-                     "pop\t%rcx\n\t naclrestbp\t%ecx, %r15",
+                     "naclrestbp\t(%rsp), %r15\n\t"
+                     "naclasp{q}\t{$$8, %r15|%r15, $$8}",
                      []>,
                      Requires<[IsNaCl64]>;
 

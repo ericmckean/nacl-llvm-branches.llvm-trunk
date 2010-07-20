@@ -270,6 +270,7 @@ static int X86FlagFromOpName(FlagsConstantEmitter *flags,
   REG("FR32");
   REG("RFP32");
   REG("GR64");
+  REG("GR32_TC_64"); // @LOCALMOD
   REG("GR64_TC");
   REG("FR64");
   REG("VR64");
@@ -287,6 +288,7 @@ static int X86FlagFromOpName(FlagsConstantEmitter *flags,
   MEM("i16mem");
   MEM("i32mem");
   MEM("i32mem_TC");
+  MEM("i32mem_TC_64"); // @LOCALMOD
   MEM("f32mem");
   MEM("ssmem");
   MEM("opaque32mem");

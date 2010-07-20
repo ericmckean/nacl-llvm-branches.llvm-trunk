@@ -233,6 +233,8 @@ X86InstrInfo::X86InstrInfo(X86TargetMachine &tm)
     { X86::BT32ri8,     X86::BT32mi8, 1, 0 },
     { X86::BT64ri8,     X86::BT64mi8, 1, 0 },
     // @LOCALMOD-START
+    // TODO(pdox): Figure out how to remove these only when
+    //             Subtarget->isTargetNaCl()
     // { X86::CALL32r,     X86::CALL32m, 1, 0 },
     // { X86::CALL64r,     X86::CALL64m, 1, 0 },
     // @LOCALMOD-END
@@ -271,6 +273,7 @@ X86InstrInfo::X86InstrInfo(X86TargetMachine &tm)
     { X86::MOV32ri,     X86::MOV32mi, 0, 0 },
     { X86::MOV32rr,     X86::MOV32mr, 0, 0 },
     { X86::MOV32rr_TC,  X86::MOV32mr_TC, 0, 0 },
+    { X86::MOV32rr_TC_64, X86::MOV32mr_TC_64, 0, 0 }, // @LOCALMOD
     { X86::MOV64ri32,   X86::MOV64mi32, 0, 0 },
     { X86::MOV64rr,     X86::MOV64mr, 0, 0 },
     { X86::MOV8ri,      X86::MOV8mi, 0, 0 },
@@ -305,8 +308,8 @@ X86InstrInfo::X86InstrInfo(X86TargetMachine &tm)
     { X86::SETOr,       X86::SETOm, 0, 0 },
     { X86::SETPr,       X86::SETPm, 0, 0 },
     { X86::SETSr,       X86::SETSm, 0, 0 },
-    { X86::TAILJMPr,    X86::TAILJMPm, 1, 0 },
-    { X86::TAILJMPr64,  X86::TAILJMPm64, 1, 0 },
+//    { X86::TAILJMPr,    X86::TAILJMPm, 1, 0 },
+//    { X86::TAILJMPr64,  X86::TAILJMPm64, 1, 0 },
     { X86::TEST16ri,    X86::TEST16mi, 1, 0 },
     { X86::TEST32ri,    X86::TEST32mi, 1, 0 },
     { X86::TEST64ri32,  X86::TEST64mi32, 1, 0 },
@@ -383,6 +386,7 @@ X86InstrInfo::X86InstrInfo(X86TargetMachine &tm)
     { X86::MOV16rr,         X86::MOV16rm, 0 },
     { X86::MOV32rr,         X86::MOV32rm, 0 },
     { X86::MOV32rr_TC,      X86::MOV32rm_TC, 0 },
+    { X86::MOV32rr_TC_64,   X86::MOV32rm_TC_64, 0 }, // @LOCALMOD
     { X86::MOV64rr,         X86::MOV64rm, 0 },
     { X86::MOV64toPQIrr,    X86::MOVQI2PQIrm, 0 },
     { X86::MOV64toSDrr,     X86::MOV64toSDrm, 0 },
@@ -683,6 +687,7 @@ bool X86InstrInfo::isMoveInstr(const MachineInstr& MI,
   case X86::MOV32rr: 
   case X86::MOV64rr:
   case X86::MOV32rr_TC: 
+  case X86::MOV32rr_TC_64: // @LOCALMOD
   case X86::MOV64rr_TC:
 
   // FP Stack register class copies
@@ -1912,6 +1917,8 @@ bool X86InstrInfo::copyRegToReg(MachineBasicBlock &MBB,
       Opc = X86::MOV8rr;
     } else if (CommonRC == &X86::GR64_TCRegClass) {
       Opc = X86::MOV64rr_TC;
+    } else if (CommonRC == &X86::GR32_TC_64RegClass) {
+      Opc = X86::MOV32rr_TC_64;
     } else if (CommonRC == &X86::GR32_TCRegClass) {
       Opc = X86::MOV32rr_TC;
     } else if (CommonRC == &X86::RFP32RegClass) {
@@ -2055,6 +2062,8 @@ static unsigned getStoreRegOpcode(unsigned SrcReg,
     Opc = X86::MOV64mr_TC;
   } else if (RC == &X86::GR32_TCRegClass) {
     Opc = X86::MOV32mr_TC;
+  } else if (RC == &X86::GR32_TC_64RegClass) {
+    Opc = X86::MOV32mr_TC_64;
   } else if (RC == &X86::RFP80RegClass) {
     Opc = X86::ST_FpP80m;   // pops
   } else if (RC == &X86::RFP64RegClass) {
@@ -2152,6 +2161,8 @@ static unsigned getLoadRegOpcode(unsigned DestReg,
     Opc = X86::MOV64rm_TC;
   } else if (RC == &X86::GR32_TCRegClass) {
     Opc = X86::MOV32rm_TC;
+  } else if (RC == &X86::GR32_TC_64RegClass) {
+    Opc = X86::MOV32rm_TC_64;
   } else if (RC == &X86::RFP80RegClass) {
     Opc = X86::LD_Fp80m;
   } else if (RC == &X86::RFP64RegClass) {

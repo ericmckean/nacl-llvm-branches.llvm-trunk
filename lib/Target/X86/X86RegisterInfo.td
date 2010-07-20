@@ -556,9 +556,15 @@ def GR64_ABCD : RegisterClass<"X86", [i64], 64, [RAX, RCX, RDX, RBX]> {
 def GR32_TC   : RegisterClass<"X86", [i32], 32, [EAX, ECX, EDX]> {
   let SubRegClassList = [GR8, GR8, GR16];
 }
+// @LOCALMOD-START
+def GR32_TC_64: RegisterClass<"X86", [i32], 32, [EAX, ECX, EDX, ESI, EDI,
+                                                 R8D, R9D, R11D]> {
+  let SubRegClassList = [GR8, GR8, GR16, GR32_TC];
+}
+// @LOCALMOD-END
 def GR64_TC   : RegisterClass<"X86", [i64], 64, [RAX, RCX, RDX, RSI, RDI,
                                                  R8, R9, R11]> {
-  let SubRegClassList = [GR8, GR8, GR16, GR32_TC];
+  let SubRegClassList = [GR8, GR8, GR16, GR32_TC, GR32_TC_64];
 }
 
 // GR8_NOREX - GR8 registers which do not require a REX prefix.
