@@ -183,17 +183,17 @@ enum SolverResult PointerTracking::isLoopGuardedBy(const Loop *L,
                                                    Predicate Pred,
                                                    const SCEV *A,
                                                    const SCEV *B) const {
-  if (SE->isLoopGuardedByCond(L, Pred, A, B))
+  if (SE->isLoopEntryGuardedByCond(L, Pred, A, B))
     return AlwaysTrue;
   Pred = ICmpInst::getSwappedPredicate(Pred);
-  if (SE->isLoopGuardedByCond(L, Pred, B, A))
+  if (SE->isLoopEntryGuardedByCond(L, Pred, B, A))
     return AlwaysTrue;
 
   Pred = ICmpInst::getInversePredicate(Pred);
-  if (SE->isLoopGuardedByCond(L, Pred, B, A))
+  if (SE->isLoopEntryGuardedByCond(L, Pred, B, A))
     return AlwaysFalse;
   Pred = ICmpInst::getSwappedPredicate(Pred);
-  if (SE->isLoopGuardedByCond(L, Pred, A, B))
+  if (SE->isLoopEntryGuardedByCond(L, Pred, A, B))
     return AlwaysTrue;
   return Unknown;
 }
@@ -263,5 +263,5 @@ void PointerTracking::print(raw_ostream &OS, const Module* M) const {
   }
 }
 
-static RegisterPass<PointerTracking> X("pointertracking",
-                                       "Track pointer bounds", false, true);
+INITIALIZE_PASS(PointerTracking, "pointertracking",
+                "Track pointer bounds", false, true);

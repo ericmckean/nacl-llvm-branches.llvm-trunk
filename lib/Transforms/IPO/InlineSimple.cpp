@@ -49,12 +49,15 @@ namespace {
       CA.growCachedCostInfo(Caller, Callee);
     }
     virtual bool doInitialization(CallGraph &CG);
+    void releaseMemory() {
+      CA.clear();
+    }
   };
 }
 
 char SimpleInliner::ID = 0;
-static RegisterPass<SimpleInliner>
-X("inline", "Function Integration/Inlining");
+INITIALIZE_PASS(SimpleInliner, "inline",
+                "Function Integration/Inlining", false, false);
 
 Pass *llvm::createFunctionInliningPass() { return new SimpleInliner(); }
 

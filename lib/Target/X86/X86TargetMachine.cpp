@@ -17,12 +17,14 @@
 #include "llvm/PassManager.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/Passes.h"
+#include "llvm/MC/MCCodeEmitter.h"
+#include "llvm/MC/MCStreamer.h"
 #include "llvm/Support/FormattedStream.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/Target/TargetRegistry.h"
 using namespace llvm;
 
-static const MCAsmInfo *createMCAsmInfo(const Target &T, StringRef TT) {
+static MCAsmInfo *createMCAsmInfo(const Target &T, StringRef TT) {
   Triple TheTriple(TT);
   switch (TheTriple.getOS()) {
   case Triple::Darwin:
@@ -34,6 +36,18 @@ static const MCAsmInfo *createMCAsmInfo(const Target &T, StringRef TT) {
     return new X86MCAsmInfoCOFF(TheTriple);
   default:
     return new X86ELFMCAsmInfo(TheTriple);
+  }
+}
+
+static MCStreamer *createMCStreamer(const Target &T, const std::string &TT,
+                                    MCContext &Ctx, TargetAsmBackend &TAB,
+                                    raw_ostream &_OS,
+                                    MCCodeEmitter *_Emitter,
+                                    bool RelaxAll) {
+  Triple TheTriple(TT);
+  switch (TheTriple.getOS()) {
+  default:
+    return createMachOStreamer(Ctx, TAB, _OS, _Emitter, RelaxAll);
   }
 }
 
@@ -57,6 +71,12 @@ extern "C" void LLVMInitializeX86Target() {
                                      createX86_32AsmBackend);
   TargetRegistry::RegisterAsmBackend(TheX86_64Target,
                                      createX86_64AsmBackend);
+
+  // Register the object streamer.
+  TargetRegistry::RegisterObjectStreamer(TheX86_32Target,
+                                         createMCStreamer);
+  TargetRegistry::RegisterObjectStreamer(TheX86_64Target,
+                                         createMCStreamer);
 }
 
 
@@ -82,7 +102,8 @@ X86TargetMachine::X86TargetMachine(const Target &T, const std::string &TT,
               Subtarget.getStackAlignment(),
               (Subtarget.isTargetWin64() ? -40 :
                (Subtarget.is64Bit() ? -8 : -4))),
-    InstrInfo(*this), JITInfo(*this), TLInfo(*this), ELFWriterInfo(*this) {
+    InstrInfo(*this), JITInfo(*this), TLInfo(*this), TSInfo(*this),
+    ELFWriterInfo(*this) {
   DefRelocModel = getRelocationModel();
       
   // If no relocation model was picked, default as appropriate for the target.
@@ -152,14 +173,16 @@ bool X86TargetMachine::addInstSelector(PassManagerBase &PM,
   // Install an instruction selector.
   PM.add(createX86ISelDag(*this, OptLevel));
 
-  // Install a pass to insert x87 FP_REG_KILL instructions, as needed.
-  PM.add(createX87FPRegKillInserterPass());
+  // For 32-bit, prepend instructions to set the "global base reg" for PIC.
+  if (!Subtarget.is64Bit())
+    PM.add(createGlobalBaseRegPass());
 
   return false;
 }
 
 bool X86TargetMachine::addPreRegAlloc(PassManagerBase &PM,
                                       CodeGenOpt::Level OptLevel) {
+  PM.add(createX86MaxStackAlignmentHeuristicPass());
   return false;  // -print-machineinstr shouldn't print after this.
 }
 
@@ -167,6 +190,15 @@ bool X86TargetMachine::addPostRegAlloc(PassManagerBase &PM,
                                        CodeGenOpt::Level OptLevel) {
   PM.add(createX86FloatingPointStackifierPass());
   return true;  // -print-machineinstr should print after this.
+}
+
+bool X86TargetMachine::addPreEmitPass(PassManagerBase &PM,
+                                      CodeGenOpt::Level OptLevel) {
+  if (OptLevel != CodeGenOpt::None && Subtarget.hasSSE2()) {
+    PM.add(createSSEDomainFixPass());
+    return true;
+  }
+  return false;
 }
 
 bool X86TargetMachine::addCodeEmitter(PassManagerBase &PM,
