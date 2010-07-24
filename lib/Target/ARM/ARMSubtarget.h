@@ -26,7 +26,7 @@ class GlobalValue;
 class ARMSubtarget : public TargetSubtarget {
 protected:
   enum ARMArchEnum {
-    V4, V4T, V5T, V5TE, V6, V6T2, V7A
+    V4, V4T, V5T, V5TE, V6, V6T2, V7A, V7M
   };
 
   enum ARMFPEnum {
@@ -39,7 +39,7 @@ protected:
   };
 
   /// ARMArchVersion - ARM architecture version: V4, V4T (base), V5T, V5TE,
-  /// V6, V6T2, V7A.
+  /// V6, V6T2, V7A, V7M.
   ARMArchEnum ARMArchVersion;
 
   /// ARMFPUType - Floating Point Unit type.
@@ -49,6 +49,13 @@ protected:
   /// specified. Use the method useNEONForSinglePrecisionFP() to
   /// determine if NEON should actually be used.
   bool UseNEONForSinglePrecisionFP;
+
+  /// SlowVMLx - If the VFP2 instructions are available, indicates whether
+  /// the VML[AS] instructions are slow (if so, don't use them).
+  bool SlowVMLx;
+
+  /// SlowFPBrcc - True if floating point compare + branch is slow.
+  bool SlowFPBrcc;
 
   /// IsThumb - True if we are in thumb mode, false if in ARM mode.
   bool IsThumb;
@@ -69,6 +76,13 @@ protected:
   /// HasFP16 - True if subtarget supports half-precision FP (We support VFP+HF
   /// only so far)
   bool HasFP16;
+
+  /// HasHardwareDivide - True if subtarget supports [su]div
+  bool HasHardwareDivide;
+
+  /// HasT2ExtractPack - True if subtarget supports thumb2 extract/pack
+  /// instructions.
+  bool HasT2ExtractPack;
 
   /// stackAlignment - The minimum alignment known to hold of the stack frame on
   /// entry to the function and which must be maintained by every function.
@@ -119,6 +133,10 @@ protected:
   bool hasNEON() const { return ARMFPUType >= NEON;  }
   bool useNEONForSinglePrecisionFP() const {
     return hasNEON() && UseNEONForSinglePrecisionFP; }
+  bool hasDivide() const { return HasHardwareDivide; }
+  bool hasT2ExtractPack() const { return HasT2ExtractPack; }
+  bool useVMLx() const {return hasVFP2() && !SlowVMLx; }
+  bool isFPBrccSlow() const { return SlowFPBrcc; }
 
   bool hasFP16() const { return HasFP16; }
 
@@ -155,7 +173,7 @@ protected:
 
   /// GVIsIndirectSymbol - true if the GV will be accessed via an indirect
   /// symbol.
-  bool GVIsIndirectSymbol(GlobalValue *GV, Reloc::Model RelocM) const;
+  bool GVIsIndirectSymbol(const GlobalValue *GV, Reloc::Model RelocM) const;
 };
 } // End llvm namespace
 

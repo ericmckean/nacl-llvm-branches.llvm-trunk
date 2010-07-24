@@ -89,13 +89,14 @@ public:
 
   /// has_error - Return the value of the flag in this raw_ostream indicating
   /// whether an output error has been encountered.
+  /// This doesn't implicitly flush any pending output.
   bool has_error() const {
     return Error;
   }
 
   /// clear_error - Set the flag read by has_error() to false. If the error
   /// flag is set at the time when this raw_ostream's destructor is called,
-  /// llvm_report_error is called to report the error. Use clear_error()
+  /// report_fatal_error is called to report the error. Use clear_error()
   /// after handling the error to avoid this behavior.
   void clear_error() {
     Error = false;
@@ -233,8 +234,8 @@ public:
   /// @param bold bold/brighter text, default false
   /// @param bg if true change the background, default: change foreground
   /// @returns itself so it can be used within << invocations
-  virtual raw_ostream &changeColor(enum Colors, bool = false,
-				   bool = false) { return *this; }
+  virtual raw_ostream &changeColor(enum Colors, bool = false, bool = false) { 
+    return *this; }
 
   /// Resets the colors to terminal defaults. Call this when you are done
   /// outputting colored text, or before program exit.

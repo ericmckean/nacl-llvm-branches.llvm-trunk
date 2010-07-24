@@ -14,12 +14,9 @@
 #ifndef LLVM_CODEGEN_MACHINEFRAMEINFO_H
 #define LLVM_CODEGEN_MACHINEFRAMEINFO_H
 
-#include "llvm/ADT/BitVector.h"
-#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/System/DataTypes.h"
 #include <cassert>
-#include <limits>
 #include <vector>
 
 namespace llvm {
@@ -27,30 +24,23 @@ class raw_ostream;
 class TargetData;
 class TargetRegisterClass;
 class Type;
-class MachineModuleInfo;
 class MachineFunction;
 class MachineBasicBlock;
 class TargetFrameInfo;
+class BitVector;
 
 /// The CalleeSavedInfo class tracks the information need to locate where a
 /// callee saved register in the current frame.  
 class CalleeSavedInfo {
-
-private:
   unsigned Reg;
-  const TargetRegisterClass *RegClass;
   int FrameIdx;
   
 public:
-  CalleeSavedInfo(unsigned R, const TargetRegisterClass *RC, int FI = 0)
-  : Reg(R)
-  , RegClass(RC)
-  , FrameIdx(FI)
-  {}
+  explicit CalleeSavedInfo(unsigned R, int FI = 0)
+  : Reg(R), FrameIdx(FI) {}
   
   // Accessors.
   unsigned getReg()                        const { return Reg; }
-  const TargetRegisterClass *getRegClass() const { return RegClass; }
   int getFrameIdx()                        const { return FrameIdx; }
   void setFrameIdx(int FI)                       { FrameIdx = FI; }
 };
@@ -108,8 +98,7 @@ class MachineFrameInfo {
     // cannot alias any other memory objects.
     bool isSpillSlot;
 
-    StackObject(uint64_t Sz, unsigned Al, int64_t SP, bool IM,
-                bool isSS)
+    StackObject(uint64_t Sz, unsigned Al, int64_t SP, bool IM, bool isSS)
       : SPOffset(SP), Size(Sz), Alignment(Al), isImmutable(IM),
         isSpillSlot(isSS) {}
   };
@@ -132,6 +121,10 @@ class MachineFrameInfo {
   /// FrameAddressTaken - This boolean keeps track of whether there is a call
   /// to builtin \@llvm.frameaddress.
   bool FrameAddressTaken;
+
+  /// ReturnAddressTaken - This boolean keeps track of whether there is a call
+  /// to builtin \@llvm.returnaddress.
+  bool ReturnAddressTaken;
 
   /// StackSize - The prolog/epilog code inserter calculates the final stack
   /// offsets for all of the fixed size objects, updating the Objects list
@@ -160,8 +153,12 @@ class MachineFrameInfo {
   ///
   unsigned MaxAlignment;
 
-  /// HasCalls - Set to true if this function has any function calls.  This is
-  /// only valid during and after prolog/epilog code insertion.
+  /// AdjustsStack - Set to true if this function adjusts the stack -- e.g.,
+  /// when calling another function. This is only valid during and after
+  /// prolog/epilog code insertion.
+  bool AdjustsStack;
+
+  /// HasCalls - Set to true if this function has any function calls.
   bool HasCalls;
 
   /// StackProtectorIdx - The frame index for the stack protector.
@@ -188,13 +185,6 @@ class MachineFrameInfo {
   /// spill slots.
   SmallVector<bool, 8> SpillObjects;
 
-  /// MMI - This field is set (via setMachineModuleInfo) by a module info
-  /// consumer (ex. DwarfWriter) to indicate that frame layout information
-  /// should be acquired.  Typically, it's the responsibility of the target's
-  /// TargetRegisterInfo prologue/epilogue emitting code to inform
-  /// MachineModuleInfo of frame layouts.
-  MachineModuleInfo *MMI;
-  
   /// TargetFrameInfo - Target information about frame layout.
   ///
   const TargetFrameInfo &TFI;
@@ -204,11 +194,12 @@ public:
     StackSize = NumFixedObjects = OffsetAdjustment = MaxAlignment = 0;
     HasVarSizedObjects = false;
     FrameAddressTaken = false;
+    ReturnAddressTaken = false;
+    AdjustsStack = false;
     HasCalls = false;
     StackProtectorIdx = -1;
     MaxCallFrameSize = 0;
     CSIValid = false;
-    MMI = 0;
   }
 
   /// hasStackObjects - Return true if there are any stack objects in this
@@ -233,6 +224,12 @@ public:
   /// \@llvm.frameaddress in this function.
   bool isFrameAddressTaken() const { return FrameAddressTaken; }
   void setFrameAddressIsTaken(bool T) { FrameAddressTaken = T; }
+
+  /// isReturnAddressTaken - This method may be called any time after instruction
+  /// selection is complete to determine if there is a call to
+  /// \@llvm.returnaddress in this function.
+  bool isReturnAddressTaken() const { return ReturnAddressTaken; }
+  void setReturnAddressIsTaken(bool s) { ReturnAddressTaken = s; }
 
   /// getObjectIndexBegin - Return the minimum frame object index.
   ///
@@ -329,9 +326,13 @@ public:
   ///
   void setMaxAlignment(unsigned Align) { MaxAlignment = Align; }
 
-  /// hasCalls - Return true if the current function has no function calls.
-  /// This is only valid during or after prolog/epilog code emission.
-  ///
+  /// AdjustsStack - Return true if this function adjusts the stack -- e.g.,
+  /// when calling another function. This is only valid during and after
+  /// prolog/epilog code insertion.
+  bool adjustsStack() const { return AdjustsStack; }
+  void setAdjustsStack(bool V) { AdjustsStack = V; }
+
+  /// hasCalls - Return true if the current function has any function calls.
   bool hasCalls() const { return HasCalls; }
   void setHasCalls(bool V) { HasCalls = V; }
 
@@ -348,8 +349,7 @@ public:
   /// efficiency. By default, fixed objects are immutable. This returns an
   /// index with a negative value.
   ///
-  int CreateFixedObject(uint64_t Size, int64_t SPOffset,
-                        bool Immutable, bool isSS);
+  int CreateFixedObject(uint64_t Size, int64_t SPOffset, bool Immutable);
   
   
   /// isFixedObjectIndex - Returns true if the specified index corresponds to a
@@ -417,9 +417,10 @@ public:
   /// variable sized object is created, whether or not the index returned is
   /// actually used.
   ///
-  int CreateVariableSizedObject() {
+  int CreateVariableSizedObject(unsigned Alignment) {
     HasVarSizedObjects = true;
-    Objects.push_back(StackObject(0, 1, 0, false, false));
+    Objects.push_back(StackObject(0, Alignment, 0, false, false));
+    MaxAlignment = std::max(MaxAlignment, Alignment);
     return (int)Objects.size()-NumFixedObjects-1;
   }
 
@@ -431,7 +432,7 @@ public:
 
   /// setCalleeSavedInfo - Used by prolog/epilog inserter to set the function's
   /// callee saved information.
-  void  setCalleeSavedInfo(const std::vector<CalleeSavedInfo> &CSI) {
+  void setCalleeSavedInfo(const std::vector<CalleeSavedInfo> &CSI) {
     CSInfo = CSI;
   }
 
@@ -451,16 +452,8 @@ public:
   /// method always returns an empty set.
   BitVector getPristineRegs(const MachineBasicBlock *MBB) const;
 
-  /// getMachineModuleInfo - Used by a prologue/epilogue
-  /// emitter (TargetRegisterInfo) to provide frame layout information. 
-  MachineModuleInfo *getMachineModuleInfo() const { return MMI; }
-
-  /// setMachineModuleInfo - Used by a meta info consumer (DwarfWriter) to
-  /// indicate that frame layout information should be gathered.
-  void setMachineModuleInfo(MachineModuleInfo *mmi) { MMI = mmi; }
-
   /// print - Used by the MachineFunction printer to print information about
-  /// stack objects.  Implemented in MachineFunction.cpp
+  /// stack objects. Implemented in MachineFunction.cpp
   ///
   void print(const MachineFunction &MF, raw_ostream &OS) const;
 

@@ -302,10 +302,7 @@ public:
   /// through getAnalysis interface.
   virtual void addLowerLevelRequiredPass(Pass *P, Pass *RequiredPass);
 
-  virtual Pass * getOnTheFlyPass(Pass *P, const PassInfo *PI, Function &F) {
-    assert (0 && "Unable to find on the fly pass");
-    return NULL;
-  }
+  virtual Pass *getOnTheFlyPass(Pass *P, const PassInfo *PI, Function &F);
 
   /// Initialize available analysis information.
   void initializeAnalysisInfo() { 
@@ -413,7 +410,6 @@ private:
 /// It batches all function passes and basic block pass managers together and 
 /// sequence them to process one function at a time before processing next 
 /// function.
-
 class FPPassManager : public ModulePass, public PMDataManager {
 public:
   static char ID;
@@ -462,8 +458,7 @@ public:
   }
 };
 
-extern Timer *StartPassTimer(Pass *);
-extern void StopPassTimer(Pass *, Timer *);
+Timer *getPassTimer(Pass *);
 
 }
 

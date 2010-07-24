@@ -110,7 +110,7 @@ void PPCCodeEmitter::emitBasicBlock(MachineBasicBlock &MBB) {
     default:
       MCE.emitWordBE(getBinaryCodeForInstr(MI));
       break;
-    case TargetOpcode::DBG_LABEL:
+    case TargetOpcode::PROLOG_LABEL:
     case TargetOpcode::EH_LABEL:
       MCE.emitLabel(MI.getOperand(0).getMCSymbol());
       break;
@@ -202,7 +202,7 @@ unsigned PPCCodeEmitter::getMachineOpValue(const MachineInstr &MI,
     MachineRelocation R;
     if (MO.isGlobal()) {
       R = MachineRelocation::getGV(MCE.getCurrentPCOffset(), Reloc,
-                                   MO.getGlobal(), 0,
+                                   const_cast<GlobalValue *>(MO.getGlobal()), 0,
                                    isa<Function>(MO.getGlobal()));
     } else if (MO.isSymbol()) {
       R = MachineRelocation::getExtSym(MCE.getCurrentPCOffset(),

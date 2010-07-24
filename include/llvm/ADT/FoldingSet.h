@@ -23,6 +23,7 @@
 namespace llvm {
   class APFloat;
   class APInt;
+  class BumpPtrAllocator;
 
 /// This folding set used for two purposes:
 ///   1. Given information about a node we want to create, look up the unique
@@ -165,6 +166,14 @@ public:
   /// FindNodeOrInsertPos.
   void InsertNode(Node *N, void *InsertPos);
 
+  /// InsertNode - Insert the specified node into the folding set, knowing that
+  /// it is not already in the folding set.
+  void InsertNode(Node *N) {
+    Node *Inserted = GetOrInsertNode(N);
+    (void)Inserted;
+    assert(Inserted == N && "Node already inserted!");
+  }
+
   /// size - Returns the number of nodes in the folding set.
   unsigned size() const { return NumNodes; }
 
@@ -195,6 +204,27 @@ protected:
 template<typename T> struct FoldingSetTrait {
   static inline void Profile(const T& X, FoldingSetNodeID& ID) { X.Profile(ID);}
   static inline void Profile(T& X, FoldingSetNodeID& ID) { X.Profile(ID); }
+  template <typename Ctx>
+  static inline void Profile(T &X, FoldingSetNodeID &ID, Ctx Context) {
+    X.Profile(ID, Context);
+  }
+};
+
+//===--------------------------------------------------------------------===//
+/// FoldingSetNodeIDRef - This class describes a reference to an interned
+/// FoldingSetNodeID, which can be a useful to store node id data rather
+/// than using plain FoldingSetNodeIDs, since the 32-element SmallVector
+/// is often much larger than necessary, and the possibility of heap
+/// allocation means it requires a non-trivial destructor call.
+class FoldingSetNodeIDRef {
+  unsigned* Data;
+  size_t Size;
+public:
+  FoldingSetNodeIDRef() : Data(0), Size(0) {}
+  FoldingSetNodeIDRef(unsigned *D, size_t S) : Data(D), Size(S) {}
+
+  unsigned *getData() const { return Data; }
+  size_t getSize() const { return Size; }
 };
 
 //===--------------------------------------------------------------------===//
@@ -210,11 +240,8 @@ class FoldingSetNodeID {
 public:
   FoldingSetNodeID() {}
 
-  /// getRawData - Return the ith entry in the Bits data.
-  ///
-  unsigned getRawData(unsigned i) const {
-    return Bits[i];
-  }
+  FoldingSetNodeID(FoldingSetNodeIDRef Ref)
+    : Bits(Ref.getData(), Ref.getData() + Ref.getSize()) {}
 
   /// Add* - Add various data types to Bit data.
   ///
@@ -242,6 +269,11 @@ public:
   /// operator== - Used to compare two nodes to each other.
   ///
   bool operator==(const FoldingSetNodeID &RHS) const;
+
+  /// Intern - Copy this node's data to a memory region allocated from the
+  /// given allocator and return a FoldingSetNodeIDRef describing the
+  /// interned data.
+  FoldingSetNodeIDRef Intern(BumpPtrAllocator &Allocator) const;
 };
 
 // Convenience type to hide the implementation of the folding set.
@@ -296,6 +328,77 @@ public:
   /// FindNodeOrInsertPos - Look up the node specified by ID.  If it exists,
   /// return it.  If not, return the insertion token that will make insertion
   /// faster.
+  T *FindNodeOrInsertPos(const FoldingSetNodeID &ID, void *&InsertPos) {
+    return static_cast<T *>(FoldingSetImpl::FindNodeOrInsertPos(ID, InsertPos));
+  }
+};
+
+//===----------------------------------------------------------------------===//
+/// ContextualFoldingSet - This template class is a further refinement
+/// of FoldingSet which provides a context argument when calling
+/// Profile on its nodes.  Currently, that argument is fixed at
+/// initialization time.
+///
+/// T must be a subclass of FoldingSetNode and implement a Profile
+/// function with signature
+///   void Profile(llvm::FoldingSetNodeID &, Ctx);
+template <class T, class Ctx>
+class ContextualFoldingSet : public FoldingSetImpl {
+  // Unfortunately, this can't derive from FoldingSet<T> because the
+  // construction vtable for FoldingSet<T> requires
+  // FoldingSet<T>::GetNodeProfile to be instantiated, which in turn
+  // requires a single-argument T::Profile().
+
+private:
+  Ctx Context;
+
+  /// GetNodeProfile - Each instantiatation of the FoldingSet needs to provide a
+  /// way to convert nodes into a unique specifier.
+  virtual void GetNodeProfile(FoldingSetNodeID &ID,
+                              FoldingSetImpl::Node *N) const {
+    T *TN = static_cast<T *>(N);
+
+    // We must use explicit template arguments in case Ctx is a
+    // reference type.
+    FoldingSetTrait<T>::template Profile<Ctx>(*TN, ID, Context);
+  }
+
+public:
+  explicit ContextualFoldingSet(Ctx Context, unsigned Log2InitSize = 6)
+  : FoldingSetImpl(Log2InitSize), Context(Context)
+  {}
+
+  Ctx getContext() const { return Context; }
+
+
+  typedef FoldingSetIterator<T> iterator;
+  iterator begin() { return iterator(Buckets); }
+  iterator end() { return iterator(Buckets+NumBuckets); }
+
+  typedef FoldingSetIterator<const T> const_iterator;
+  const_iterator begin() const { return const_iterator(Buckets); }
+  const_iterator end() const { return const_iterator(Buckets+NumBuckets); }
+
+  typedef FoldingSetBucketIterator<T> bucket_iterator;
+
+  bucket_iterator bucket_begin(unsigned hash) {
+    return bucket_iterator(Buckets + (hash & (NumBuckets-1)));
+  }
+
+  bucket_iterator bucket_end(unsigned hash) {
+    return bucket_iterator(Buckets + (hash & (NumBuckets-1)), true);
+  }
+
+  /// GetOrInsertNode - If there is an existing simple Node exactly
+  /// equal to the specified node, return it.  Otherwise, insert 'N'
+  /// and return it instead.
+  T *GetOrInsertNode(Node *N) {
+    return static_cast<T *>(FoldingSetImpl::GetOrInsertNode(N));
+  }
+
+  /// FindNodeOrInsertPos - Look up the node specified by ID.  If it
+  /// exists, return it.  If not, return the insertion token that will
+  /// make insertion faster.
   T *FindNodeOrInsertPos(const FoldingSetNodeID &ID, void *&InsertPos) {
     return static_cast<T *>(FoldingSetImpl::FindNodeOrInsertPos(ID, InsertPos));
   }

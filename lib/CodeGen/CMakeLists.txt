@@ -1,18 +1,20 @@
 add_llvm_library(LLVMCodeGen
   AggressiveAntiDepBreaker.cpp
+  Analysis.cpp
   BranchFolding.cpp
   CalcSpillWeights.cpp
+  CallingConvLower.cpp
   CodePlacementOpt.cpp
   CriticalAntiDepBreaker.cpp
   DeadMachineInstructionElim.cpp
   DwarfEHPrepare.cpp
   ELFCodeEmitter.cpp
   ELFWriter.cpp
-  ExactHazardRecognizer.cpp
   GCMetadata.cpp
   GCMetadataPrinter.cpp
   GCStrategy.cpp
   IfConversion.cpp
+  InlineSpiller.cpp
   IntrinsicLowering.cpp
   LLVMTargetMachine.cpp
   LatencyPriorityQueue.cpp
@@ -27,6 +29,7 @@ add_llvm_library(LLVMCodeGen
   MachineFunction.cpp
   MachineFunctionAnalysis.cpp
   MachineFunctionPass.cpp
+  MachineFunctionPrinterPass.cpp
   MachineInstr.cpp
   MachineLICM.cpp
   MachineLoopInfo.cpp
@@ -43,16 +46,18 @@ add_llvm_library(LLVMCodeGen
   OptimizePHIs.cpp
   PHIElimination.cpp
   Passes.cpp
+  PostRAHazardRecognizer.cpp
   PostRASchedulerList.cpp
   PreAllocSplitting.cpp
   ProcessImplicitDefs.cpp
   PrologEpilogInserter.cpp
   PseudoSourceValue.cpp
+  RegAllocFast.cpp
   RegAllocLinearScan.cpp
-  RegAllocLocal.cpp
   RegAllocPBQP.cpp
   RegisterCoalescer.cpp
   RegisterScavenging.cpp
+  RenderMachineFunction.cpp
   ScheduleDAG.cpp
   ScheduleDAGEmit.cpp
   ScheduleDAGInstrs.cpp
@@ -63,6 +68,8 @@ add_llvm_library(LLVMCodeGen
   SjLjEHPrepare.cpp
   SlotIndexes.cpp
   Spiller.cpp
+  SplitKit.cpp
+  Splitter.cpp
   StackProtector.cpp
   StackSlotColoring.cpp
   StrongPHIElimination.cpp
