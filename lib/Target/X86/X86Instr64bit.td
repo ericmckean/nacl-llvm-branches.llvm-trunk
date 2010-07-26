@@ -210,7 +210,11 @@ let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1 in
                      "jmp{q}\t{*}$dst  # TAILCALL", []>;
 
   def TAILJMPm64 : I<0xFF, MRM4m, (outs), (ins i64mem_TC:$dst, variable_ops),
-                     "jmp{q}\t{*}$dst  # TAILCALL", []>;
+                     "jmp{q}\t{*}$dst  # TAILCALL", []>,
+                   Requires<[NotNaCl]>; // @LOCALMOD;
+                   // Disable to force usage of register-based versions.
+                   // Mainly, need to disable Pat match for TCRETURNmi64,
+                   // but disable this too, just in case.
 }
 
 // Branches
