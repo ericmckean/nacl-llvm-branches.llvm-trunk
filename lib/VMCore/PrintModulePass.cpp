@@ -77,11 +77,11 @@ namespace {
 }
 
 char PrintModulePass::ID = 0;
-INITIALIZE_PASS(PrintModulePass, "print-module",
-                "Print module to stderr", false, false);
+static RegisterPass<PrintModulePass>
+X("print-module", "Print module to stderr");
 char PrintFunctionPass::ID = 0;
-INITIALIZE_PASS(PrintFunctionPass, "print-function",
-                "Print function to stderr", false, false);
+static RegisterPass<PrintFunctionPass>
+Y("print-function","Print function to stderr");
 
 /// createPrintModulePass - Create and return a pass that writes the
 /// module to the specified raw_ostream.

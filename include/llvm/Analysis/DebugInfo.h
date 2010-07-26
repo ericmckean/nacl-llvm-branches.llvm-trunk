@@ -304,7 +304,8 @@ namespace llvm {
     void dump() const;
 
     /// replaceAllUsesWith - Replace all uses of debug info referenced by
-    /// this descriptor.
+    /// this descriptor. After this completes, the current debug info value
+    /// is erased.
     void replaceAllUsesWith(DIDescriptor &D);
   };
 

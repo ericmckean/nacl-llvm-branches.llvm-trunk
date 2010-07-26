@@ -600,5 +600,5 @@ namespace {
 }
 
 char AliasSetPrinter::ID = 0;
-INITIALIZE_PASS(AliasSetPrinter, "print-alias-sets",
-                "Alias Set Printer", false, true);
+static RegisterPass<AliasSetPrinter>
+X("print-alias-sets", "Alias Set Printer", false, true);

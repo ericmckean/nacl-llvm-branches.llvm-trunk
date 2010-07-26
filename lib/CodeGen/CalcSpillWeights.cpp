@@ -25,8 +25,8 @@
 using namespace llvm;
 
 char CalculateSpillWeights::ID = 0;
-INITIALIZE_PASS(CalculateSpillWeights, "calcspillweights",
-                "Calculate spill weights", false, false);
+static RegisterPass<CalculateSpillWeights> X("calcspillweights",
+                                             "Calculate spill weights");
 
 void CalculateSpillWeights::getAnalysisUsage(AnalysisUsage &au) const {
   au.addRequired<LiveIntervals>();

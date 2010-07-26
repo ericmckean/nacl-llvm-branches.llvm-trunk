@@ -216,24 +216,6 @@ bool LLVMTargetMachine::addPassesToEmitMachineCode(PassManagerBase &PM,
   return false; // success!
 }
 
-/// addPassesToEmitMC - Add passes to the specified pass manager to get
-/// machine code emitted with the MCJIT. This method returns true if machine
-/// code is not supported. It fills the MCContext Ctx pointer which can be
-/// used to build custom MCStreamer.
-///
-bool LLVMTargetMachine::addPassesToEmitMC(PassManagerBase &PM,
-                                          MCContext *&Ctx,
-                                          CodeGenOpt::Level OptLevel,
-                                          bool DisableVerify) {
-  // Add common CodeGen passes.
-  if (addCommonCodeGenPasses(PM, OptLevel, DisableVerify, Ctx))
-    return true;
-  // Make sure the code model is set.
-  setCodeModelForJIT();
-
-  return false; // success!
-}
-
 static void printNoVerify(PassManagerBase &PM, const char *Banner) {
   if (PrintMachineCode)
     PM.add(createMachineFunctionPrinterPass(dbgs(), Banner));
@@ -306,8 +288,6 @@ bool LLVMTargetMachine::addCommonCodeGenPasses(PassManagerBase &PM,
     PM.add(createCodeGenPreparePass(getTargetLowering()));
 
   PM.add(createStackProtectorPass(getTargetLowering()));
-
-  addPreISel(PM, OptLevel);
 
   if (PrintISelInput)
     PM.add(createPrintFunctionPass("\n\n"

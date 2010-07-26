@@ -111,8 +111,8 @@ namespace {
 }
 
 char JumpThreading::ID = 0;
-INITIALIZE_PASS(JumpThreading, "jump-threading",
-                "Jump Threading", false, false);
+static RegisterPass<JumpThreading>
+X("jump-threading", "Jump Threading");
 
 // Public interface to the Jump Threading pass
 FunctionPass *llvm::createJumpThreadingPass() { return new JumpThreading(); }

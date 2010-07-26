@@ -441,9 +441,8 @@ class ABCD : public FunctionPass {
 }  // end anonymous namespace.
 
 char ABCD::ID = 0;
-INITIALIZE_PASS(ABCD, "abcd",
-                "ABCD: Eliminating Array Bounds Checks on Demand",
-                false, false);
+static RegisterPass<ABCD> X("abcd", "ABCD: Eliminating Array Bounds Checks on Demand");
+
 
 bool ABCD::runOnFunction(Function &F) {
   modified = false;

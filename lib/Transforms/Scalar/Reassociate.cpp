@@ -103,8 +103,7 @@ namespace {
 }
 
 char Reassociate::ID = 0;
-INITIALIZE_PASS(Reassociate, "reassociate",
-                "Reassociate expressions", false, false);
+static RegisterPass<Reassociate> X("reassociate", "Reassociate expressions");
 
 // Public interface to the Reassociate pass
 FunctionPass *llvm::createReassociatePass() { return new Reassociate(); }

@@ -103,8 +103,8 @@ MaxBruteForceIterations("scalar-evolution-max-iterations", cl::ReallyHidden,
                                  "derived loop"),
                         cl::init(100));
 
-INITIALIZE_PASS(ScalarEvolution, "scalar-evolution",
-                "Scalar Evolution Analysis", false, true);
+static RegisterPass<ScalarEvolution>
+R("scalar-evolution", "Scalar Evolution Analysis", false, true);
 char ScalarEvolution::ID = 0;
 
 //===----------------------------------------------------------------------===//
@@ -495,9 +495,9 @@ namespace {
   /// than the complexity of the RHS.  This comparator is used to canonicalize
   /// expressions.
   class SCEVComplexityCompare {
-    const LoopInfo *LI;
+    LoopInfo *LI;
   public:
-    explicit SCEVComplexityCompare(const LoopInfo *li) : LI(li) {}
+    explicit SCEVComplexityCompare(LoopInfo *li) : LI(li) {}
 
     bool operator()(const SCEV *LHS, const SCEV *RHS) const {
       // Fast-path: SCEVs are uniqued so we can do a quick equality check.
@@ -505,9 +505,8 @@ namespace {
         return false;
 
       // Primarily, sort the SCEVs by their getSCEVType().
-      unsigned LType = LHS->getSCEVType(), RType = RHS->getSCEVType();
-      if (LType != RType)
-        return LType < RType;
+      if (LHS->getSCEVType() != RHS->getSCEVType())
+        return LHS->getSCEVType() < RHS->getSCEVType();
 
       // Aside from the getSCEVType() ordering, the particular ordering
       // isn't very important except that it's beneficial to be consistent,
@@ -520,16 +519,14 @@ namespace {
 
         // Order pointer values after integer values. This helps SCEVExpander
         // form GEPs.
-        bool LIsPointer = LU->getType()->isPointerTy(),
-             RIsPointer = RU->getType()->isPointerTy();
-        if (LIsPointer != RIsPointer)
-          return RIsPointer;
+        if (LU->getType()->isPointerTy() && !RU->getType()->isPointerTy())
+          return false;
+        if (RU->getType()->isPointerTy() && !LU->getType()->isPointerTy())
+          return true;
 
         // Compare getValueID values.
-        unsigned LID = LU->getValue()->getValueID(),
-                 RID = RU->getValue()->getValueID();
-        if (LID != RID)
-          return LID < RID;
+        if (LU->getValue()->getValueID() != RU->getValue()->getValueID())
+          return LU->getValue()->getValueID() < RU->getValue()->getValueID();
 
         // Sort arguments by their position.
         if (const Argument *LA = dyn_cast<Argument>(LU->getValue())) {
@@ -539,20 +536,22 @@ namespace {
 
         // For instructions, compare their loop depth, and their opcode.
         // This is pretty loose.
-        if (const Instruction *LV = dyn_cast<Instruction>(LU->getValue())) {
-          const Instruction *RV = cast<Instruction>(RU->getValue());
+        if (Instruction *LV = dyn_cast<Instruction>(LU->getValue())) {
+          Instruction *RV = cast<Instruction>(RU->getValue());
 
           // Compare loop depths.
-          unsigned LDepth = LI->getLoopDepth(LV->getParent()),
-                   RDepth = LI->getLoopDepth(RV->getParent());
-          if (LDepth != RDepth)
-            return LDepth < RDepth;
+          if (LI->getLoopDepth(LV->getParent()) !=
+              LI->getLoopDepth(RV->getParent()))
+            return LI->getLoopDepth(LV->getParent()) <
+                   LI->getLoopDepth(RV->getParent());
+
+          // Compare opcodes.
+          if (LV->getOpcode() != RV->getOpcode())
+            return LV->getOpcode() < RV->getOpcode();
 
           // Compare the number of operands.
-          unsigned LNumOps = LV->getNumOperands(),
-                   RNumOps = RV->getNumOperands();
-          if (LNumOps != RNumOps)
-            return LNumOps < RNumOps;
+          if (LV->getNumOperands() != RV->getNumOperands())
+            return LV->getNumOperands() < RV->getNumOperands();
         }
 
         return false;
@@ -561,51 +560,42 @@ namespace {
       // Compare constant values.
       if (const SCEVConstant *LC = dyn_cast<SCEVConstant>(LHS)) {
         const SCEVConstant *RC = cast<SCEVConstant>(RHS);
-        const ConstantInt *LCC = LC->getValue();
-        const ConstantInt *RCC = RC->getValue();
-        unsigned LBitWidth = LCC->getBitWidth(), RBitWidth = RCC->getBitWidth();
-        if (LBitWidth != RBitWidth)
-          return LBitWidth < RBitWidth;
-        return LCC->getValue().ult(RCC->getValue());
+        if (LC->getValue()->getBitWidth() != RC->getValue()->getBitWidth())
+          return LC->getValue()->getBitWidth() < RC->getValue()->getBitWidth();
+        return LC->getValue()->getValue().ult(RC->getValue()->getValue());
       }
 
       // Compare addrec loop depths.
       if (const SCEVAddRecExpr *LA = dyn_cast<SCEVAddRecExpr>(LHS)) {
         const SCEVAddRecExpr *RA = cast<SCEVAddRecExpr>(RHS);
-        unsigned LDepth = LA->getLoop()->getLoopDepth(),
-                 RDepth = RA->getLoop()->getLoopDepth();
-        if (LDepth != RDepth)
-          return LDepth < RDepth;
+        if (LA->getLoop()->getLoopDepth() != RA->getLoop()->getLoopDepth())
+          return LA->getLoop()->getLoopDepth() < RA->getLoop()->getLoopDepth();
       }
 
       // Lexicographically compare n-ary expressions.
       if (const SCEVNAryExpr *LC = dyn_cast<SCEVNAryExpr>(LHS)) {
         const SCEVNAryExpr *RC = cast<SCEVNAryExpr>(RHS);
-        unsigned LNumOps = LC->getNumOperands(), RNumOps = RC->getNumOperands();
-        for (unsigned i = 0; i != LNumOps; ++i) {
-          if (i >= RNumOps)
+        for (unsigned i = 0, e = LC->getNumOperands(); i != e; ++i) {
+          if (i >= RC->getNumOperands())
             return false;
-          const SCEV *LOp = LC->getOperand(i), *ROp = RC->getOperand(i);
-          if (operator()(LOp, ROp))
+          if (operator()(LC->getOperand(i), RC->getOperand(i)))
             return true;
-          if (operator()(ROp, LOp))
+          if (operator()(RC->getOperand(i), LC->getOperand(i)))
             return false;
         }
-        return LNumOps < RNumOps;
+        return LC->getNumOperands() < RC->getNumOperands();
       }
 
       // Lexicographically compare udiv expressions.
       if (const SCEVUDivExpr *LC = dyn_cast<SCEVUDivExpr>(LHS)) {
         const SCEVUDivExpr *RC = cast<SCEVUDivExpr>(RHS);
-        const SCEV *LL = LC->getLHS(), *LR = LC->getRHS(),
-                   *RL = RC->getLHS(), *RR = RC->getRHS();
-        if (operator()(LL, RL))
+        if (operator()(LC->getLHS(), RC->getLHS()))
           return true;
-        if (operator()(RL, LL))
+        if (operator()(RC->getLHS(), LC->getLHS()))
           return false;
-        if (operator()(LR, RR))
+        if (operator()(LC->getRHS(), RC->getRHS()))
           return true;
-        if (operator()(RR, LR))
+        if (operator()(RC->getRHS(), LC->getRHS()))
           return false;
         return false;
       }
@@ -2598,7 +2588,7 @@ PushDefUseChildren(Instruction *I,
   // Push the def-use children onto the Worklist stack.
   for (Value::use_iterator UI = I->use_begin(), UE = I->use_end();
        UI != UE; ++UI)
-    Worklist.push_back(cast<Instruction>(*UI));
+    Worklist.push_back(cast<Instruction>(UI));
 }
 
 /// ForgetSymbolicValue - This looks up computed SCEV values for all

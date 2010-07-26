@@ -132,8 +132,6 @@ private:
   PassInfo(const PassInfo &);       // do not implement
 };
 
-#define INITIALIZE_PASS(passName, arg, name, cfg, analysis) \
-  static RegisterPass<passName> passName ## _info(arg, name, cfg, analysis)
 
 template<typename PassName>
 Pass *callDefaultCtor() { return new PassName(); }
@@ -209,9 +207,7 @@ struct RegisterAnalysisGroup : public RegisterAGBase {
   }
 };
 
-#define INITIALIZE_AG_PASS(passName, agName, arg, name, cfg, analysis, def) \
-  static RegisterPass<passName> passName ## _info(arg, name, cfg, analysis); \
-  static RegisterAnalysisGroup<agName, def> passName ## _ag(passName ## _info)
+
 
 //===---------------------------------------------------------------------------
 /// PassRegistrationListener class - This class is meant to be derived from by

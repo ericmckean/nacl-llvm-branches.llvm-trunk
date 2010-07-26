@@ -115,3 +115,5 @@ void ValueSymbolTable::dump() const {
     //DEBUG(dbgs() << "\n");
   }
 }
+
+MDSymbolTable::~MDSymbolTable() { }

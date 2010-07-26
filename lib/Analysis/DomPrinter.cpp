@@ -111,23 +111,22 @@ struct PostDomOnlyViewer
 } // end anonymous namespace
 
 char DomViewer::ID = 0;
-INITIALIZE_PASS(DomViewer, "view-dom",
-                "View dominance tree of function", false, false);
+RegisterPass<DomViewer> A("view-dom",
+                          "View dominance tree of function");
 
 char DomOnlyViewer::ID = 0;
-INITIALIZE_PASS(DomOnlyViewer, "view-dom-only",
-                "View dominance tree of function (with no function bodies)",
-                false, false);
+RegisterPass<DomOnlyViewer> B("view-dom-only",
+                              "View dominance tree of function "
+                              "(with no function bodies)");
 
 char PostDomViewer::ID = 0;
-INITIALIZE_PASS(PostDomViewer, "view-postdom",
-                "View postdominance tree of function", false, false);
+RegisterPass<PostDomViewer> C("view-postdom",
+                              "View postdominance tree of function");
 
 char PostDomOnlyViewer::ID = 0;
-INITIALIZE_PASS(PostDomOnlyViewer, "view-postdom-only",
-                "View postdominance tree of function "
-                "(with no function bodies)",
-                false, false);
+RegisterPass<PostDomOnlyViewer> D("view-postdom-only",
+                                  "View postdominance tree of function "
+                                  "(with no function bodies)");
 
 namespace {
 struct DomPrinter
@@ -160,26 +159,26 @@ struct PostDomOnlyPrinter
 
 
 char DomPrinter::ID = 0;
-INITIALIZE_PASS(DomPrinter, "dot-dom",
-                "Print dominance tree of function to 'dot' file",
-                false, false);
+RegisterPass<DomPrinter> E("dot-dom",
+                           "Print dominance tree of function "
+                           "to 'dot' file");
 
 char DomOnlyPrinter::ID = 0;
-INITIALIZE_PASS(DomOnlyPrinter, "dot-dom-only",
-                "Print dominance tree of function to 'dot' file "
-                "(with no function bodies)",
-                false, false);
+RegisterPass<DomOnlyPrinter> F("dot-dom-only",
+                               "Print dominance tree of function "
+                               "to 'dot' file "
+                               "(with no function bodies)");
 
 char PostDomPrinter::ID = 0;
-INITIALIZE_PASS(PostDomPrinter, "dot-postdom",
-                "Print postdominance tree of function to 'dot' file",
-                false, false);
+RegisterPass<PostDomPrinter> G("dot-postdom",
+                               "Print postdominance tree of function "
+                               "to 'dot' file");
 
 char PostDomOnlyPrinter::ID = 0;
-INITIALIZE_PASS(PostDomOnlyPrinter, "dot-postdom-only",
-                "Print postdominance tree of function to 'dot' file "
-                "(with no function bodies)",
-                false, false);
+RegisterPass<PostDomOnlyPrinter> H("dot-postdom-only",
+                                   "Print postdominance tree of function "
+                                   "to 'dot' file "
+                                   "(with no function bodies)");
 
 // Create methods available outside of this file, to use them
 // "include/llvm/LinkAllPasses.h". Otherwise the pass would be deleted by

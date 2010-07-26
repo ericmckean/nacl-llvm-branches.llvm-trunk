@@ -25,22 +25,21 @@
 #include <iterator>
 #include <limits>
 #include <queue>
+#include <stdexcept>
 
 using namespace llvm;
 using namespace llvmc;
 
 namespace llvmc {
 
-  const std::string* LanguageMap::GetLanguage(const sys::Path& File) const {
+  const std::string& LanguageMap::GetLanguage(const sys::Path& File) const {
     StringRef suf = File.getSuffix();
     LanguageMap::const_iterator Lang =
       this->find(suf.empty() ? "*empty*" : suf);
-    if (Lang == this->end()) {
-      PrintError("File '" + File.str() + "' has unknown suffix '"
-                 + suf.str() + '\'');
-      return 0;
-    }
-    return &Lang->second;
+    if (Lang == this->end())
+      throw std::runtime_error("File '" + File.str() +
+                                "' has unknown suffix '" + suf.str() + '\'');
+    return Lang->second;
   }
 }
 
@@ -68,16 +67,14 @@ namespace {
       }
     }
 
-    if (!SingleMax) {
-      PrintError("Node " + NodeName + ": multiple maximal outward edges found!"
-                 " Most probably a specification error.");
-      return 0;
-    }
-    if (!MaxEdge) {
-      PrintError("Node " + NodeName + ": no maximal outward edge found!"
-                 " Most probably a specification error.");
-      return 0;
-    }
+    if (!SingleMax)
+      throw std::runtime_error("Node " + NodeName +
+                               ": multiple maximal outward edges found!"
+                               " Most probably a specification error.");
+    if (!MaxEdge)
+      throw std::runtime_error("Node " + NodeName +
+                               ": no maximal outward edge found!"
+                               " Most probably a specification error.");
     return MaxEdge;
   }
 
@@ -101,34 +98,29 @@ CompilationGraph::CompilationGraph() {
   NodesMap["root"] = Node(this);
 }
 
-Node* CompilationGraph::getNode(const std::string& ToolName) {
+Node& CompilationGraph::getNode(const std::string& ToolName) {
   nodes_map_type::iterator I = NodesMap.find(ToolName);
-  if (I == NodesMap.end()) {
-    PrintError("Node " + ToolName + " is not in the graph");
-    return 0;
-  }
-  return &I->second;
+  if (I == NodesMap.end())
+    throw std::runtime_error("Node " + ToolName + " is not in the graph");
+  return I->second;
 }
 
-const Node* CompilationGraph::getNode(const std::string& ToolName) const {
+const Node& CompilationGraph::getNode(const std::string& ToolName) const {
   nodes_map_type::const_iterator I = NodesMap.find(ToolName);
-  if (I == NodesMap.end()) {
-    PrintError("Node " + ToolName + " is not in the graph!");
-    return 0;
-  }
-  return &I->second;
+  if (I == NodesMap.end())
+    throw std::runtime_error("Node " + ToolName + " is not in the graph!");
+  return I->second;
 }
 
 // Find the tools list corresponding to the given language name.
-const CompilationGraph::tools_vector_type*
+const CompilationGraph::tools_vector_type&
 CompilationGraph::getToolsVector(const std::string& LangName) const
 {
   tools_map_type::const_iterator I = ToolsMap.find(LangName);
-  if (I == ToolsMap.end()) {
-    PrintError("No tool corresponding to the language " + LangName + " found");
-    return 0;
-  }
-  return &I->second;
+  if (I == ToolsMap.end())
+    throw std::runtime_error("No tool corresponding to the language "
+                             + LangName + " found");
+  return I->second;
 }
 
 void CompilationGraph::insertNode(Tool* V) {
@@ -136,37 +128,29 @@ void CompilationGraph::insertNode(Tool* V) {
     NodesMap[V->Name()] = Node(this, V);
 }
 
-int CompilationGraph::insertEdge(const std::string& A, Edge* Edg) {
-  Node* B = getNode(Edg->ToolName());
-  if (B == 0)
-    return -1;
-
+void CompilationGraph::insertEdge(const std::string& A, Edge* Edg) {
+  Node& B = getNode(Edg->ToolName());
   if (A == "root") {
-    const char** InLangs = B->ToolPtr->InputLanguages();
+    const char** InLangs = B.ToolPtr->InputLanguages();
     for (;*InLangs; ++InLangs)
       ToolsMap[*InLangs].push_back(IntrusiveRefCntPtr<Edge>(Edg));
     NodesMap["root"].AddEdge(Edg);
   }
   else {
-    Node* N = getNode(A);
-    if (N == 0)
-      return -1;
-
-    N->AddEdge(Edg);
+    Node& N = getNode(A);
+    N.AddEdge(Edg);
   }
   // Increase the inward edge counter.
-  B->IncrInEdges();
-
-  return 0;
+  B.IncrInEdges();
 }
 
 // Pass input file through the chain until we bump into a Join node or
 // a node that says that it is the last.
-int CompilationGraph::PassThroughGraph (const sys::Path& InFile,
-                                        const Node* StartNode,
-                                        const InputLanguagesSet& InLangs,
-                                        const sys::Path& TempDir,
-                                        const LanguageMap& LangMap) const {
+void CompilationGraph::PassThroughGraph (const sys::Path& InFile,
+                                         const Node* StartNode,
+                                         const InputLanguagesSet& InLangs,
+                                         const sys::Path& TempDir,
+                                         const LanguageMap& LangMap) const {
   sys::Path In = InFile;
   const Node* CurNode = StartNode;
 
@@ -174,35 +158,25 @@ int CompilationGraph::PassThroughGraph (const sys::Path& InFile,
     Tool* CurTool = CurNode->ToolPtr.getPtr();
 
     if (CurTool->IsJoin()) {
-      JoinTool& JT = static_cast<JoinTool&>(*CurTool);
+      JoinTool& JT = dynamic_cast<JoinTool&>(*CurTool);
       JT.AddToJoinList(In);
       break;
     }
 
-    Action CurAction;
-    if (int ret = CurTool->GenerateAction(CurAction, In, CurNode->HasChildren(),
-                                          TempDir, InLangs, LangMap)) {
-      return ret;
-    }
+    Action CurAction = CurTool->GenerateAction(In, CurNode->HasChildren(),
+                                               TempDir, InLangs, LangMap);
 
     if (int ret = CurAction.Execute())
-      return ret;
+      throw error_code(ret);
 
     if (CurAction.StopCompilation())
-      return 0;
+      return;
 
-    const Edge* Edg = ChooseEdge(CurNode->OutEdges, InLangs, CurNode->Name());
-    if (Edg == 0)
-      return -1;
-
-    CurNode = getNode(Edg->ToolName());
-    if (CurNode == 0)
-      return -1;
-
+    CurNode = &getNode(ChooseEdge(CurNode->OutEdges,
+                                  InLangs,
+                                  CurNode->Name())->ToolName());
     In = CurAction.OutFile();
   }
-
-  return 0;
 }
 
 // Find the head of the toolchain corresponding to the given file.
@@ -212,39 +186,26 @@ FindToolChain(const sys::Path& In, const std::string* ForceLanguage,
               InputLanguagesSet& InLangs, const LanguageMap& LangMap) const {
 
   // Determine the input language.
-  const std::string* InLang = LangMap.GetLanguage(In);
-  if (InLang == 0)
-    return 0;
-  const std::string& InLanguage = (ForceLanguage ? *ForceLanguage : *InLang);
+  const std::string& InLanguage =
+    ForceLanguage ? *ForceLanguage : LangMap.GetLanguage(In);
 
   // Add the current input language to the input language set.
   InLangs.insert(InLanguage);
 
   // Find the toolchain for the input language.
-  const tools_vector_type* pTV = getToolsVector(InLanguage);
-  if (pTV == 0)
-    return 0;
-
-  const tools_vector_type& TV = *pTV;
-  if (TV.empty()) {
-    PrintError("No toolchain corresponding to language "
-               + InLanguage + " found");
-    return 0;
-  }
-
-  const Edge* Edg = ChooseEdge(TV, InLangs);
-  if (Edg == 0)
-    return 0;
-
-  return getNode(Edg->ToolName());
+  const tools_vector_type& TV = getToolsVector(InLanguage);
+  if (TV.empty())
+    throw std::runtime_error("No toolchain corresponding to language "
+                             + InLanguage + " found");
+  return &getNode(ChooseEdge(TV, InLangs)->ToolName());
 }
 
 // Helper function used by Build().
 // Traverses initial portions of the toolchains (up to the first Join node).
 // This function is also responsible for handling the -x option.
-int CompilationGraph::BuildInitial (InputLanguagesSet& InLangs,
-                                    const sys::Path& TempDir,
-                                    const LanguageMap& LangMap) {
+void CompilationGraph::BuildInitial (InputLanguagesSet& InLangs,
+                                     const sys::Path& TempDir,
+                                     const LanguageMap& LangMap) {
   // This is related to -x option handling.
   cl::list<std::string>::const_iterator xIter = Languages.begin(),
     xBegin = xIter, xEnd = Languages.end();
@@ -294,25 +255,15 @@ int CompilationGraph::BuildInitial (InputLanguagesSet& InLangs,
 
     // Find the toolchain corresponding to this file.
     const Node* N = FindToolChain(In, xLanguage, InLangs, LangMap);
-    if (N == 0)
-      return -1;
     // Pass file through the chain starting at head.
-    if (int ret = PassThroughGraph(In, N, InLangs, TempDir, LangMap))
-      return ret;
+    PassThroughGraph(In, N, InLangs, TempDir, LangMap);
   }
-
-  return 0;
 }
 
 // Sort the nodes in topological order.
-int CompilationGraph::TopologicalSort(std::vector<const Node*>& Out) {
+void CompilationGraph::TopologicalSort(std::vector<const Node*>& Out) {
   std::queue<const Node*> Q;
-
-  Node* Root = getNode("root");
-  if (Root == 0)
-    return -1;
-
-  Q.push(Root);
+  Q.push(&getNode("root"));
 
   while (!Q.empty()) {
     const Node* A = Q.front();
@@ -320,17 +271,12 @@ int CompilationGraph::TopologicalSort(std::vector<const Node*>& Out) {
     Out.push_back(A);
     for (Node::const_iterator EB = A->EdgesBegin(), EE = A->EdgesEnd();
          EB != EE; ++EB) {
-      Node* B = getNode((*EB)->ToolName());
-      if (B == 0)
-        return -1;
-
+      Node* B = &getNode((*EB)->ToolName());
       B->DecrInEdges();
       if (B->HasNoInEdges())
         Q.push(B);
     }
   }
-
-  return 0;
 }
 
 namespace {
@@ -341,64 +287,49 @@ namespace {
 
 // Call TopologicalSort and filter the resulting list to include
 // only Join nodes.
-int CompilationGraph::
+void CompilationGraph::
 TopologicalSortFilterJoinNodes(std::vector<const Node*>& Out) {
   std::vector<const Node*> TopSorted;
-  if (int ret = TopologicalSort(TopSorted))
-    return ret;
+  TopologicalSort(TopSorted);
   std::remove_copy_if(TopSorted.begin(), TopSorted.end(),
                       std::back_inserter(Out), NotJoinNode);
-
-  return 0;
 }
 
 int CompilationGraph::Build (const sys::Path& TempDir,
                              const LanguageMap& LangMap) {
+
   InputLanguagesSet InLangs;
 
   // Traverse initial parts of the toolchains and fill in InLangs.
-  if (int ret = BuildInitial(InLangs, TempDir, LangMap))
-    return ret;
+  BuildInitial(InLangs, TempDir, LangMap);
 
   std::vector<const Node*> JTV;
-  if (int ret = TopologicalSortFilterJoinNodes(JTV))
-    return ret;
+  TopologicalSortFilterJoinNodes(JTV);
 
   // For all join nodes in topological order:
   for (std::vector<const Node*>::iterator B = JTV.begin(), E = JTV.end();
        B != E; ++B) {
 
     const Node* CurNode = *B;
-    JoinTool* JT = &static_cast<JoinTool&>(*CurNode->ToolPtr.getPtr());
+    JoinTool* JT = &dynamic_cast<JoinTool&>(*CurNode->ToolPtr.getPtr());
 
     // Are there any files in the join list?
     if (JT->JoinListEmpty() && !(JT->WorksOnEmpty() && InputFilenames.empty()))
       continue;
 
-    Action CurAction;
-    if (int ret = JT->GenerateAction(CurAction, CurNode->HasChildren(),
-                                     TempDir, InLangs, LangMap)) {
-      return ret;
-    }
+    Action CurAction = JT->GenerateAction(CurNode->HasChildren(),
+                                          TempDir, InLangs, LangMap);
 
     if (int ret = CurAction.Execute())
-      return ret;
+      throw error_code(ret);
 
     if (CurAction.StopCompilation())
       return 0;
 
-    const Edge* Edg = ChooseEdge(CurNode->OutEdges, InLangs, CurNode->Name());
-    if (Edg == 0)
-      return -1;
-
-    const Node* NextNode = getNode(Edg->ToolName());
-    if (NextNode == 0)
-      return -1;
-
-    if (int ret = PassThroughGraph(sys::Path(CurAction.OutFile()), NextNode,
-                                   InLangs, TempDir, LangMap)) {
-      return ret;
-    }
+    const Node* NextNode = &getNode(ChooseEdge(CurNode->OutEdges, InLangs,
+                                               CurNode->Name())->ToolName());
+    PassThroughGraph(sys::Path(CurAction.OutFile()), NextNode,
+                     InLangs, TempDir, LangMap);
   }
 
   return 0;
@@ -406,7 +337,6 @@ int CompilationGraph::Build (const sys::Path& TempDir,
 
 int CompilationGraph::CheckLanguageNames() const {
   int ret = 0;
-
   // Check that names for output and input languages on all edges do match.
   for (const_nodes_iterator B = this->NodesMap.begin(),
          E = this->NodesMap.end(); B != E; ++B) {
@@ -415,11 +345,9 @@ int CompilationGraph::CheckLanguageNames() const {
     if (N1.ToolPtr) {
       for (Node::const_iterator EB = N1.EdgesBegin(), EE = N1.EdgesEnd();
            EB != EE; ++EB) {
-        const Node* N2 = this->getNode((*EB)->ToolName());
-        if (N2 == 0)
-          return -1;
+        const Node& N2 = this->getNode((*EB)->ToolName());
 
-        if (!N2->ToolPtr) {
+        if (!N2.ToolPtr) {
           ++ret;
           errs() << "Error: there is an edge from '" << N1.ToolPtr->Name()
                  << "' back to the root!\n\n";
@@ -427,7 +355,7 @@ int CompilationGraph::CheckLanguageNames() const {
         }
 
         const char* OutLang = N1.ToolPtr->OutputLanguage();
-        const char** InLangs = N2->ToolPtr->InputLanguages();
+        const char** InLangs = N2.ToolPtr->InputLanguages();
         bool eq = false;
         for (;*InLangs; ++InLangs) {
           if (std::strcmp(OutLang, *InLangs) == 0) {
@@ -439,11 +367,11 @@ int CompilationGraph::CheckLanguageNames() const {
         if (!eq) {
           ++ret;
           errs() << "Error: Output->input language mismatch in the edge '"
-                 << N1.ToolPtr->Name() << "' -> '" << N2->ToolPtr->Name()
+                 << N1.ToolPtr->Name() << "' -> '" << N2.ToolPtr->Name()
                  << "'!\n"
                  << "Expected one of { ";
 
-          InLangs = N2->ToolPtr->InputLanguages();
+          InLangs = N2.ToolPtr->InputLanguages();
           for (;*InLangs; ++InLangs) {
             errs() << '\'' << *InLangs << (*(InLangs+1) ? "', " : "'");
           }
@@ -494,12 +422,7 @@ int CompilationGraph::CheckMultipleDefaultEdges() const {
 int CompilationGraph::CheckCycles() {
   unsigned deleted = 0;
   std::queue<Node*> Q;
-
-  Node* Root = getNode("root");
-  if (Root == 0)
-    return -1;
-
-  Q.push(Root);
+  Q.push(&getNode("root"));
 
   // Try to delete all nodes that have no ingoing edges, starting from the
   // root. If there are any nodes left after this operation, then we have a
@@ -511,10 +434,7 @@ int CompilationGraph::CheckCycles() {
 
     for (Node::iterator EB = A->EdgesBegin(), EE = A->EdgesEnd();
          EB != EE; ++EB) {
-      Node* B = getNode((*EB)->ToolName());
-      if (B == 0)
-        return -1;
-
+      Node* B = &getNode((*EB)->ToolName());
       B->DecrInEdges();
       if (B->HasNoInEdges())
         Q.push(B);
@@ -533,28 +453,18 @@ int CompilationGraph::CheckCycles() {
 
 int CompilationGraph::Check () {
   // We try to catch as many errors as we can in one go.
-  int errs = 0;
   int ret = 0;
 
   // Check that output/input language names match.
-  ret = this->CheckLanguageNames();
-  if (ret < 0)
-    return -1;
-  errs += ret;
+  ret += this->CheckLanguageNames();
 
   // Check for multiple default edges.
-  ret = this->CheckMultipleDefaultEdges();
-  if (ret < 0)
-    return -1;
-  errs += ret;
+  ret += this->CheckMultipleDefaultEdges();
 
   // Check for cycles.
-  ret = this->CheckCycles();
-  if (ret < 0)
-    return -1;
-  errs += ret;
+  ret += this->CheckCycles();
 
-  return errs;
+  return ret;
 }
 
 // Code related to graph visualization.
@@ -606,7 +516,7 @@ namespace llvm {
 
 }
 
-int CompilationGraph::writeGraph(const std::string& OutputFilename) {
+void CompilationGraph::writeGraph(const std::string& OutputFilename) {
   std::string ErrorInfo;
   raw_fd_ostream O(OutputFilename.c_str(), ErrorInfo);
 
@@ -616,11 +526,9 @@ int CompilationGraph::writeGraph(const std::string& OutputFilename) {
     errs() << "done.\n";
   }
   else {
-    PrintError("Error opening file '" + OutputFilename + "' for writing!");
-    return -1;
+    throw std::runtime_error("Error opening file '" + OutputFilename
+                             + "' for writing!");
   }
-
-  return 0;
 }
 
 void CompilationGraph::viewGraph() {

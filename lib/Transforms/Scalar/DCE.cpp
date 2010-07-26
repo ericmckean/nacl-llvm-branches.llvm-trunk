@@ -56,8 +56,8 @@ namespace {
 }
 
 char DeadInstElimination::ID = 0;
-INITIALIZE_PASS(DeadInstElimination, "die",
-                "Dead Instruction Elimination", false, false);
+static RegisterPass<DeadInstElimination>
+X("die", "Dead Instruction Elimination");
 
 Pass *llvm::createDeadInstEliminationPass() {
   return new DeadInstElimination();
@@ -81,7 +81,7 @@ namespace {
 }
 
 char DCE::ID = 0;
-INITIALIZE_PASS(DCE, "dce", "Dead Code Elimination", false, false);
+static RegisterPass<DCE> Y("dce", "Dead Code Elimination");
 
 bool DCE::runOnFunction(Function &F) {
   // Start out with all of the instructions in the worklist...

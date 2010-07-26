@@ -122,7 +122,7 @@ namespace {
 } // end anonymous namespace
 
 char LowerSetJmp::ID = 0;
-INITIALIZE_PASS(LowerSetJmp, "lowersetjmp", "Lower Set Jump", false, false);
+static RegisterPass<LowerSetJmp> X("lowersetjmp", "Lower Set Jump");
 
 // run - Run the transformation on the program. We grab the function
 // prototypes for longjmp and setjmp. If they are used in the program,

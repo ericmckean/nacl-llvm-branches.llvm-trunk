@@ -58,8 +58,11 @@ namespace {
 
 // Register this pass...
 char ScalarEvolutionAliasAnalysis::ID = 0;
-INITIALIZE_AG_PASS(ScalarEvolutionAliasAnalysis, AliasAnalysis, "scev-aa",
-                   "ScalarEvolution-based Alias Analysis", false, true, false);
+static RegisterPass<ScalarEvolutionAliasAnalysis>
+X("scev-aa", "ScalarEvolution-based Alias Analysis", false, true);
+
+// Declare that we implement the AliasAnalysis interface
+static RegisterAnalysisGroup<AliasAnalysis> Y(X);
 
 FunctionPass *llvm::createScalarEvolutionAliasAnalysisPass() {
   return new ScalarEvolutionAliasAnalysis();

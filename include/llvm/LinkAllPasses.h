@@ -22,7 +22,6 @@
 #include "llvm/Analysis/Passes.h"
 #include "llvm/Analysis/PointerTracking.h"
 #include "llvm/Analysis/PostDominators.h"
-#include "llvm/Analysis/RegionPrinter.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/Lint.h"
 #include "llvm/Assembly/PrintModulePass.h"
@@ -107,11 +106,6 @@ namespace {
       (void) llvm::createPostDomOnlyViewerPass();
       (void) llvm::createPostDomViewerPass();
       (void) llvm::createReassociatePass();
-      (void) llvm::createRegionInfoPass();
-      (void) llvm::createRegionOnlyPrinterPass();
-      (void) llvm::createRegionOnlyViewerPass();
-      (void) llvm::createRegionPrinterPass();
-      (void) llvm::createRegionViewerPass();
       (void) llvm::createSCCPPass();
       (void) llvm::createScalarReplAggregatesPass();
       (void) llvm::createSimplifyLibCallsPass();

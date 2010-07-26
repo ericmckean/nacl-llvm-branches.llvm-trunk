@@ -82,7 +82,7 @@ namespace {
 }
 
 char DSE::ID = 0;
-INITIALIZE_PASS(DSE, "dse", "Dead Store Elimination", false, false);
+static RegisterPass<DSE> X("dse", "Dead Store Elimination");
 
 FunctionPass *llvm::createDeadStoreEliminationPass() { return new DSE(); }
 

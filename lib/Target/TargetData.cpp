@@ -34,7 +34,8 @@ using namespace llvm;
 // Handle the Pass registration stuff necessary to use TargetData's.
 
 // Register the default SparcV9 implementation...
-INITIALIZE_PASS(TargetData, "targetdata", "Target Data Layout", false, true);
+static RegisterPass<TargetData> X("targetdata", "Target Data Layout", false, 
+                                  true);
 char TargetData::ID = 0;
 
 //===----------------------------------------------------------------------===//

@@ -31,7 +31,6 @@ namespace llvm {
   class TargetRegisterClass;
   class TargetRegisterInfo;
   class VirtRegMap;
-  class raw_ostream;
 
   /// \brief Provide extra information about the physical and virtual registers
   ///        in the function being compiled.
@@ -226,7 +225,8 @@ namespace llvm {
   private:
     class Spacer;
 
-    friend raw_ostream& operator<<(raw_ostream &os, const Spacer &s);
+    template <typename OStream>
+    friend OStream& operator<<(OStream &os, const Spacer &s);
 
 
     std::string fqn;
@@ -256,7 +256,7 @@ namespace llvm {
     public:
       explicit Spacer(unsigned numSpaces) : ns(numSpaces) {}
       Spacer operator+(const Spacer &o) const { return Spacer(ns + o.ns); }
-      void print(raw_ostream &os) const;
+      template <typename OStream> void print(OStream &os) const;
     private:
       unsigned ns;
     };
@@ -267,44 +267,57 @@ namespace llvm {
     std::string escapeChars(Iterator sBegin, Iterator sEnd) const;
 
     /// \brief Render a machine instruction.
-    void renderMachineInstr(raw_ostream &os,
+    template <typename OStream>
+    void renderMachineInstr(OStream &os,
                             const MachineInstr *mi) const;
 
     /// \brief Render vertical text.
-    template <typename T>
+    template <typename OStream, typename T>
     void renderVertical(const Spacer &indent,
-                        raw_ostream &os,
+                        OStream &os,
                         const T &t) const;
 
     /// \brief Insert CSS layout info.
+    template <typename OStream>
     void insertCSS(const Spacer &indent,
-                   raw_ostream &os) const;
+                   OStream &os) const;
 
     /// \brief Render a brief summary of the function (including rendering
     ///        context).
+    template <typename OStream>
     void renderFunctionSummary(const Spacer &indent,
-                               raw_ostream &os,
+                               OStream &os,
                                const char * const renderContextStr) const;
 
     /// \brief Render a legend for the pressure table.
+    template <typename OStream>
     void renderPressureTableLegend(const Spacer &indent,
-                                   raw_ostream &os) const;
+                                   OStream &os) const;
 
     /// \brief Render a consecutive set of HTML cells of the same class using
     /// the colspan attribute for run-length encoding.
-    template <typename CellType>
+    template <typename OStream, typename CellType>
     void renderCellsWithRLE(
-                     const Spacer &indent, raw_ostream &os,
+                     const Spacer &indent, OStream &os,
                      const std::pair<CellType, unsigned> &rleAccumulator,
                      const std::map<CellType, std::string> &cellTypeStrs) const;
 
     /// \brief Render code listing, potentially with register pressure
     ///        and live intervals shown alongside.
+    template <typename OStream>
     void renderCodeTablePlusPI(const Spacer &indent,
-                               raw_ostream &os) const;
+                               OStream &os) const;
+
+    /// \brief Render warnings about the machine function, or weird rendering
+    ///        parameter combinations (e.g. rendering specified live intervals
+    ///        over more than one machine function).
+    template <typename OStream>
+    void renderWarnings(const Spacer &indent,
+                        OStream &os) const;
 
     /// \brief Render the HTML page representing the MachineFunction.
-    void renderFunctionPage(raw_ostream &os,
+    template <typename OStream>
+    void renderFunctionPage(OStream &os,
                             const char * const renderContextStr) const;
 
     std::string escapeChars(const std::string &s) const;

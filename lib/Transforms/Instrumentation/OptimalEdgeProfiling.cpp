@@ -50,9 +50,9 @@ namespace {
 }
 
 char OptimalEdgeProfiler::ID = 0;
-INITIALIZE_PASS(OptimalEdgeProfiler, "insert-optimal-edge-profiling", 
-                "Insert optimal instrumentation for edge profiling",
-                false, false);
+static RegisterPass<OptimalEdgeProfiler>
+X("insert-optimal-edge-profiling", 
+  "Insert optimal instrumentation for edge profiling");
 
 ModulePass *llvm::createOptimalEdgeProfilerPass() {
   return new OptimalEdgeProfiler();

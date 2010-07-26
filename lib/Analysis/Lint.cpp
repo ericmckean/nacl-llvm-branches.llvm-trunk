@@ -167,7 +167,8 @@ namespace {
 }
 
 char Lint::ID = 0;
-INITIALIZE_PASS(Lint, "lint", "Statically lint-checks LLVM IR", false, true);
+static RegisterPass<Lint>
+X("lint", "Statically lint-checks LLVM IR", false, true);
 
 // Assert - We know that cond should be true, if not print an error message.
 #define Assert(C, M) \

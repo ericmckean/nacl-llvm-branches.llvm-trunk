@@ -48,8 +48,8 @@ namespace {
 }
 
 char PruneEH::ID = 0;
-INITIALIZE_PASS(PruneEH, "prune-eh",
-                "Remove unused exception handling info", false, false);
+static RegisterPass<PruneEH>
+X("prune-eh", "Remove unused exception handling info");
 
 Pass *llvm::createPruneEHPass() { return new PruneEH(); }
 

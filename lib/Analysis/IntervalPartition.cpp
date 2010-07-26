@@ -16,8 +16,8 @@
 using namespace llvm;
 
 char IntervalPartition::ID = 0;
-INITIALIZE_PASS(IntervalPartition, "intervals",
-                "Interval Partition Construction", true, true);
+static RegisterPass<IntervalPartition>
+X("intervals", "Interval Partition Construction", true, true);
 
 //===----------------------------------------------------------------------===//
 // IntervalPartition Implementation
