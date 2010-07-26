@@ -151,7 +151,8 @@ namespace {
 
 
 char DAE::ID = 0;
-INITIALIZE_PASS(DAE, "deadargelim", "Dead Argument Elimination", false, false);
+static RegisterPass<DAE>
+X("deadargelim", "Dead Argument Elimination");
 
 namespace {
   /// DAH - DeadArgumentHacking pass - Same as dead argument elimination, but
@@ -166,9 +167,8 @@ namespace {
 }
 
 char DAH::ID = 0;
-INITIALIZE_PASS(DAH, "deadarghaX0r", 
-                "Dead Argument Hacking (BUGPOINT USE ONLY; DO NOT USE)",
-                false, false);
+static RegisterPass<DAH>
+Y("deadarghaX0r", "Dead Argument Hacking (BUGPOINT USE ONLY; DO NOT USE)");
 
 /// createDeadArgEliminationPass - This pass removes arguments from functions
 /// which are not used by the body of the function.

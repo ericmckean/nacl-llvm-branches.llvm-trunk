@@ -25,8 +25,7 @@
 using namespace llvm;
 
 char LiveStacks::ID = 0;
-INITIALIZE_PASS(LiveStacks, "livestacks",
-                "Live Stack Slot Analysis", false, false);
+static RegisterPass<LiveStacks> X("livestacks", "Live Stack Slot Analysis");
 
 void LiveStacks::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.setPreservesAll();

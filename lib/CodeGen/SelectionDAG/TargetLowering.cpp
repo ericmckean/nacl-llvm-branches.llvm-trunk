@@ -678,12 +678,9 @@ TargetLowering::hasLegalSuperRegRegClasses(const TargetRegisterClass *RC) const{
 }
 
 /// findRepresentativeClass - Return the largest legal super-reg register class
-/// of the register class for the specified type and its associated "cost".
-std::pair<const TargetRegisterClass*, uint8_t>
-TargetLowering::findRepresentativeClass(EVT VT) const {
-  const TargetRegisterClass *RC = RegClassForVT[VT.getSimpleVT().SimpleTy];
-  if (!RC)
-    return std::make_pair(RC, 0);
+/// of the specified register class.
+const TargetRegisterClass *
+TargetLowering::findRepresentativeClass(const TargetRegisterClass *RC) const {
   const TargetRegisterClass *BestRC = RC;
   for (TargetRegisterInfo::regclass_iterator I = RC->superregclasses_begin(),
          E = RC->superregclasses_end(); I != E; ++I) {
@@ -691,10 +688,10 @@ TargetLowering::findRepresentativeClass(EVT VT) const {
     if (RRC->isASubClass() || !isLegalRC(RRC))
       continue;
     if (!hasLegalSuperRegRegClasses(RRC))
-      return std::make_pair(RRC, 1);
+      return RRC;
     BestRC = RRC;
   }
-  return std::make_pair(BestRC, 1);
+  return BestRC;
 }
 
 /// computeRegisterProperties - Once all of the register classes are added,
@@ -823,11 +820,8 @@ void TargetLowering::computeRegisterProperties() {
   // a group of value types. For example, on i386, i8, i16, and i32
   // representative would be GR32; while on x86_64 it's GR64.
   for (unsigned i = 0; i != MVT::LAST_VALUETYPE; ++i) {
-    const TargetRegisterClass* RRC;
-    uint8_t Cost;
-    tie(RRC, Cost) =  findRepresentativeClass((MVT::SimpleValueType)i);
-    RepRegClassForVT[i] = RRC;
-    RepRegClassCostForVT[i] = Cost;
+    const TargetRegisterClass *RC = RegClassForVT[i];
+    RepRegClassForVT[i] = RC ? findRepresentativeClass(RC) : 0;
   }
 }
 
@@ -1367,32 +1361,9 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
         }
       }      
       
-      if (SimplifyDemandedBits(InOp, NewMask.lshr(ShAmt),
+      if (SimplifyDemandedBits(Op.getOperand(0), NewMask.lshr(ShAmt),
                                KnownZero, KnownOne, TLO, Depth+1))
         return true;
-
-      // Convert (shl (anyext x, c)) to (anyext (shl x, c)) if the high bits
-      // are not demanded. This will likely allow the anyext to be folded away.
-      if (InOp.getNode()->getOpcode() == ISD::ANY_EXTEND) {
-        SDValue InnerOp = InOp.getNode()->getOperand(0);
-        EVT InnerVT = InnerOp.getValueType();
-        if ((APInt::getHighBitsSet(BitWidth,
-                                   BitWidth - InnerVT.getSizeInBits()) &
-               DemandedMask) == 0 &&
-            isTypeDesirableForOp(ISD::SHL, InnerVT)) {
-          EVT ShTy = getShiftAmountTy();
-          if (!APInt(BitWidth, ShAmt).isIntN(ShTy.getSizeInBits()))
-            ShTy = InnerVT;
-          SDValue NarrowShl =
-            TLO.DAG.getNode(ISD::SHL, dl, InnerVT, InnerOp,
-                            TLO.DAG.getConstant(ShAmt, ShTy));
-          return
-            TLO.CombineTo(Op,
-                          TLO.DAG.getNode(ISD::ANY_EXTEND, dl, Op.getValueType(),
-                                          NarrowShl));
-        }
-      }
-
       KnownZero <<= SA->getZExtValue();
       KnownOne  <<= SA->getZExtValue();
       // low bits known zero.

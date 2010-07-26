@@ -358,8 +358,8 @@ namespace {
   char RALinScan::ID = 0;
 }
 
-INITIALIZE_PASS(RALinScan, "linearscan-regalloc",
-                "Linear Scan Register Allocator", false, false);
+static RegisterPass<RALinScan>
+X("linearscan-regalloc", "Linear Scan Register Allocator");
 
 void RALinScan::ComputeRelatedRegClasses() {
   // First pass, add all reg classes to the union, and determine at least one

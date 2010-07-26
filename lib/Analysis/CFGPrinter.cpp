@@ -41,7 +41,8 @@ namespace {
 }
 
 char CFGViewer::ID = 0;
-INITIALIZE_PASS(CFGViewer, "view-cfg", "View CFG of function", false, true);
+static RegisterPass<CFGViewer>
+V0("view-cfg", "View CFG of function", false, true);
 
 namespace {
   struct CFGOnlyViewer : public FunctionPass {
@@ -62,8 +63,9 @@ namespace {
 }
 
 char CFGOnlyViewer::ID = 0;
-INITIALIZE_PASS(CFGOnlyViewer, "view-cfg-only",
-                "View CFG of function (with no function bodies)", false, true);
+static RegisterPass<CFGOnlyViewer>
+V1("view-cfg-only",
+   "View CFG of function (with no function bodies)", false, true);
 
 namespace {
   struct CFGPrinter : public FunctionPass {

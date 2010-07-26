@@ -30,9 +30,8 @@
 using namespace llvm;
 
 char RenderMachineFunction::ID = 0;
-INITIALIZE_PASS(RenderMachineFunction, "rendermf",
-                "Render machine functions (and related info) to HTML pages",
-                false, false);
+static RegisterPass<RenderMachineFunction>
+X("rendermf", "Render machine functions (and related info) to HTML pages");
 
 static cl::opt<std::string>
 outputFileSuffix("rmf-file-suffix",
@@ -500,7 +499,8 @@ namespace llvm {
 
   // ---------- MachineFunctionRenderer implementation ----------
 
-  void RenderMachineFunction::Spacer::print(raw_ostream &os) const {
+  template <typename OStream>
+  void RenderMachineFunction::Spacer::print(OStream &os) const {
     if (!prettyHTML)
       return;
     for (unsigned i = 0; i < ns; ++i) {
@@ -512,7 +512,8 @@ namespace llvm {
     return Spacer(ns);
   }
 
-  raw_ostream& operator<<(raw_ostream &os, const RenderMachineFunction::Spacer &s) {
+  template <typename OStream>
+  OStream& operator<<(OStream &os, const RenderMachineFunction::Spacer &s) {
     s.print(os);
     return os;
   }
@@ -582,7 +583,8 @@ namespace llvm {
   }
 
   /// \brief Render a machine instruction.
-  void RenderMachineFunction::renderMachineInstr(raw_ostream &os,
+  template <typename OStream>
+  void RenderMachineFunction::renderMachineInstr(OStream &os,
                                                  const MachineInstr *mi) const {
     std::string s;
     raw_string_ostream oss(s);
@@ -591,9 +593,9 @@ namespace llvm {
     os << escapeChars(oss.str());
   }
 
-  template <typename T>
+  template <typename OStream, typename T>
   void RenderMachineFunction::renderVertical(const Spacer &indent,
-                                             raw_ostream &os,
+                                             OStream &os,
                                              const T &t) const {
     if (ro.fancyVerticals()) {
       os << indent << "<object\n"
@@ -624,8 +626,9 @@ namespace llvm {
     }
   }
 
+  template <typename OStream>
   void RenderMachineFunction::insertCSS(const Spacer &indent,
-                                        raw_ostream &os) const {
+                                        OStream &os) const {
     os << indent << "<style type=\"text/css\">\n"
        << indent + s(2) << "body { font-color: black; }\n"
        << indent + s(2) << "table.code td { font-family: monospace; "
@@ -644,8 +647,9 @@ namespace llvm {
        << indent << "</style>\n";
   }
 
+  template <typename OStream>
   void RenderMachineFunction::renderFunctionSummary(
-                                    const Spacer &indent, raw_ostream &os,
+                                    const Spacer &indent, OStream &os,
                                     const char * const renderContextStr) const {
     os << indent << "<h1>Function: " << mf->getFunction()->getName()
                  << "</h1>\n"
@@ -653,9 +657,10 @@ namespace llvm {
   }
 
 
+  template <typename OStream>
   void RenderMachineFunction::renderPressureTableLegend(
                                                       const Spacer &indent,
-                                                      raw_ostream &os) const {
+                                                      OStream &os) const {
     os << indent << "<h2>Rendering Pressure Legend:</h2>\n"
        << indent << "<table class=\"code\">\n"
        << indent + s(2) << "<tr>\n"
@@ -680,9 +685,9 @@ namespace llvm {
        << indent << "</table>\n";
   }
 
-  template <typename CellType>
+  template <typename OStream, typename CellType>
   void RenderMachineFunction::renderCellsWithRLE(
-                   const Spacer &indent, raw_ostream &os,
+                   const Spacer &indent, OStream &os,
                    const std::pair<CellType, unsigned> &rleAccumulator,
                    const std::map<CellType, std::string> &cellTypeStrs) const {
 
@@ -701,8 +706,9 @@ namespace llvm {
   }
 
 
+  template <typename OStream>
   void RenderMachineFunction::renderCodeTablePlusPI(const Spacer &indent,
-                                                    raw_ostream &os) const {
+                                                    OStream &os) const {
 
     std::map<LiveState, std::string> lsStrs;
     lsStrs[Dead] = "l-n";
@@ -848,8 +854,14 @@ namespace llvm {
       renderPressureTableLegend(indent, os);
   }
 
+  template <typename OStream>
+  void RenderMachineFunction::renderWarnings(const Spacer &indent,
+                                             OStream &os) const {
+  }
+
+  template <typename OStream>
   void RenderMachineFunction::renderFunctionPage(
-                                    raw_ostream &os,
+                                    OStream &os,
                                     const char * const renderContextStr) const {
     os << "<html>\n"
        << s(2) << "<head>\n"

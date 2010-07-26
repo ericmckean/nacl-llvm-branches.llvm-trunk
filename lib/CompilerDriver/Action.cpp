@@ -13,7 +13,6 @@
 
 #include "llvm/CompilerDriver/Action.h"
 #include "llvm/CompilerDriver/BuiltinOptions.h"
-#include "llvm/CompilerDriver/Error.h"
 
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/SystemUtils.h"
@@ -59,15 +58,11 @@ namespace {
 
     if (prog.isEmpty()) {
       prog = FindExecutable(name, ProgramName, (void *)(intptr_t)&Main);
-      if (prog.isEmpty()) {
-        PrintError("Can't find program '" + name + "'");
-        return -1;
-      }
+      if (prog.isEmpty())
+        throw std::runtime_error("Can't find program '" + name + "'");
     }
-    if (!prog.canExecute()) {
-      PrintError("Program '" + name + "' is not executable.");
-      return -1;
-    }
+    if (!prog.canExecute())
+      throw std::runtime_error("Program '" + name + "' is not executable.");
 
     // Build the command line vector and the redirects array.
     const sys::Path* redirects[3] = {0,0,0};

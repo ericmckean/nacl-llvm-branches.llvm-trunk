@@ -55,8 +55,7 @@ namespace {
 }
   
 char LoopDeletion::ID = 0;
-INITIALIZE_PASS(LoopDeletion, "loop-deletion",
-                "Delete dead loops", false, false);
+static RegisterPass<LoopDeletion> X("loop-deletion", "Delete dead loops");
 
 Pass* llvm::createLoopDeletionPass() {
   return new LoopDeletion();

@@ -62,22 +62,17 @@ namespace llvmc {
     pluginListInitialized = false;
   }
 
-  int PluginLoader::RunInitialization(LanguageMap& langMap,
-                                      CompilationGraph& graph) const
+  void PluginLoader::RunInitialization(LanguageMap& langMap,
+                                       CompilationGraph& graph) const
   {
     llvm::sys::SmartScopedLock<true> Lock(*PluginMutex);
     for (PluginList::iterator B = Plugins.begin(), E = Plugins.end();
          B != E; ++B) {
       const BasePlugin* BP = *B;
-      if (int ret = BP->PreprocessOptions())
-        return ret;
-      if (int ret = BP->PopulateLanguageMap(langMap))
-        return ret;
-      if (int ret = BP->PopulateCompilationGraph(graph))
-        return ret;
+      BP->PreprocessOptions();
+      BP->PopulateLanguageMap(langMap);
+      BP->PopulateCompilationGraph(graph);
     }
-
-    return 0;
   }
 
 }

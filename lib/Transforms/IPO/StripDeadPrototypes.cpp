@@ -36,8 +36,8 @@ public:
 } // end anonymous namespace
 
 char StripDeadPrototypesPass::ID = 0;
-INITIALIZE_PASS(StripDeadPrototypesPass, "strip-dead-prototypes",
-                "Strip Unused Function Prototypes", false, false);
+static RegisterPass<StripDeadPrototypesPass>
+X("strip-dead-prototypes", "Strip Unused Function Prototypes");
 
 bool StripDeadPrototypesPass::runOnModule(Module &M) {
   bool MadeChange = false;

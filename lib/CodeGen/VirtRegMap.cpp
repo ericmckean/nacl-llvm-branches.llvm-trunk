@@ -48,7 +48,8 @@ STATISTIC(NumSpills  , "Number of register spills");
 
 char VirtRegMap::ID = 0;
 
-INITIALIZE_PASS(VirtRegMap, "virtregmap", "Virtual Register Map", false, false);
+static RegisterPass<VirtRegMap>
+X("virtregmap", "Virtual Register Map");
 
 bool VirtRegMap::runOnMachineFunction(MachineFunction &mf) {
   MRI = &mf.getRegInfo();

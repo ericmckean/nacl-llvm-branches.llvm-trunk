@@ -82,8 +82,8 @@ namespace {
 }
 
 char CodeGenPrepare::ID = 0;
-INITIALIZE_PASS(CodeGenPrepare, "codegenprepare",
-                "Optimize for code generation", false, false);
+static RegisterPass<CodeGenPrepare> X("codegenprepare",
+                                      "Optimize for code generation");
 
 FunctionPass *llvm::createCodeGenPreparePass(const TargetLowering *TLI) {
   return new CodeGenPrepare(TLI);

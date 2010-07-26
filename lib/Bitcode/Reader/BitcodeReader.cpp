@@ -801,13 +801,20 @@ bool BitcodeReader::ParseMetadata() {
 
       // Read named metadata elements.
       unsigned Size = Record.size();
-      NamedMDNode *NMD = TheModule->getOrInsertNamedMetadata(Name);
+      SmallVector<MDNode *, 8> Elts;
       for (unsigned i = 0; i != Size; ++i) {
+        if (Record[i] == ~0U) {
+          Elts.push_back(NULL);
+          continue;
+        }
         MDNode *MD = dyn_cast<MDNode>(MDValueList.getValueFwdRef(Record[i]));
         if (MD == 0)
           return Error("Malformed metadata record");
-        NMD->addOperand(MD);
+        Elts.push_back(MD);
       }
+      Value *V = NamedMDNode::Create(Context, Name.str(), Elts.data(),
+                                     Elts.size(), TheModule);
+      MDValueList.AssignValue(V, NextMDValueNo++);
       break;
     }
     case bitc::METADATA_FN_NODE:

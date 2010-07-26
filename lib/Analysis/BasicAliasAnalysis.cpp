@@ -182,9 +182,11 @@ namespace {
 
 // Register this pass...
 char NoAA::ID = 0;
-INITIALIZE_AG_PASS(NoAA, AliasAnalysis, "no-aa",
-                   "No Alias Analysis (always returns 'may' alias)",
-                   true, true, false);
+static RegisterPass<NoAA>
+U("no-aa", "No Alias Analysis (always returns 'may' alias)", true, true);
+
+// Declare that we implement the AliasAnalysis interface
+static RegisterAnalysisGroup<AliasAnalysis> V(U);
 
 ImmutablePass *llvm::createNoAAPass() { return new NoAA(); }
 
@@ -273,9 +275,11 @@ namespace {
 
 // Register this pass...
 char BasicAliasAnalysis::ID = 0;
-INITIALIZE_AG_PASS(BasicAliasAnalysis, AliasAnalysis, "basicaa",
-                   "Basic Alias Analysis (default AA impl)",
-                   false, true, true);
+static RegisterPass<BasicAliasAnalysis>
+X("basicaa", "Basic Alias Analysis (default AA impl)", false, true);
+
+// Declare that we implement the AliasAnalysis interface
+static RegisterAnalysisGroup<AliasAnalysis, true> Y(X);
 
 ImmutablePass *llvm::createBasicAliasAnalysisPass() {
   return new BasicAliasAnalysis();

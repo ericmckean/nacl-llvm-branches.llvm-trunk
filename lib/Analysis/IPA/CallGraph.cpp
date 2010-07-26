@@ -172,8 +172,9 @@ private:
 } //End anonymous namespace
 
 static RegisterAnalysisGroup<CallGraph> X("Call Graph");
-INITIALIZE_AG_PASS(BasicCallGraph, CallGraph, "basiccg",
-                   "Basic CallGraph Construction", false, true, true);
+static RegisterPass<BasicCallGraph>
+Y("basiccg", "Basic CallGraph Construction", false, true);
+static RegisterAnalysisGroup<CallGraph, true> Z(Y);
 
 char CallGraph::ID = 0;
 char BasicCallGraph::ID = 0;

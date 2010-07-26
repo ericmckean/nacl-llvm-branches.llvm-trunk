@@ -63,8 +63,8 @@ namespace {
 }
 
 char OptimizeExts::ID = 0;
-INITIALIZE_PASS(OptimizeExts, "opt-exts",
-                "Optimize sign / zero extensions", false, false);
+static RegisterPass<OptimizeExts>
+X("opt-exts", "Optimize sign / zero extensions");
 
 FunctionPass *llvm::createOptimizeExtsPass() { return new OptimizeExts(); }
 

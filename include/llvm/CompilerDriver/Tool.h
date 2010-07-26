@@ -38,19 +38,17 @@ namespace llvmc {
 
     virtual ~Tool() {}
 
-    virtual int GenerateAction (Action& Out,
-                                const PathVector& inFiles,
-                                const bool HasChildren,
-                                const llvm::sys::Path& TempDir,
-                                const InputLanguagesSet& InLangs,
-                                const LanguageMap& LangMap) const = 0;
+    virtual Action GenerateAction (const PathVector& inFiles,
+                                   bool  HasChildren,
+                                   const llvm::sys::Path& TempDir,
+                                   const InputLanguagesSet& InLangs,
+                                   const LanguageMap& LangMap) const = 0;
 
-    virtual int GenerateAction (Action& Out,
-                                const llvm::sys::Path& inFile,
-                                const bool HasChildren,
-                                const llvm::sys::Path& TempDir,
-                                const InputLanguagesSet& InLangs,
-                                const LanguageMap& LangMap) const = 0;
+    virtual Action GenerateAction (const llvm::sys::Path& inFile,
+                                   bool  HasChildren,
+                                   const llvm::sys::Path& TempDir,
+                                   const InputLanguagesSet& InLangs,
+                                   const LanguageMap& LangMap) const = 0;
 
     virtual const char*  Name() const = 0;
     virtual const char** InputLanguages() const = 0;
@@ -76,13 +74,11 @@ namespace llvmc {
     void ClearJoinList() { JoinList_.clear(); }
     bool JoinListEmpty() const { return JoinList_.empty(); }
 
-    int GenerateAction(Action& Out,
-                       const bool HasChildren,
-                       const llvm::sys::Path& TempDir,
-                       const InputLanguagesSet& InLangs,
-                       const LanguageMap& LangMap) const {
-      return GenerateAction(Out, JoinList_, HasChildren, TempDir, InLangs,
-                            LangMap);
+    Action GenerateAction(bool  HasChildren,
+                          const llvm::sys::Path& TempDir,
+                          const InputLanguagesSet& InLangs,
+                          const LanguageMap& LangMap) const {
+      return GenerateAction(JoinList_, HasChildren, TempDir, InLangs, LangMap);
     }
     // We shouldn't shadow base class's version of GenerateAction.
     using Tool::GenerateAction;

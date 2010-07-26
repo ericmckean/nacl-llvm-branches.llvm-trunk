@@ -135,8 +135,7 @@ namespace {
 }
 
 char SROA::ID = 0;
-INITIALIZE_PASS(SROA, "scalarrepl",
-                "Scalar Replacement of Aggregates", false, false);
+static RegisterPass<SROA> X("scalarrepl", "Scalar Replacement of Aggregates");
 
 // Public interface to the ScalarReplAggregates pass
 FunctionPass *llvm::createScalarReplAggregatesPass(signed int Threshold) { 

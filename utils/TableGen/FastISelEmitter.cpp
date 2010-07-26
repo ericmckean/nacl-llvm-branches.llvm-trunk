@@ -287,10 +287,6 @@ void FastISelMap::CollectPatterns(CodeGenDAGPatterns &CGP) {
       if (!DstRC)
         continue;
     } else {
-      // If this isn't a leaf, then continue since the register classes are
-      // a bit too complicated for now.
-      if (!Dst->getChild(1)->isLeaf()) continue;
-      
       DefInit *SR = dynamic_cast<DefInit*>(Dst->getChild(1)->getLeafValue());
       if (SR)
         SubRegNo = getQualifiedName(SR->getDef());

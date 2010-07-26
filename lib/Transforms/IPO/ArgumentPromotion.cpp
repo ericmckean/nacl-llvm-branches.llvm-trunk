@@ -84,8 +84,8 @@ namespace {
 }
 
 char ArgPromotion::ID = 0;
-INITIALIZE_PASS(ArgPromotion, "argpromotion",
-                "Promote 'by reference' arguments to scalars", false, false);
+static RegisterPass<ArgPromotion>
+X("argpromotion", "Promote 'by reference' arguments to scalars");
 
 Pass *llvm::createArgumentPromotionPass(unsigned maxElements) {
   return new ArgPromotion(maxElements);

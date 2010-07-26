@@ -69,8 +69,8 @@ namespace {
 }
 
 char FunctionAttrs::ID = 0;
-INITIALIZE_PASS(FunctionAttrs, "functionattrs",
-                "Deduce function attributes", false, false);
+static RegisterPass<FunctionAttrs>
+X("functionattrs", "Deduce function attributes");
 
 Pass *llvm::createFunctionAttrsPass() { return new FunctionAttrs(); }
 

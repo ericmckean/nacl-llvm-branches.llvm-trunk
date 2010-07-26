@@ -38,7 +38,8 @@ VerifyLoopInfoX("verify-loop-info", cl::location(VerifyLoopInfo),
                 cl::desc("Verify loop info (time consuming)"));
 
 char LoopInfo::ID = 0;
-INITIALIZE_PASS(LoopInfo, "loops", "Natural Loop Information", true, true);
+static RegisterPass<LoopInfo>
+X("loops", "Natural Loop Information", true, true);
 
 //===----------------------------------------------------------------------===//
 // Loop implementation
@@ -123,13 +124,14 @@ PHINode *Loop::getCanonicalInductionVariable() const {
   BasicBlock *H = getHeader();
 
   BasicBlock *Incoming = 0, *Backedge = 0;
-  pred_iterator PI = pred_begin(H);
-  assert(PI != pred_end(H) &&
+  typedef GraphTraits<Inverse<BasicBlock*> > InvBlockTraits;
+  InvBlockTraits::ChildIteratorType PI = InvBlockTraits::child_begin(H);
+  assert(PI != InvBlockTraits::child_end(H) &&
          "Loop must have at least one backedge!");
   Backedge = *PI++;
-  if (PI == pred_end(H)) return 0;  // dead loop
+  if (PI == InvBlockTraits::child_end(H)) return 0;  // dead loop
   Incoming = *PI++;
-  if (PI != pred_end(H)) return 0;  // multiple backedges?
+  if (PI != InvBlockTraits::child_end(H)) return 0;  // multiple backedges?
 
   if (contains(Incoming)) {
     if (contains(Backedge))
@@ -155,6 +157,18 @@ PHINode *Loop::getCanonicalInductionVariable() const {
   return 0;
 }
 
+/// getCanonicalInductionVariableIncrement - Return the LLVM value that holds
+/// the canonical induction variable value for the "next" iteration of the
+/// loop.  This always succeeds if getCanonicalInductionVariable succeeds.
+///
+Instruction *Loop::getCanonicalInductionVariableIncrement() const {
+  if (PHINode *PN = getCanonicalInductionVariable()) {
+    bool P1InLoop = contains(PN->getIncomingBlock(1));
+    return cast<Instruction>(PN->getIncomingValue(P1InLoop));
+  }
+  return 0;
+}
+
 /// getTripCount - Return a loop-invariant LLVM value indicating the number of
 /// times the loop will be executed.  Note that this means that the backedge
 /// of the loop executes N-1 times.  If the trip-count cannot be determined,
@@ -166,12 +180,12 @@ PHINode *Loop::getCanonicalInductionVariable() const {
 Value *Loop::getTripCount() const {
   // Canonical loops will end with a 'cmp ne I, V', where I is the incremented
   // canonical induction variable and V is the trip count of the loop.
-  PHINode *IV = getCanonicalInductionVariable();
-  if (IV == 0 || IV->getNumIncomingValues() != 2) return 0;
+  Instruction *Inc = getCanonicalInductionVariableIncrement();
+  if (Inc == 0) return 0;
+  PHINode *IV = cast<PHINode>(Inc->getOperand(0));
 
-  bool P0InLoop = contains(IV->getIncomingBlock(0));
-  Value *Inc = IV->getIncomingValue(!P0InLoop);
-  BasicBlock *BackedgeBlock = IV->getIncomingBlock(!P0InLoop);
+  BasicBlock *BackedgeBlock =
+    IV->getIncomingBlock(contains(IV->getIncomingBlock(1)));
 
   if (BranchInst *BI = dyn_cast<BranchInst>(BackedgeBlock->getTerminator()))
     if (BI->isConditional()) {
@@ -327,12 +341,16 @@ Loop::getUniqueExitBlocks(SmallVectorImpl<BasicBlock *> &ExitBlocks) const {
     BasicBlock *current = *BI;
     switchExitBlocks.clear();
 
-    for (succ_iterator I = succ_begin(*BI), E = succ_end(*BI); I != E; ++I) {
+    typedef GraphTraits<BasicBlock *> BlockTraits;
+    typedef GraphTraits<Inverse<BasicBlock *> > InvBlockTraits;
+    for (BlockTraits::ChildIteratorType I =
+         BlockTraits::child_begin(*BI), E = BlockTraits::child_end(*BI);
+         I != E; ++I) {
       // If block is inside the loop then it is not a exit block.
       if (std::binary_search(LoopBBs.begin(), LoopBBs.end(), *I))
         continue;
 
-      pred_iterator PI = pred_begin(*I);
+      InvBlockTraits::ChildIteratorType PI = InvBlockTraits::child_begin(*I);
       BasicBlock *firstPred = *PI;
 
       // If current basic block is this exit block's first predecessor
@@ -345,7 +363,8 @@ Loop::getUniqueExitBlocks(SmallVectorImpl<BasicBlock *> &ExitBlocks) const {
       // If a terminator has more then two successors, for example SwitchInst,
       // then it is possible that there are multiple edges from current block
       // to one exit block.
-      if (std::distance(succ_begin(current), succ_end(current)) <= 2) {
+      if (std::distance(BlockTraits::child_begin(current),
+                        BlockTraits::child_end(current)) <= 2) {
         ExitBlocks.push_back(*I);
         continue;
       }

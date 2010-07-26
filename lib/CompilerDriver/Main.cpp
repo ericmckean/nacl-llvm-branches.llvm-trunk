@@ -20,6 +20,7 @@
 #include "llvm/System/Path.h"
 
 #include <sstream>
+#include <stdexcept>
 #include <string>
 
 namespace cl = llvm::cl;
@@ -30,7 +31,9 @@ namespace {
 
   std::stringstream* GlobalTimeLog;
 
-  int getTempDir(sys::Path& tempDir) {
+  sys::Path getTempDir() {
+    sys::Path tempDir;
+
     // The --temp-dir option.
     if (!TempDirname.empty()) {
       tempDir = TempDirname;
@@ -38,7 +41,7 @@ namespace {
     // GCC 4.5-style -save-temps handling.
     else if (SaveTemps == SaveTempsEnum::Unset) {
       tempDir = sys::Path::GetTemporaryDirectory();
-      return 0;
+      return tempDir;
     }
     else if (SaveTemps == SaveTempsEnum::Obj && !OutputFilename.empty()) {
       tempDir = OutputFilename;
@@ -46,34 +49,35 @@ namespace {
     }
     else {
       // SaveTemps == Cwd --> use current dir (leave tempDir empty).
-      return 0;
+      return tempDir;
     }
 
     if (!tempDir.exists()) {
       std::string ErrMsg;
-      if (tempDir.createDirectoryOnDisk(true, &ErrMsg)) {
-        PrintError(ErrMsg);
-        return -1;
-      }
+      if (tempDir.createDirectoryOnDisk(true, &ErrMsg))
+        throw std::runtime_error(ErrMsg);
     }
 
-    return 0;
+    return tempDir;
   }
 
   /// BuildTargets - A small wrapper for CompilationGraph::Build.
   int BuildTargets(CompilationGraph& graph, const LanguageMap& langMap) {
     int ret;
-    sys::Path tempDir;
+    const sys::Path& tempDir = getTempDir();
     bool toDelete = (SaveTemps == SaveTempsEnum::Unset);
 
-    if (int ret = getTempDir(tempDir))
-      return ret;
-
-    ret = graph.Build(tempDir, langMap);
+    try {
+      ret = graph.Build(tempDir, langMap);
+    }
+    catch(...) {
+      if (toDelete)
+        tempDir.eraseFromDisk(true);
+      throw;
+    }
 
     if (toDelete)
       tempDir.eraseFromDisk(true);
-
     return ret;
   }
 }
@@ -89,54 +93,64 @@ void AppendToGlobalTimeLog(const std::string& cmd, double time) {
 const char* ProgramName;
 
 int Main(int argc, char** argv) {
-  int ret = 0;
-  LanguageMap langMap;
-  CompilationGraph graph;
+  try {
+    LanguageMap langMap;
+    CompilationGraph graph;
 
-  ProgramName = argv[0];
+    ProgramName = argv[0];
 
-  cl::ParseCommandLineOptions
-    (argc, argv, "LLVM Compiler Driver (Work In Progress)",
-     /* ReadResponseFiles = */ false);
+    cl::ParseCommandLineOptions
+      (argc, argv, "LLVM Compiler Driver (Work In Progress)",
+       /* ReadResponseFiles = */ false);
 
-  PluginLoader Plugins;
-  if (int ret = Plugins.RunInitialization(langMap, graph))
-    return ret;
+    PluginLoader Plugins;
+    Plugins.RunInitialization(langMap, graph);
 
-  if (CheckGraph) {
-    ret = graph.Check();
-    if (!ret)
-      llvm::errs() << "check-graph: no errors found.\n";
+    if (CheckGraph) {
+      int ret = graph.Check();
+      if (!ret)
+        llvm::errs() << "check-graph: no errors found.\n";
 
-    return ret;
-  }
+      return ret;
+    }
 
-  if (ViewGraph) {
-    graph.viewGraph();
-    if (!WriteGraph)
+    if (ViewGraph) {
+      graph.viewGraph();
+      if (!WriteGraph)
+        return 0;
+    }
+
+    if (WriteGraph) {
+      graph.writeGraph(OutputFilename.empty()
+                       ? std::string("compilation-graph.dot")
+                       : OutputFilename);
       return 0;
+    }
+
+    if (Time) {
+      GlobalTimeLog = new std::stringstream;
+      GlobalTimeLog->precision(2);
+    }
+
+    int ret = BuildTargets(graph, langMap);
+
+    if (Time) {
+      llvm::errs() << GlobalTimeLog->str();
+      delete GlobalTimeLog;
+    }
+
+    return ret;
   }
-
-  if (WriteGraph) {
-    const std::string& Out = (OutputFilename.empty()
-                              ? std::string("compilation-graph.dot")
-                              : OutputFilename);
-    return graph.writeGraph(Out);
+  catch(llvmc::error_code& ec) {
+    return ec.code();
   }
-
-  if (Time) {
-    GlobalTimeLog = new std::stringstream;
-    GlobalTimeLog->precision(2);
+  catch(const std::exception& ex) {
+    llvm::errs() << argv[0] << ": " << ex.what() << '\n';
   }
-
-  ret = BuildTargets(graph, langMap);
-
-  if (Time) {
-    llvm::errs() << GlobalTimeLog->str();
-    delete GlobalTimeLog;
+  catch(...) {
+    llvm::errs() << argv[0] << ": unknown error!\n";
   }
-
-  return ret;
+  return 1;
 }
 
 } // end namespace llvmc

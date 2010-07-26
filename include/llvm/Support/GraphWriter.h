@@ -271,12 +271,6 @@ public:
       O << "[" << Attrs << "]";
     O << ";\n";
   }
-
-  /// getOStream - Get the raw output stream into the graph file. Useful to
-  /// write fancy things using addCustomGraphFeatures().
-  raw_ostream &getOStream() {
-    return O;
-  }
 };
 
 template<typename GraphType>

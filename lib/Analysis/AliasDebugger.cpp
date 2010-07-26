@@ -126,8 +126,9 @@ namespace {
 }
 
 char AliasDebugger::ID = 0;
-INITIALIZE_AG_PASS(AliasDebugger, AliasAnalysis, "debug-aa",
-                   "AA use debugger", false, true, false);
+static RegisterPass<AliasDebugger>
+X("debug-aa", "AA use debugger", false, true);
+static RegisterAnalysisGroup<AliasAnalysis> Y(X);
 
 Pass *llvm::createAliasDebugger() { return new AliasDebugger(); }
 

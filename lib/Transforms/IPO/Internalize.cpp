@@ -63,8 +63,8 @@ namespace {
 } // end anonymous namespace
 
 char InternalizePass::ID = 0;
-INITIALIZE_PASS(InternalizePass, "internalize",
-                "Internalize Global Symbols", false, false);
+static RegisterPass<InternalizePass>
+X("internalize", "Internalize Global Symbols");
 
 InternalizePass::InternalizePass(bool AllButMain)
   : ModulePass(&ID), AllButMain(AllButMain){

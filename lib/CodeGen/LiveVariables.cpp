@@ -42,8 +42,7 @@
 using namespace llvm;
 
 char LiveVariables::ID = 0;
-INITIALIZE_PASS(LiveVariables, "livevars",
-                "Live Variable Analysis", false, false);
+static RegisterPass<LiveVariables> X("livevars", "Live Variable Analysis");
 
 
 void LiveVariables::getAnalysisUsage(AnalysisUsage &AU) const {

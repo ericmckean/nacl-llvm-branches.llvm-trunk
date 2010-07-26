@@ -28,8 +28,8 @@ using namespace llvm;
 
 char PostDominatorTree::ID = 0;
 char PostDominanceFrontier::ID = 0;
-INITIALIZE_PASS(PostDominatorTree, "postdomtree",
-                "Post-Dominator Tree Construction", true, true);
+static RegisterPass<PostDominatorTree>
+F("postdomtree", "Post-Dominator Tree Construction", true, true);
 
 bool PostDominatorTree::runOnFunction(Function &F) {
   DT->recalculate(F);
@@ -53,8 +53,8 @@ FunctionPass* llvm::createPostDomTree() {
 //  PostDominanceFrontier Implementation
 //===----------------------------------------------------------------------===//
 
-INITIALIZE_PASS(PostDominanceFrontier, "postdomfrontier",
-                "Post-Dominance Frontier Construction", true, true);
+static RegisterPass<PostDominanceFrontier>
+H("postdomfrontier", "Post-Dominance Frontier Construction", true, true);
 
 const DominanceFrontier::DomSetType &
 PostDominanceFrontier::calculate(const PostDominatorTree &DT,

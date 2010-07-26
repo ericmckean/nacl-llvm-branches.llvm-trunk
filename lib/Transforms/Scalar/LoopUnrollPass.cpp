@@ -71,7 +71,7 @@ namespace {
 }
 
 char LoopUnroll::ID = 0;
-INITIALIZE_PASS(LoopUnroll, "loop-unroll", "Unroll loops", false, false);
+static RegisterPass<LoopUnroll> X("loop-unroll", "Unroll loops");
 
 Pass *llvm::createLoopUnrollPass() { return new LoopUnroll(); }
 
