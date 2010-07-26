@@ -767,7 +767,11 @@ let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1 in
                    "jmp{l}\t{*}$dst  # TAILCALL",
                  []>;     
   def TAILJMPm : I<0xFF, MRM4m, (outs), (ins i32mem_TC:$dst, variable_ops),
-                   "jmp{l}\t{*}$dst  # TAILCALL", []>;
+                   "jmp{l}\t{*}$dst  # TAILCALL", []>,
+                   Requires<[NotNaCl]>; // @LOCALMOD
+                   // Disable to force usage of register-based versions.
+                   // Mainly, need to disable Pat match for TCRETURNmi,
+                   // but disable this too, just in case.
 }
 
 //===----------------------------------------------------------------------===//
@@ -4403,7 +4407,7 @@ def : Pat<(X86tcret GR32_TC:$dst, imm:$off),
 
 def : Pat<(X86tcret (load addr:$dst), imm:$off),
           (TCRETURNmi addr:$dst, imm:$off)>,
-	  Requires<[In32BitMode]>;
+	  Requires<[In32BitMode, NotNaCl]>; // @LOCALMOD (use register version)
 
 def : Pat<(X86tcret (i32 tglobaladdr:$dst), imm:$off),
           (TCRETURNdi texternalsym:$dst, imm:$off)>,
