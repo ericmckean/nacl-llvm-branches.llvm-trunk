@@ -382,7 +382,11 @@ X86TargetLowering::X86TargetLowering(X86TargetMachine &TM)
     setOperationAction(ISD::SELECT        , MVT::i64  , Custom);
     setOperationAction(ISD::SETCC         , MVT::i64  , Custom);
   }
-  setOperationAction(ISD::EH_RETURN       , MVT::Other, Custom);
+
+  // TODO(espindola): This is disabling EH support for now so that
+  // we can build libgcc without asserting.
+  if (!Subtarget->isTargetNaCl())
+    setOperationAction(ISD::EH_RETURN       , MVT::Other, Custom);
 
   // Darwin ABI issue.
   setOperationAction(ISD::ConstantPool    , MVT::i32  , Custom);
