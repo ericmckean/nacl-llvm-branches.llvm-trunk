@@ -174,10 +174,24 @@ public:
   /// For example, on i386 the rep register class for i8, i16, and i32 are GR32;
   /// while the rep register class is GR64 on x86_64.
   virtual const TargetRegisterClass *getRepRegClassFor(EVT VT) const {
-    assert(VT.isSimple() && "getRegClassFor called on illegal type!");
+    assert(VT.isSimple() && "getRepRegClassFor called on illegal type!");
     const TargetRegisterClass *RC = RepRegClassForVT[VT.getSimpleVT().SimpleTy];
-    assert(RC && "This value type is not natively supported!");
     return RC;
+  }
+
+  /// getRepRegClassCostFor - Return the cost of the 'representative' register
+  /// class for the specified value type.
+  virtual uint8_t getRepRegClassCostFor(EVT VT) const {
+    assert(VT.isSimple() && "getRepRegClassCostFor called on illegal type!");
+    return RepRegClassCostForVT[VT.getSimpleVT().SimpleTy];
+  }
+
+  /// getRegPressureLimit - Return the register pressure "high water mark" for
+  /// the specific register class. The scheduler is in high register pressure
+  /// mode (for the specific register class) if it goes over the limit.
+  virtual unsigned getRegPressureLimit(const TargetRegisterClass *RC,
+                                       MachineFunction &MF) const {
+    return 0;
   }
 
   /// isTypeLegal - Return true if the target has native support for the
@@ -778,6 +792,12 @@ public:
     return false;
   }
 
+  /// getMaximalGlobalOffset - Returns the maximal possible offset which can be
+  /// used for loads / stores from the global.
+  virtual unsigned getMaximalGlobalOffset() const {
+    return 0;
+  }
+
   //===--------------------------------------------------------------------===//
   // TargetLowering Optimization Methods
   //
@@ -994,9 +1014,9 @@ protected:
   }
 
   /// findRepresentativeClass - Return the largest legal super-reg register class
-  /// of the specified register class.
-  virtual const TargetRegisterClass *
-  findRepresentativeClass(const TargetRegisterClass *RC) const;
+  /// of the register class for the specified type and its associated "cost".
+  virtual std::pair<const TargetRegisterClass*, uint8_t>
+  findRepresentativeClass(EVT VT) const;
 
   /// computeRegisterProperties - Once all of the register classes are added,
   /// this allows us to compute derived properties we expose.
@@ -1581,9 +1601,16 @@ private:
 
   /// RepRegClassForVT - This indicates the "representative" register class to
   /// use for each ValueType the target supports natively. This information is
-  /// used by the scheduler to track register pressure. e.g. On x86, i8, i16,
+  /// used by the scheduler to track register pressure. By default, the
+  /// representative register class is the largest legal super-reg register
+  /// class of the register class of the specified type. e.g. On x86, i8, i16,
   /// and i32's representative class would be GR32.
   const TargetRegisterClass *RepRegClassForVT[MVT::LAST_VALUETYPE];
+
+  /// RepRegClassCostForVT - This indicates the "cost" of the "representative"
+  /// register class for each ValueType. The cost is used by the scheduler to
+  /// approximate register pressure.
+  uint8_t RepRegClassCostForVT[MVT::LAST_VALUETYPE];
 
   /// Synthesizable indicates whether it is OK for the compiler to create new
   /// operations using this type.  All Legal types are Synthesizable except

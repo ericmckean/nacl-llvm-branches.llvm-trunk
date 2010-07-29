@@ -242,7 +242,10 @@ let Namespace = "X86" in {
   def CR7 : Register<"cr7">;
   def CR8 : Register<"cr8">;
 
-  // Status flags register
+  // Pseudo index registers
+  def EIZ : Register<"eiz">;
+  def RIZ : Register<"riz">;
+  
   def PSEUDO_NACL_SEG : Register<"nacl">; // @LOCALMOD
 
 }

@@ -17,6 +17,8 @@
 
 #include "ARMSubtarget.h"
 #include "llvm/Target/TargetLowering.h"
+#include "llvm/Target/TargetRegisterInfo.h"
+#include "llvm/CodeGen/FastISel.h"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/CodeGen/CallingConvLower.h"
 #include <vector>
@@ -261,7 +263,18 @@ namespace llvm {
     /// getFunctionAlignment - Return the Log2 alignment of this function.
     virtual unsigned getFunctionAlignment(const Function *F) const;
 
+    /// getMaximalGlobalOffset - Returns the maximal possible offset which can
+    /// be used for loads / stores from the global.
+    virtual unsigned getMaximalGlobalOffset() const;
+
+    /// createFastISel - This method returns a target specific FastISel object,
+    /// or null if the target does not support "fast" ISel.
+    virtual FastISel *createFastISel(FunctionLoweringInfo &funcInfo) const;
+
     Sched::Preference getSchedulingPreference(SDNode *N) const;
+
+    unsigned getRegPressureLimit(const TargetRegisterClass *RC,
+                                 MachineFunction &MF) const;
 
     bool isShuffleMaskLegal(const SmallVectorImpl<int> &M, EVT VT) const;
     bool isOffsetFoldingLegal(const GlobalAddressSDNode *GA) const;
@@ -272,13 +285,15 @@ namespace llvm {
     virtual bool isFPImmLegal(const APFloat &Imm, EVT VT) const;
 
   protected:
-    const TargetRegisterClass *
-    findRepresentativeClass(const TargetRegisterClass *RC) const;
+    std::pair<const TargetRegisterClass*, uint8_t>
+    findRepresentativeClass(EVT VT) const;
 
   private:
     /// Subtarget - Keep a pointer to the ARMSubtarget around so that we can
     /// make the right decision when generating code for different targets.
     const ARMSubtarget *Subtarget;
+
+    const TargetRegisterInfo *RegInfo;
 
     /// ARMPCLabelIndex - Keep track of the number of ARM PC labels created.
     ///
@@ -388,6 +403,10 @@ namespace llvm {
                                         unsigned BinOpcode) const;
 
   };
+  
+  namespace ARM {
+    FastISel *createFastISel(FunctionLoweringInfo &funcInfo);
+  }
 }
 
 #endif  // ARMISELLOWERING_H
