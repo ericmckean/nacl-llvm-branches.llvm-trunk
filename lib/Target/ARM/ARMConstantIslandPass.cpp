@@ -931,11 +931,6 @@ MachineBasicBlock *ARMConstantIslands::SplitBlockBeforeInstr(MachineInstr *MI) {
     WaterList.insert(IP, OrigBB);
   NewWaterList.insert(OrigBB);
 
-    // @LOCALMOD-START
-  {
-     NewBBSize += GetFudge(I, NewBBSize, false, false, 0);
-  }
-    // @LOCALMOD-END
   unsigned OrigBBI = OrigBB->getNumber();
   unsigned NewBBI = NewBB->getNumber();
 
@@ -960,7 +955,13 @@ MachineBasicBlock *ARMConstantIslands::SplitBlockBeforeInstr(MachineInstr *MI) {
   unsigned NewBBSize = 0;
   for (MachineBasicBlock::iterator I = NewBB->begin(), E = NewBB->end();
        I != E; ++I)
+  // @LOCALMOD-START
+  {
+    NewBBSize += GetFudge(I, NewBBSize, false, false, 0);
     NewBBSize += TII->GetInstSizeInBytes(I);
+  }
+  // @LOCALMOD-END
+
   // Set the size of NewBB in BBSizes.  It does not include any padding now.
   BBSizes[NewBBI] = NewBBSize;
 
