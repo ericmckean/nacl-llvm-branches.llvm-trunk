@@ -80,6 +80,21 @@ def SDT_X86EHRET : SDTypeProfile<0, 1, [SDTCisInt<0>]>;
 
 def SDT_X86TCRET : SDTypeProfile<0, 2, [SDTCisPtrTy<0>, SDTCisVT<1, i32>]>;
 
+def SDT_X86MEMBARRIER : SDTypeProfile<0, 0, []>;
+def SDT_X86MEMBARRIERNoSSE : SDTypeProfile<0, 1, [SDTCisInt<0>]>;
+
+def X86MemBarrier : SDNode<"X86ISD::MEMBARRIER", SDT_X86MEMBARRIER,
+                            [SDNPHasChain]>;
+def X86MemBarrierNoSSE : SDNode<"X86ISD::MEMBARRIER", SDT_X86MEMBARRIERNoSSE,
+                                [SDNPHasChain]>;
+def X86MFence : SDNode<"X86ISD::MFENCE", SDT_X86MEMBARRIER,
+                        [SDNPHasChain]>;
+def X86SFence : SDNode<"X86ISD::SFENCE", SDT_X86MEMBARRIER,
+                        [SDNPHasChain]>;
+def X86LFence : SDNode<"X86ISD::LFENCE", SDT_X86MEMBARRIER,
+                        [SDNPHasChain]>;
+
+
 def X86bsf     : SDNode<"X86ISD::BSF",      SDTUnaryArithWithFlags>;
 def X86bsr     : SDNode<"X86ISD::BSR",      SDTUnaryArithWithFlags>;
 def X86shld    : SDNode<"X86ISD::SHLD",     SDTIntShiftDOp>;
@@ -333,15 +348,21 @@ def tls32addr : ComplexPattern<i32, 5, "SelectTLSADDRAddr",
 // X86 Instruction Predicate Definitions.
 def HasCMov      : Predicate<"Subtarget->hasCMov()">;
 def NoCMov       : Predicate<"!Subtarget->hasCMov()">;
-def HasMMX       : Predicate<"Subtarget->hasMMX()">;
-def HasSSE1      : Predicate<"Subtarget->hasSSE1()">;
-def HasSSE2      : Predicate<"Subtarget->hasSSE2()">;
-def HasSSE3      : Predicate<"Subtarget->hasSSE3()">;
-def HasSSSE3     : Predicate<"Subtarget->hasSSSE3()">;
-def HasSSE41     : Predicate<"Subtarget->hasSSE41()">;
-def HasSSE42     : Predicate<"Subtarget->hasSSE42()">;
-def HasSSE4A     : Predicate<"Subtarget->hasSSE4A()">;
+
+// FIXME: temporary hack to let codegen assert or generate poor code in case
+// no AVX version of the desired intructions is present, this is better for
+// incremental dev (without fallbacks it's easier to spot what's missing)
+def HasMMX       : Predicate<"Subtarget->hasMMX() & !Subtarget->hasAVX()">;
+def HasSSE1      : Predicate<"Subtarget->hasSSE1() & !Subtarget->hasAVX()">;
+def HasSSE2      : Predicate<"Subtarget->hasSSE2() & !Subtarget->hasAVX()">;
+def HasSSE3      : Predicate<"Subtarget->hasSSE3() & !Subtarget->hasAVX()">;
+def HasSSSE3     : Predicate<"Subtarget->hasSSSE3() & !Subtarget->hasAVX()">;
+def HasSSE41     : Predicate<"Subtarget->hasSSE41() & !Subtarget->hasAVX()">;
+def HasSSE42     : Predicate<"Subtarget->hasSSE42() & !Subtarget->hasAVX()">;
+def HasSSE4A     : Predicate<"Subtarget->hasSSE4A() & !Subtarget->hasAVX()">;
+
 def HasAVX       : Predicate<"Subtarget->hasAVX()">;
+def HasCLMUL     : Predicate<"Subtarget->hasCLMUL()">;
 def HasFMA3      : Predicate<"Subtarget->hasFMA3()">;
 def HasFMA4      : Predicate<"Subtarget->hasFMA4()">;
 def FPStackf32   : Predicate<"!Subtarget->hasSSE1()">;
@@ -3906,6 +3927,20 @@ def EH_RETURN   : I<0xC3, RawFrm, (outs), (ins GR32:$addr),
 // Atomic support
 //
 
+// Memory barriers
+let hasSideEffects = 1 in {
+def Int_MemBarrier : I<0, Pseudo, (outs), (ins),
+                     "#MEMBARRIER",
+                     [(X86MemBarrier)]>, Requires<[HasSSE2]>;
+
+// TODO: Get this to fold the constant into the instruction.           
+let Uses = [ESP] in
+def Int_MemBarrierNoSSE  : I<0x0B, Pseudo, (outs), (ins GR32:$zero),
+                           "lock\n\t"
+                           "or{l}\t{$zero, (%esp)|(%esp), $zero}",
+                           [(X86MemBarrierNoSSE GR32:$zero)]>, LOCK;
+}
+
 // Atomic swap. These are just normal xchg instructions. But since a memory
 // operand is referenced, the atomicity is ensured.
 let Constraints = "$val = $dst" in {
@@ -4937,6 +4972,12 @@ include "X86Instr64bit.td"
 //===----------------------------------------------------------------------===//
 
 include "X86InstrFragmentsSIMD.td"
+
+//===----------------------------------------------------------------------===//
+// FMA - Fused Multiply-Add support (requires FMA)
+//===----------------------------------------------------------------------===//
+
+include "X86InstrFMA.td"
 
 //===----------------------------------------------------------------------===//
 // XMM Floating point support (requires SSE / SSE2)

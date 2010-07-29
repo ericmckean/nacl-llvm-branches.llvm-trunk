@@ -178,6 +178,9 @@ uint64_t MCAsmLayout::getSectionSize(const MCSectionData *SD) const {
 MCFragment::MCFragment() : Kind(FragmentType(~0)) {
 }
 
+MCFragment::~MCFragment() {
+}
+
 MCFragment::MCFragment(FragmentType _Kind, MCSectionData *_Parent)
   : Kind(_Kind), Parent(_Parent), Atom(0), EffectiveSize(~UINT64_C(0))
 {
@@ -647,7 +650,7 @@ void MCAssembler::WriteSectionData(const MCSectionData *SD,
   assert(OW->getStream().tell() - Start == Layout.getSectionFileSize(SD));
 }
 
-void MCAssembler::Finish() {
+void MCAssembler::Finish(MCObjectWriter *Writer) {
   DEBUG_WITH_TYPE("mc-dump", {
       llvm::errs() << "assembler backend - pre-layout\n--\n";
       dump(); });
@@ -717,9 +720,15 @@ void MCAssembler::Finish() {
       dump(); });
 
   uint64_t StartOffset = OS.tell();
-  llvm::OwningPtr<MCObjectWriter> Writer(getBackend().createObjectWriter(OS));
-  if (!Writer)
-    report_fatal_error("unable to create object writer!");
+
+  llvm::OwningPtr<MCObjectWriter> OwnWriter(0);
+  if (Writer == 0) {
+    //no custom Writer_ : create the default one life-managed by OwningPtr
+    OwnWriter.reset(getBackend().createObjectWriter(OS));
+    Writer = OwnWriter.get();
+    if (!Writer)
+      report_fatal_error("unable to create object writer!");
+  }
 
   // Allow the object writer a chance to perform post-layout binding (for
   // example, to set the index fields in the symbol data).
