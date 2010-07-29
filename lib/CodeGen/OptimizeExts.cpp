@@ -73,6 +73,9 @@ FunctionPass *llvm::createOptimizeExtsPass() { return new OptimizeExts(); }
 /// the source, and if the source value is preserved as a sub-register of
 /// the result, then replace all reachable uses of the source with the subreg
 /// of the result.
+/// Do not generate an EXTRACT that is used only in a debug use, as this
+/// changes the code.  Since this code does not currently share EXTRACTs, just
+/// ignore all debug uses.
 bool OptimizeExts::OptimizeInstr(MachineInstr *MI, MachineBasicBlock *MBB,
                                  SmallPtrSet<MachineInstr*, 8> &LocalMIs) {
   bool Changed = false;
@@ -84,17 +87,17 @@ bool OptimizeExts::OptimizeInstr(MachineInstr *MI, MachineBasicBlock *MBB,
         TargetRegisterInfo::isPhysicalRegister(SrcReg))
       return false;
 
-    MachineRegisterInfo::use_iterator UI = MRI->use_begin(SrcReg);
-    if (++UI == MRI->use_end())
+    MachineRegisterInfo::use_nodbg_iterator UI = MRI->use_nodbg_begin(SrcReg);
+    if (++UI == MRI->use_nodbg_end())
       // No other uses.
       return false;
 
     // Ok, the source has other uses. See if we can replace the other uses
     // with use of the result of the extension.
     SmallPtrSet<MachineBasicBlock*, 4> ReachedBBs;
-    UI = MRI->use_begin(DstReg);
-    for (MachineRegisterInfo::use_iterator UE = MRI->use_end(); UI != UE;
-         ++UI)
+    UI = MRI->use_nodbg_begin(DstReg);
+    for (MachineRegisterInfo::use_nodbg_iterator UE = MRI->use_nodbg_end();
+         UI != UE; ++UI)
       ReachedBBs.insert(UI->getParent());
 
     bool ExtendLife = true;
@@ -103,9 +106,9 @@ bool OptimizeExts::OptimizeInstr(MachineInstr *MI, MachineBasicBlock *MBB,
     // Uses that the result of the instruction can reach.
     SmallVector<MachineOperand*, 8> ExtendedUses;
 
-    UI = MRI->use_begin(SrcReg);
-    for (MachineRegisterInfo::use_iterator UE = MRI->use_end(); UI != UE;
-         ++UI) {
+    UI = MRI->use_nodbg_begin(SrcReg);
+    for (MachineRegisterInfo::use_nodbg_iterator UE = MRI->use_nodbg_end();
+         UI != UE; ++UI) {
       MachineOperand &UseMO = UI.getOperand();
       MachineInstr *UseMI = &*UI;
       if (UseMI == MI)
@@ -114,6 +117,26 @@ bool OptimizeExts::OptimizeInstr(MachineInstr *MI, MachineBasicBlock *MBB,
         ExtendLife = false;
         continue;
       }
+
+      // It's an error to translate this:
+      //
+      //    %reg1025 = <sext> %reg1024
+      //     ...
+      //    %reg1026 = SUBREG_TO_REG 0, %reg1024, 4
+      //
+      // into this:
+      //
+      //    %reg1025 = <sext> %reg1024
+      //     ...
+      //    %reg1027 = COPY %reg1025:4
+      //    %reg1026 = SUBREG_TO_REG 0, %reg1027, 4
+      //
+      // The problem here is that SUBREG_TO_REG is there to assert that an
+      // implicit zext occurs. It doesn't insert a zext instruction. If we allow
+      // the COPY here, it will give us the value after the <sext>,
+      // not the original value of %reg1024 before <sext>.
+      if (UseMI->getOpcode() == TargetOpcode::SUBREG_TO_REG)
+        continue;
 
       MachineBasicBlock *UseMBB = UseMI->getParent();
       if (UseMBB == MBB) {
@@ -147,9 +170,9 @@ bool OptimizeExts::OptimizeInstr(MachineInstr *MI, MachineBasicBlock *MBB,
       // Look for PHI uses of the extended result, we don't want to extend the
       // liveness of a PHI input. It breaks all kinds of assumptions down
       // stream. A PHI use is expected to be the kill of its source values.
-      UI = MRI->use_begin(DstReg);
-      for (MachineRegisterInfo::use_iterator UE = MRI->use_end(); UI != UE;
-           ++UI)
+      UI = MRI->use_nodbg_begin(DstReg);
+      for (MachineRegisterInfo::use_nodbg_iterator UE = MRI->use_nodbg_end();
+           UI != UE; ++UI)
         if (UI->isPHI())
           PHIBBs.insert(UI->getParent());
 
@@ -162,8 +185,8 @@ bool OptimizeExts::OptimizeInstr(MachineInstr *MI, MachineBasicBlock *MBB,
           continue;
         unsigned NewVR = MRI->createVirtualRegister(RC);
         BuildMI(*UseMBB, UseMI, UseMI->getDebugLoc(),
-                TII->get(TargetOpcode::EXTRACT_SUBREG), NewVR)
-          .addReg(DstReg).addImm(SubIdx);
+                TII->get(TargetOpcode::COPY), NewVR)
+          .addReg(DstReg, 0, SubIdx);
         UseMO->setReg(NewVR);
         ++NumReuse;
         Changed = true;

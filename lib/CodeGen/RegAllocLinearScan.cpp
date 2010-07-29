@@ -83,7 +83,8 @@ namespace {
   // pressure, it can caused fewer GPRs to be held in the queue.
   static cl::opt<unsigned>
   NumRecentlyUsedRegs("linearscan-skip-count",
-                      cl::desc("Number of registers for linearscan to remember to skip."),
+                      cl::desc("Number of registers for linearscan to remember"
+                               "to skip."),
                       cl::init(0),
                       cl::Hidden);
  
@@ -126,7 +127,7 @@ namespace {
     BitVector allocatableRegs_;
     LiveIntervals* li_;
     LiveStacks* ls_;
-    const MachineLoopInfo *loopInfo;
+    MachineLoopInfo *loopInfo;
 
     /// handled_ - Intervals are added to the handled_ set in the order of their
     /// start value.  This is uses for backtracking.
@@ -418,19 +419,15 @@ unsigned RALinScan::attemptTrivialCoalescing(LiveInterval &cur, unsigned Reg) {
   unsigned CandReg;
   {
     MachineInstr *CopyMI;
-    unsigned SrcReg, DstReg, SrcSubReg, DstSubReg;
     if (vni->def != SlotIndex() && vni->isDefAccurate() &&
-        (CopyMI = li_->getInstructionFromIndex(vni->def)) &&
-        tii_->isMoveInstr(*CopyMI, SrcReg, DstReg, SrcSubReg, DstSubReg))
+        (CopyMI = li_->getInstructionFromIndex(vni->def)) && CopyMI->isCopy())
       // Defined by a copy, try to extend SrcReg forward
-      CandReg = SrcReg;
+      CandReg = CopyMI->getOperand(1).getReg();
     else if (TrivCoalesceEnds &&
-             (CopyMI =
-              li_->getInstructionFromIndex(range.end.getBaseIndex())) &&
-             tii_->isMoveInstr(*CopyMI, SrcReg, DstReg, SrcSubReg, DstSubReg) &&
-             cur.reg == SrcReg)
+            (CopyMI = li_->getInstructionFromIndex(range.end.getBaseIndex())) &&
+             CopyMI->isCopy() && cur.reg == CopyMI->getOperand(1).getReg())
       // Only used by a copy, try to extend DstReg backwards
-      CandReg = DstReg;
+      CandReg = CopyMI->getOperand(0).getReg();
     else
       return Reg;
   }
@@ -486,7 +483,7 @@ bool RALinScan::runOnMachineFunction(MachineFunction &fn) {
   vrm_ = &getAnalysis<VirtRegMap>();
   if (!rewriter_.get()) rewriter_.reset(createVirtRegRewriter());
   
-  spiller_.reset(createSpiller(mf_, li_, loopInfo, vrm_));
+  spiller_.reset(createSpiller(*this, *mf_, *vrm_));
   
   initIntervalSets();
 
@@ -802,14 +799,14 @@ static void addStackInterval(LiveInterval *cur, LiveStacks *ls_,
 static
 float getConflictWeight(LiveInterval *cur, unsigned Reg, LiveIntervals *li_,
                         MachineRegisterInfo *mri_,
-                        const MachineLoopInfo *loopInfo) {
+                        MachineLoopInfo *loopInfo) {
   float Conflicts = 0;
   for (MachineRegisterInfo::reg_iterator I = mri_->reg_begin(Reg),
          E = mri_->reg_end(); I != E; ++I) {
     MachineInstr *MI = &*I;
     if (cur->liveAt(li_->getInstructionIndex(MI))) {
       unsigned loopDepth = loopInfo->getLoopDepth(MI->getParent());
-      Conflicts += powf(10.0f, (float)loopDepth);
+      Conflicts += std::pow(10.0f, (float)loopDepth);
     }
   }
   return Conflicts;
@@ -976,9 +973,10 @@ void RALinScan::assignRegOrStackSlotAtInterval(LiveInterval* cur) {
     if ((vni->def != SlotIndex()) && !vni->isUnused() &&
          vni->isDefAccurate()) {
       MachineInstr *CopyMI = li_->getInstructionFromIndex(vni->def);
-      unsigned SrcReg, DstReg, SrcSubReg, DstSubReg;
-      if (CopyMI &&
-          tii_->isMoveInstr(*CopyMI, SrcReg, DstReg, SrcSubReg, DstSubReg)) {
+      if (CopyMI && CopyMI->isCopy()) {
+        unsigned DstSubReg = CopyMI->getOperand(0).getSubReg();
+        unsigned SrcReg = CopyMI->getOperand(1).getReg();
+        unsigned SrcSubReg = CopyMI->getOperand(1).getSubReg();
         unsigned Reg = 0;
         if (TargetRegisterInfo::isPhysicalRegister(SrcReg))
           Reg = SrcReg;
@@ -1177,7 +1175,7 @@ void RALinScan::assignRegOrStackSlotAtInterval(LiveInterval* cur) {
         assignRegOrStackSlotAtInterval(cur);
       } else {
         assert(false && "Ran out of registers during register allocation!");
-        llvm_report_error("Ran out of registers during register allocation!");
+        report_fatal_error("Ran out of registers during register allocation!");
       }
       return;
     }
@@ -1206,8 +1204,7 @@ void RALinScan::assignRegOrStackSlotAtInterval(LiveInterval* cur) {
     DEBUG(dbgs() << "\t\t\tspilling(c): " << *cur << '\n');
     SmallVector<LiveInterval*, 8> spillIs;
     std::vector<LiveInterval*> added;
-    
-    added = spiller_->spill(cur, spillIs); 
+    spiller_->spill(cur, added, spillIs);
 
     std::sort(added.begin(), added.end(), LISorter());
     addStackInterval(cur, ls_, li_, mri_, *vrm_);
@@ -1285,10 +1282,8 @@ void RALinScan::assignRegOrStackSlotAtInterval(LiveInterval* cur) {
     if (sli->beginIndex() < earliestStart)
       earliestStart = sli->beginIndex();
        
-    std::vector<LiveInterval*> newIs;
-    newIs = spiller_->spill(sli, spillIs, &earliestStart);
+    spiller_->spill(sli, added, spillIs, &earliestStart);
     addStackInterval(sli, ls_, li_, mri_, *vrm_);
-    std::copy(newIs.begin(), newIs.end(), std::back_inserter(added));
     spilled.insert(sli->reg);
   }
 

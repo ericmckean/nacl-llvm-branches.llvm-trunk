@@ -43,10 +43,10 @@ struct DOTGraphTraits<DomTreeNode*> : public DefaultDOTGraphTraits {
 
     if (isSimple())
       return DOTGraphTraits<const Function*>
-	       ::getSimpleNodeLabel(BB, BB->getParent());
+        ::getSimpleNodeLabel(BB, BB->getParent());
     else
       return DOTGraphTraits<const Function*>
-	       ::getCompleteNodeLabel(BB, BB->getParent());
+        ::getCompleteNodeLabel(BB, BB->getParent());
   }
 };
 
@@ -83,31 +83,6 @@ struct DOTGraphTraits<PostDominatorTree*>
 }
 
 namespace {
-template <class Analysis, bool OnlyBBS>
-struct GenericGraphViewer : public FunctionPass {
-  std::string Name;
-
-  GenericGraphViewer(std::string GraphName, const void *ID) : FunctionPass(ID) {
-    Name = GraphName;
-  }
-
-  virtual bool runOnFunction(Function &F) {
-    Analysis *Graph;
-    std::string Title, GraphName;
-    Graph = &getAnalysis<Analysis>();
-    GraphName = DOTGraphTraits<Analysis*>::getGraphName(Graph);
-    Title = GraphName + " for '" + F.getNameStr() + "' function";
-    ViewGraph(Graph, Name, OnlyBBS, Title);
-
-    return false;
-  }
-
-  virtual void getAnalysisUsage(AnalysisUsage &AU) const {
-    AU.setPreservesAll();
-    AU.addRequired<Analysis>();
-  }
-};
-
 struct DomViewer
   : public DOTGraphTraitsViewer<DominatorTree, false> {
   static char ID;

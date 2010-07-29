@@ -226,7 +226,8 @@ typedef enum {
   LLVMExternalWeakLinkage,/**< ExternalWeak linkage description */
   LLVMGhostLinkage,       /**< Obsolete */
   LLVMCommonLinkage,      /**< Tentative definitions */
-  LLVMLinkerPrivateLinkage /**< Like Private, but linker removes. */
+  LLVMLinkerPrivateLinkage, /**< Like Private, but linker removes. */
+  LLVMLinkerPrivateWeakLinkage /**< Like LinkerPrivate, but is weak. */
 } LLVMLinkage;
 
 typedef enum {
@@ -319,6 +320,8 @@ LLVMTypeRef LLVMGetTypeByName(LLVMModuleRef M, const char *Name);
 /** See Module::dump. */
 void LLVMDumpModule(LLVMModuleRef M);
 
+/** See Module::setModuleInlineAsm. */
+void LLVMSetModuleInlineAsm(LLVMModuleRef M, const char *Asm);
 
 /*===-- Types -------------------------------------------------------------===*/
 
@@ -746,6 +749,9 @@ LLVMBasicBlockRef LLVMAppendBasicBlock(LLVMValueRef Fn, const char *Name);
 LLVMBasicBlockRef LLVMInsertBasicBlock(LLVMBasicBlockRef InsertBeforeBB,
                                        const char *Name);
 void LLVMDeleteBasicBlock(LLVMBasicBlockRef BB);
+
+void LLVMMoveBasicBlockBefore(LLVMBasicBlockRef BB, LLVMBasicBlockRef MovePos);
+void LLVMMoveBasicBlockAfter(LLVMBasicBlockRef BB, LLVMBasicBlockRef MovePos);
 
 /* Operations on instructions */
 LLVMBasicBlockRef LLVMGetInstructionParent(LLVMValueRef Inst);

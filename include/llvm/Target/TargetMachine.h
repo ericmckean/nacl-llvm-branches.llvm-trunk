@@ -28,6 +28,7 @@ class TargetInstrInfo;
 class TargetIntrinsicInfo;
 class TargetJITInfo;
 class TargetLowering;
+class TargetSelectionDAGInfo;
 class TargetFrameInfo;
 class JITCodeEmitter;
 class MCContext;
@@ -69,6 +70,15 @@ namespace CodeGenOpt {
   };
 }
 
+namespace Sched {
+  enum Preference {
+    None,             // No preference
+    Latency,          // Scheduling for shortest total latency.
+    RegPressure,      // Scheduling for lowest register pressure.
+    Hybrid            // Scheduling for both latency and register pressure.
+  };
+}
+
 //===----------------------------------------------------------------------===//
 ///
 /// TargetMachine - Primary interface to the complete machine description for
@@ -91,7 +101,9 @@ protected: // Can only create subclasses.
   /// AsmInfo - Contains target specific asm information.
   ///
   const MCAsmInfo *AsmInfo;
-  
+
+  unsigned MCRelaxAll : 1;
+
 public:
   virtual ~TargetMachine();
 
@@ -105,7 +117,8 @@ public:
   //
   virtual const TargetInstrInfo        *getInstrInfo() const { return 0; }
   virtual const TargetFrameInfo        *getFrameInfo() const { return 0; }
-  virtual       TargetLowering    *getTargetLowering() const { return 0; }
+  virtual const TargetLowering    *getTargetLowering() const { return 0; }
+  virtual const TargetSelectionDAGInfo *getSelectionDAGInfo() const{ return 0; }
   virtual const TargetData            *getTargetData() const { return 0; }
   
   /// getMCAsmInfo - Return target specific asm information.
@@ -147,6 +160,14 @@ public:
   /// 
   virtual const TargetELFWriterInfo *getELFWriterInfo() const { return 0; }
 
+  /// hasMCRelaxAll - Check whether all machine code instructions should be
+  /// relaxed.
+  bool hasMCRelaxAll() const { return MCRelaxAll; }
+
+  /// setMCRelaxAll - Set whether all machine code instructions should be
+  /// relaxed.
+  void setMCRelaxAll(bool Value) { MCRelaxAll = Value; }
+
   /// getRelocationModel - Returns the code generation relocation model. The
   /// choices are static, PIC, and dynamic-no-pic, and target default.
   static Reloc::Model getRelocationModel();
@@ -171,6 +192,21 @@ public:
   /// is false.
   static void setAsmVerbosityDefault(bool);
 
+  /// getDataSections - Return true if data objects should be emitted into their
+  /// own section, corresponds to -fdata-sections.
+  static bool getDataSections();
+
+  /// getFunctionSections - Return true if functions should be emitted into
+  /// their own section, corresponding to -ffunction-sections.
+  static bool getFunctionSections();
+
+  /// setDataSections - Set if the data are emit into separate sections.
+  static void setDataSections(bool);
+
+  /// setFunctionSections - Set if the functions are emit into separate
+  /// sections.
+  static void setFunctionSections(bool);
+
   /// CodeGenFileType - These enums are meant to be passed into
   /// addPassesToEmitFile to indicate what type of file to emit, and returned by
   /// it to indicate what type of file could actually be made.
@@ -192,7 +228,7 @@ public:
                                    formatted_raw_ostream &,
                                    CodeGenFileType,
                                    CodeGenOpt::Level,
-                                   bool DisableVerify = true) {
+                                   bool = true) {
     return true;
   }
 
@@ -205,18 +241,7 @@ public:
   virtual bool addPassesToEmitMachineCode(PassManagerBase &,
                                           JITCodeEmitter &,
                                           CodeGenOpt::Level,
-                                          bool DisableVerify = true) {
-    return true;
-  }
-
-  /// addPassesToEmitWholeFile - This method can be implemented by targets that 
-  /// require having the entire module at once.  This is not recommended, do not
-  /// use this.
-  virtual bool WantsWholeFile() const { return false; }
-  virtual bool addPassesToEmitWholeFile(PassManager &, formatted_raw_ostream &,
-                                        CodeGenFileType,
-                                        CodeGenOpt::Level,
-                                        bool DisableVerify = true) {
+                                          bool = true) {
     return true;
   }
 };

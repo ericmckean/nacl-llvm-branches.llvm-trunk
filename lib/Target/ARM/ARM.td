@@ -32,6 +32,8 @@ def ArchV6T2    : SubtargetFeature<"v6t2", "ARMArchVersion", "V6T2",
                                    "ARM v6t2">;
 def ArchV7A     : SubtargetFeature<"v7a", "ARMArchVersion", "V7A",
                                    "ARM v7A">;
+def ArchV7M     : SubtargetFeature<"v7m", "ARMArchVersion", "V7M",
+                                   "ARM v7M">;
 def FeatureVFP2 : SubtargetFeature<"vfp2", "ARMFPUType", "VFPv2",
                                    "Enable VFP2 instructions">;
 def FeatureVFP3 : SubtargetFeature<"vfp3", "ARMFPUType", "VFPv3",
@@ -42,6 +44,27 @@ def FeatureThumb2 : SubtargetFeature<"thumb2", "ThumbMode", "Thumb2",
                                      "Enable Thumb2 instructions">;
 def FeatureFP16   : SubtargetFeature<"fp16", "HasFP16", "true",
                                      "Enable half-precision floating point">;
+def FeatureHWDiv  : SubtargetFeature<"hwdiv", "HasHardwareDivide", "true",
+                                     "Enable divide instructions">;
+def FeatureT2ExtractPack: SubtargetFeature<"t2xtpk", "HasT2ExtractPack", "true",
+                                 "Enable Thumb2 extract and pack instructions">;
+def FeatureSlowFPBrcc : SubtargetFeature<"slow-fp-brcc", "SlowFPBrcc", "true",
+                                         "FP compare + branch is slow">;
+
+// Some processors have multiply-accumulate instructions that don't
+// play nicely with other VFP instructions, and it's generally better
+// to just not use them.
+// FIXME: Currently, this is only flagged for Cortex-A8. It may be true for
+// others as well. We should do more benchmarking and confirm one way or
+// the other.
+def FeatureHasSlowVMLx   : SubtargetFeature<"vmlx", "SlowVMLx", "true",
+                                            "Disable VFP MAC instructions">;
+// Some processors benefit from using NEON instructions for scalar
+// single-precision FP operations.
+def FeatureNEONForFP : SubtargetFeature<"neonfp", "UseNEONForSinglePrecisionFP",
+                                        "true",
+                                        "Use NEON for single precision FP">;
+
 
 //===----------------------------------------------------------------------===//
 // ARM Processors supported.
@@ -92,7 +115,8 @@ def : ProcNoItin<"iwmmxt",          [ArchV5TE]>;
 
 // V6 Processors.
 def : Processor<"arm1136j-s",       ARMV6Itineraries, [ArchV6]>;
-def : Processor<"arm1136jf-s",      ARMV6Itineraries, [ArchV6, FeatureVFP2]>;
+def : Processor<"arm1136jf-s",      ARMV6Itineraries, [ArchV6, FeatureVFP2,
+                                                       FeatureHasSlowVMLx]>;
 def : Processor<"arm1176jz-s",      ARMV6Itineraries, [ArchV6]>;
 def : Processor<"arm1176jzf-s",     ARMV6Itineraries, [ArchV6, FeatureVFP2]>;
 def : Processor<"mpcorenovfp",      ARMV6Itineraries, [ArchV6]>;
@@ -106,8 +130,12 @@ def : Processor<"arm1156t2f-s",    ARMV6Itineraries,
 
 // V7 Processors.
 def : Processor<"cortex-a8",        CortexA8Itineraries,
-                [ArchV7A, FeatureThumb2, FeatureNEON]>;
-def : ProcNoItin<"cortex-a9",       [ArchV7A, FeatureThumb2, FeatureNEON]>;
+                [ArchV7A, FeatureThumb2, FeatureNEON, FeatureHasSlowVMLx,
+                 FeatureSlowFPBrcc, FeatureNEONForFP, FeatureT2ExtractPack]>;
+def : Processor<"cortex-a9",        CortexA9Itineraries,
+                [ArchV7A, FeatureThumb2, FeatureNEON, FeatureT2ExtractPack]>;
+def : ProcNoItin<"cortex-m3",       [ArchV7M, FeatureThumb2, FeatureHWDiv]>;
+def : ProcNoItin<"cortex-m4",       [ArchV7M, FeatureThumb2, FeatureHWDiv]>;
 
 //===----------------------------------------------------------------------===//
 // Register File Description
@@ -123,23 +151,7 @@ include "ARMCallingConv.td"
 
 include "ARMInstrInfo.td"
 
-def ARMInstrInfo : InstrInfo {
-  // Define how we want to layout our target-specific information field.
-  let TSFlagsFields = ["AddrModeBits",
-                       "SizeFlag",
-                       "IndexModeBits",
-                       "Form",
-                       "isUnaryDataProc",
-                       "canXformTo16Bit",
-                       "Dom"];
-  let TSFlagsShifts = [0,
-                       4,
-                       7,
-                       9,
-                       15,
-                       16,
-                       17];
-}
+def ARMInstrInfo : InstrInfo;
 
 //===----------------------------------------------------------------------===//
 // Declare the target which we are implementing

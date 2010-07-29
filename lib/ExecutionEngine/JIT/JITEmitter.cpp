@@ -23,6 +23,7 @@
 #include "llvm/Analysis/DebugInfo.h"
 #include "llvm/CodeGen/JITCodeEmitter.h"
 #include "llvm/CodeGen/MachineFunction.h"
+#include "llvm/CodeGen/MachineCodeInfo.h"
 #include "llvm/CodeGen/MachineConstantPool.h"
 #include "llvm/CodeGen/MachineJumpTableInfo.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
@@ -30,8 +31,8 @@
 #include "llvm/ExecutionEngine/GenericValue.h"
 #include "llvm/ExecutionEngine/JITEventListener.h"
 #include "llvm/ExecutionEngine/JITMemoryManager.h"
-#include "llvm/CodeGen/MachineCodeInfo.h"
 #include "llvm/Target/TargetData.h"
+#include "llvm/Target/TargetInstrInfo.h"
 #include "llvm/Target/TargetJITInfo.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
@@ -43,7 +44,6 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/System/Disassembler.h"
 #include "llvm/System/Memory.h"
-#include "llvm/Target/TargetInstrInfo.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -369,7 +369,7 @@ namespace {
     ValueMap<const Function *, EmittedCode,
              EmittedFunctionConfig> EmittedFunctions;
 
-    DILocation PrevDLT;
+    DebugLoc PrevDL;
 
     /// Instance of the JIT
     JIT *TheJIT;
@@ -377,14 +377,14 @@ namespace {
   public:
     JITEmitter(JIT &jit, JITMemoryManager *JMM, TargetMachine &TM)
       : SizeEstimate(0), Resolver(jit, *this), MMI(0), CurFn(0),
-        EmittedFunctions(this), PrevDLT(NULL), TheJIT(&jit) {
+        EmittedFunctions(this), TheJIT(&jit) {
       MemMgr = JMM ? JMM : JITMemoryManager::CreateDefaultMemManager();
       if (jit.getJITInfo().needsGOT()) {
         MemMgr->AllocateGOT();
         DEBUG(dbgs() << "JIT is managing a GOT\n");
       }
 
-      if (DwarfExceptionHandling || JITEmitDebugInfo) {
+      if (JITExceptionHandling || JITEmitDebugInfo) {
         DE.reset(new JITDwarfEmitter(jit));
       }
       if (JITEmitDebugInfo) {
@@ -435,6 +435,9 @@ namespace {
       if (MBBLocations.size() <= (unsigned)MBB->getNumber())
         MBBLocations.resize((MBB->getNumber()+1)*2);
       MBBLocations[MBB->getNumber()] = getCurrentPCValue();
+      if (MBB->hasAddressTaken())
+        TheJIT->addPointerToBasicBlock(MBB->getBasicBlock(),
+                                       (void*)getCurrentPCValue());
       DEBUG(dbgs() << "JIT: Emitting BB" << MBB->getNumber() << " at ["
                    << (void*) getCurrentPCValue() << "]\n");
     }
@@ -442,7 +445,7 @@ namespace {
     virtual uintptr_t getConstantPoolEntryAddress(unsigned Entry) const;
     virtual uintptr_t getJumpTableEntryAddress(unsigned Entry) const;
 
-    virtual uintptr_t getMachineBasicBlockAddress(MachineBasicBlock *MBB) const {
+    virtual uintptr_t getMachineBasicBlockAddress(MachineBasicBlock *MBB) const{
       assert(MBBLocations.size() > (unsigned)MBB->getNumber() &&
              MBBLocations[MBB->getNumber()] && "MBB not emitted!");
       return MBBLocations[MBB->getNumber()];
@@ -461,6 +464,10 @@ namespace {
 
     virtual void emitLabel(MCSymbol *Label) {
       LabelLocations[Label] = getCurrentPCValue();
+    }
+
+    virtual DenseMap<MCSymbol*, uintptr_t> *getLabelLocations() {
+      return &LabelLocations;
     }
 
     virtual uintptr_t getLabelAddress(MCSymbol *Label) const {
@@ -737,7 +744,7 @@ void *JITResolver::JITCompilerFn(void *Stub) {
 
     // If lazy compilation is disabled, emit a useful error message and abort.
     if (!JR->TheJIT->isCompilingLazily()) {
-      llvm_report_error("LLVM JIT requested to do lazy compilation of function '"
+      report_fatal_error("LLVM JIT requested to do lazy compilation of function '"
                         + F->getName() + "' when lazy compiles are disabled!");
     }
 
@@ -821,21 +828,19 @@ void *JITEmitter::getPointerToGVIndirectSym(GlobalValue *V, void *Reference) {
 }
 
 void JITEmitter::processDebugLoc(DebugLoc DL, bool BeforePrintingInsn) {
-  if (!DL.isUnknown()) {
-    DILocation CurDLT = EmissionDetails.MF->getDILocation(DL);
+  if (DL.isUnknown()) return;
+  if (!BeforePrintingInsn) return;
+  
+  const LLVMContext& Context = EmissionDetails.MF->getFunction()->getContext();
 
-    if (BeforePrintingInsn) {
-      if (CurDLT.getScope().getNode() != 0 
-          && PrevDLT.getNode() != CurDLT.getNode()) {
-        JITEvent_EmittedFunctionDetails::LineStart NextLine;
-        NextLine.Address = getCurrentPCValue();
-        NextLine.Loc = DL;
-        EmissionDetails.LineStarts.push_back(NextLine);
-      }
-
-      PrevDLT = CurDLT;
-    }
+  if (DL.getScope(Context) != 0 && PrevDL != DL) {
+    JITEvent_EmittedFunctionDetails::LineStart NextLine;
+    NextLine.Address = getCurrentPCValue();
+    NextLine.Loc = DL;
+    EmissionDetails.LineStarts.push_back(NextLine);
   }
+
+  PrevDL = DL;
 }
 
 static unsigned GetConstantPoolSizeInBytes(MachineConstantPool *MCP,
@@ -945,7 +950,7 @@ unsigned JITEmitter::addSizeOfGlobalsInConstantVal(
        std::string msg;
        raw_string_ostream Msg(msg);
        Msg << "ConstantExpr not handled: " << *CE;
-       llvm_report_error(Msg.str());
+       report_fatal_error(Msg.str());
     }
     }
   }
@@ -997,12 +1002,13 @@ unsigned JITEmitter::GetSizeOfGlobalsInBytes(MachineFunction &MF) {
       for (unsigned CurOp = 0; CurOp < NumOps; CurOp++) {
         const MachineOperand &MO = MI.getOperand(CurOp);
         if (MO.isGlobal()) {
-          GlobalValue* V = MO.getGlobal();
+          const GlobalValue* V = MO.getGlobal();
           const GlobalVariable *GV = dyn_cast<const GlobalVariable>(V);
           if (!GV)
             continue;
           // If seen in previous function, it will have an entry here.
-          if (TheJIT->getPointerToGlobalIfAvailable(GV))
+          if (TheJIT->getPointerToGlobalIfAvailable(
+                const_cast<GlobalVariable *>(GV)))
             continue;
           // If seen earlier in this function, it will have an entry here.
           // FIXME: it should be possible to combine these tables, by
@@ -1212,6 +1218,9 @@ bool JITEmitter::finishFunction(MachineFunction &F) {
   TheJIT->NotifyFunctionEmitted(*F.getFunction(), FnStart, FnEnd-FnStart,
                                 EmissionDetails);
 
+  // Reset the previous debug location.
+  PrevDL = DebugLoc();
+
   DEBUG(dbgs() << "JIT: Finished CodeGen of [" << (void*)FnStart
         << "] Function: " << F.getFunction()->getName()
         << ": " << (FnEnd-FnStart) << " bytes of text, "
@@ -1223,45 +1232,44 @@ bool JITEmitter::finishFunction(MachineFunction &F) {
   // Mark code region readable and executable if it's not so already.
   MemMgr->setMemoryExecutable();
 
-  DEBUG(
-    if (sys::hasDisassembler()) {
-      dbgs() << "JIT: Disassembled code:\n";
-      dbgs() << sys::disassembleBuffer(FnStart, FnEnd-FnStart,
-                                       (uintptr_t)FnStart);
-    } else {
-      dbgs() << "JIT: Binary code:\n";
-      uint8_t* q = FnStart;
-      for (int i = 0; q < FnEnd; q += 4, ++i) {
-        if (i == 4)
-          i = 0;
-        if (i == 0)
-          dbgs() << "JIT: " << (long)(q - FnStart) << ": ";
-        bool Done = false;
-        for (int j = 3; j >= 0; --j) {
-          if (q + j >= FnEnd)
-            Done = true;
-          else
-            dbgs() << (unsigned short)q[j];
+  DEBUG({
+      if (sys::hasDisassembler()) {
+        dbgs() << "JIT: Disassembled code:\n";
+        dbgs() << sys::disassembleBuffer(FnStart, FnEnd-FnStart,
+                                         (uintptr_t)FnStart);
+      } else {
+        dbgs() << "JIT: Binary code:\n";
+        uint8_t* q = FnStart;
+        for (int i = 0; q < FnEnd; q += 4, ++i) {
+          if (i == 4)
+            i = 0;
+          if (i == 0)
+            dbgs() << "JIT: " << (long)(q - FnStart) << ": ";
+          bool Done = false;
+          for (int j = 3; j >= 0; --j) {
+            if (q + j >= FnEnd)
+              Done = true;
+            else
+              dbgs() << (unsigned short)q[j];
+          }
+          if (Done)
+            break;
+          dbgs() << ' ';
+          if (i == 3)
+            dbgs() << '\n';
         }
-        if (Done)
-          break;
-        dbgs() << ' ';
-        if (i == 3)
-          dbgs() << '\n';
+        dbgs()<< '\n';
       }
-      dbgs()<< '\n';
-    }
-        );
+    });
 
-  if (DwarfExceptionHandling || JITEmitDebugInfo) {
+  if (JITExceptionHandling || JITEmitDebugInfo) {
     uintptr_t ActualSize = 0;
     SavedBufferBegin = BufferBegin;
     SavedBufferEnd = BufferEnd;
     SavedCurBufferPtr = CurBufferPtr;
 
-    if (MemMgr->NeedsExactSize()) {
+    if (MemMgr->NeedsExactSize())
       ActualSize = DE->GetDwarfTableSizeInBytes(F, *this, FnStart, FnEnd);
-    }
 
     BufferBegin = CurBufferPtr = MemMgr->startExceptionTable(F.getFunction(),
                                                              ActualSize);
@@ -1277,7 +1285,7 @@ bool JITEmitter::finishFunction(MachineFunction &F) {
     BufferEnd = SavedBufferEnd;
     CurBufferPtr = SavedCurBufferPtr;
 
-    if (DwarfExceptionHandling) {
+    if (JITExceptionHandling) {
       TheJIT->RegisterTable(FrameRegister);
     }
 
@@ -1305,6 +1313,11 @@ void JITEmitter::retryWithMoreMemory(MachineFunction &F) {
   deallocateMemForFunction(F.getFunction());
   // Try again with at least twice as much free space.
   SizeEstimate = (uintptr_t)(2 * (BufferEnd - BufferBegin));
+
+  for (MachineFunction::iterator MBB = F.begin(), E = F.end(); MBB != E; ++MBB){
+    if (MBB->hasAddressTaken())
+      TheJIT->clearPointerToBasicBlock(MBB->getBasicBlock());
+  }
 }
 
 /// deallocateMemForFunction - Deallocate all memory for the specified
@@ -1375,7 +1388,7 @@ void JITEmitter::emitConstantPool(MachineConstantPool *MCP) {
     ConstPoolAddresses.push_back(CAddr);
     if (CPE.isMachineConstantPoolEntry()) {
       // FIXME: add support to lower machine constant pool values into bytes!
-      llvm_report_error("Initialize memory with machine specific constant pool"
+      report_fatal_error("Initialize memory with machine specific constant pool"
                         "entry has not been implemented!");
     }
     TheJIT->InitializeMemory(CPE.Val.ConstVal, (void*)CAddr);

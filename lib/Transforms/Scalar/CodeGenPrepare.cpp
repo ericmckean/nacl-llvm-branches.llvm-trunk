@@ -174,7 +174,7 @@ bool CodeGenPrepare::CanMergeBlocks(const BasicBlock *BB,
   // don't mess around with them.
   BasicBlock::const_iterator BBI = BB->begin();
   while (const PHINode *PN = dyn_cast<PHINode>(BBI++)) {
-    for (Value::use_const_iterator UI = PN->use_begin(), E = PN->use_end();
+    for (Value::const_use_iterator UI = PN->use_begin(), E = PN->use_end();
          UI != E; ++UI) {
       const Instruction *User = cast<Instruction>(*UI);
       if (User->getParent() != DestBB || !isa<PHINode>(User))
@@ -548,8 +548,9 @@ protected:
     CI->eraseFromParent();
   }
   bool isFoldable(unsigned SizeCIOp, unsigned, bool) const {
-    if (ConstantInt *SizeCI = dyn_cast<ConstantInt>(CI->getOperand(SizeCIOp)))
-      return SizeCI->isAllOnesValue();
+      if (ConstantInt *SizeCI =
+                             dyn_cast<ConstantInt>(CI->getArgOperand(SizeCIOp)))
+        return SizeCI->isAllOnesValue();
     return false;
   }
 };
@@ -559,7 +560,7 @@ bool CodeGenPrepare::OptimizeCallInst(CallInst *CI) {
   // Lower all uses of llvm.objectsize.*
   IntrinsicInst *II = dyn_cast<IntrinsicInst>(CI);
   if (II && II->getIntrinsicID() == Intrinsic::objectsize) {
-    bool Min = (cast<ConstantInt>(II->getOperand(2))->getZExtValue() == 1);
+    bool Min = (cast<ConstantInt>(II->getArgOperand(1))->getZExtValue() == 1);
     const Type *ReturnTy = CI->getType();
     Constant *RetVal = ConstantInt::get(ReturnTy, Min ? 0 : -1ULL);    
     CI->replaceAllUsesWith(RetVal);
@@ -714,8 +715,12 @@ bool CodeGenPrepare::OptimizeMemoryInst(Instruction *MemoryInst, Value *Addr,
 
   MemoryInst->replaceUsesOfWith(Addr, SunkAddr);
 
-  if (Addr->use_empty())
+  if (Addr->use_empty()) {
     RecursivelyDeleteTriviallyDeadInstructions(Addr);
+    // This address is now available for reassignment, so erase the table entry;
+    // we don't want to match some completely different instruction.
+    SunkAddrs[Addr] = 0;
+  }
   return true;
 }
 
@@ -755,8 +760,7 @@ bool CodeGenPrepare::OptimizeInlineAsmInst(Instruction *I, CallSite CS,
     }
 
     // Compute the constraint code and ConstraintType to use.
-    TLI->ComputeConstraintToUse(OpInfo, SDValue(),
-                             OpInfo.ConstraintType == TargetLowering::C_Memory);
+    TLI->ComputeConstraintToUse(OpInfo, SDValue());
 
     if (OpInfo.ConstraintType == TargetLowering::C_Memory &&
         OpInfo.isIndirect) {

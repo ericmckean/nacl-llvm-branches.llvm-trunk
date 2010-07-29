@@ -74,7 +74,7 @@ private:
   JTEntryKind EntryKind;
   std::vector<MachineJumpTableEntry> JumpTables;
 public:
-  MachineJumpTableInfo(JTEntryKind Kind): EntryKind(Kind) {}
+  explicit MachineJumpTableInfo(JTEntryKind Kind): EntryKind(Kind) {}
     
   JTEntryKind getEntryKind() const { return EntryKind; }
 
@@ -83,9 +83,9 @@ public:
   /// getEntryAlignment - Return the alignment of each entry in the jump table.
   unsigned getEntryAlignment(const TargetData &TD) const;
   
-  /// getJumpTableIndex - Create a new jump table or return an existing one.
+  /// createJumpTableIndex - Create a new jump table.
   ///
-  unsigned getJumpTableIndex(const std::vector<MachineBasicBlock*> &DestBBs);
+  unsigned createJumpTableIndex(const std::vector<MachineBasicBlock*> &DestBBs);
   
   /// isEmpty - Return true if there are no jump tables.
   ///

@@ -48,17 +48,6 @@ BlackfinRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
   return  CalleeSavedRegs;
 }
 
-const TargetRegisterClass* const *BlackfinRegisterInfo::
-getCalleeSavedRegClasses(const MachineFunction *MF) const {
-  using namespace BF;
-  static const TargetRegisterClass * const CalleeSavedRegClasses[] = {
-    &PRegClass,
-    &DRegClass, &DRegClass, &DRegClass, &DRegClass,
-    &PRegClass, &PRegClass, &PRegClass,
-    0 };
-  return CalleeSavedRegClasses;
-}
-
 BitVector
 BlackfinRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   using namespace BF;
@@ -86,31 +75,13 @@ BlackfinRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   return Reserved;
 }
 
-const TargetRegisterClass*
-BlackfinRegisterInfo::getPhysicalRegisterRegClass(unsigned reg, EVT VT) const {
-  assert(isPhysicalRegister(reg) && "reg must be a physical register");
-
-  // Pick the smallest register class of the right type that contains
-  // this physreg.
-  const TargetRegisterClass* BestRC = 0;
-  for (regclass_iterator I = regclass_begin(), E = regclass_end();
-       I != E; ++I) {
-    const TargetRegisterClass* RC = *I;
-    if ((VT == MVT::Other || RC->hasType(VT)) && RC->contains(reg) &&
-        (!BestRC || RC->getNumRegs() < BestRC->getNumRegs()))
-      BestRC = RC;
-  }
-
-  assert(BestRC && "Couldn't find the register class");
-  return BestRC;
-}
-
 // hasFP - Return true if the specified function should have a dedicated frame
 // pointer register.  This is true if the function has variable sized allocas or
 // if frame pointer elimination is disabled.
 bool BlackfinRegisterInfo::hasFP(const MachineFunction &MF) const {
   const MachineFrameInfo *MFI = MF.getFrameInfo();
-  return NoFramePointerElim || MFI->hasCalls() || MFI->hasVarSizedObjects();
+  return DisableFramePointerElim(MF) ||
+    MFI->adjustsStack() || MFI->hasVarSizedObjects();
 }
 
 bool BlackfinRegisterInfo::
@@ -164,7 +135,7 @@ void BlackfinRegisterInfo::loadConstant(MachineBasicBlock &MBB,
     return;
   }
 
-  if (isUint<16>(value)) {
+  if (isUInt<16>(value)) {
     BuildMI(MBB, I, DL, TII.get(BF::LOADuimm16), Reg).addImm(value);
     return;
   }
@@ -176,11 +147,11 @@ void BlackfinRegisterInfo::loadConstant(MachineBasicBlock &MBB,
 
   // We must split into halves
   BuildMI(MBB, I, DL,
-          TII.get(BF::LOAD16i), getSubReg(Reg, bfin_subreg_hi16))
+          TII.get(BF::LOAD16i), getSubReg(Reg, BF::hi16))
     .addImm((value >> 16) & 0xffff)
     .addReg(Reg, RegState::ImplicitDefine);
   BuildMI(MBB, I, DL,
-          TII.get(BF::LOAD16i), getSubReg(Reg, bfin_subreg_lo16))
+          TII.get(BF::LOAD16i), getSubReg(Reg, BF::lo16))
     .addImm(value & 0xffff)
     .addReg(Reg, RegState::ImplicitKill)
     .addReg(Reg, RegState::ImplicitDefine);
@@ -255,13 +226,13 @@ BlackfinRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
     assert(FIPos==1 && "Bad frame index operand");
     MI.getOperand(FIPos).ChangeToRegister(BaseReg, false);
     MI.getOperand(FIPos+1).setImm(Offset);
-    if (isUint<6>(Offset)) {
+    if (isUInt<6>(Offset)) {
       MI.setDesc(TII.get(isStore
                          ? BF::STORE32p_uimm6m4
                          : BF::LOAD32p_uimm6m4));
       return 0;
     }
-    if (BaseReg == BF::FP && isUint<7>(-Offset)) {
+    if (BaseReg == BF::FP && isUInt<7>(-Offset)) {
       MI.setDesc(TII.get(isStore
                          ? BF::STORE32fp_nimm7m4
                          : BF::LOAD32fp_nimm7m4));
@@ -384,9 +355,7 @@ void BlackfinRegisterInfo::emitPrologue(MachineFunction &MF) const {
   MachineBasicBlock &MBB = MF.front();   // Prolog goes in entry BB
   MachineBasicBlock::iterator MBBI = MBB.begin();
   MachineFrameInfo *MFI = MF.getFrameInfo();
-  DebugLoc dl = (MBBI != MBB.end()
-                 ? MBBI->getDebugLoc()
-                 : DebugLoc::getUnknownLoc());
+  DebugLoc dl = MBBI != MBB.end() ? MBBI->getDebugLoc() : DebugLoc();
 
   int FrameSize = MFI->getStackSize();
   if (FrameSize%4) {
@@ -395,7 +364,7 @@ void BlackfinRegisterInfo::emitPrologue(MachineFunction &MF) const {
   }
 
   if (!hasFP(MF)) {
-    assert(!MFI->hasCalls() &&
+    assert(!MFI->adjustsStack() &&
            "FP elimination on a non-leaf function is not supported");
     adjustRegister(MBB, MBBI, dl, BF::SP, BF::P1, -FrameSize);
     return;
@@ -436,7 +405,7 @@ void BlackfinRegisterInfo::emitEpilogue(MachineFunction &MF,
   assert(FrameSize%4 == 0 && "Misaligned frame size");
 
   if (!hasFP(MF)) {
-    assert(!MFI->hasCalls() &&
+    assert(!MFI->adjustsStack() &&
            "FP elimination on a non-leaf function is not supported");
     adjustRegister(MBB, MBBI, dl, BF::SP, BF::P1, FrameSize);
     return;

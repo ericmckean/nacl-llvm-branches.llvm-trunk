@@ -41,6 +41,10 @@ namespace llvm {
     /// the macho-specific .zerofill directive for emitting BSS Symbols.
     bool HasMachoZeroFillDirective;               // Default is false.
     
+    /// HasMachoTBSSDirective - True if this is a MachO target that supports
+    /// the macho-specific .tbss directive for emitting thread local BSS Symbols
+    bool HasMachoTBSSDirective;                 // Default is false.
+    
     /// HasStaticCtorDtorReferenceInStaticMode - True if the compiler should
     /// emit a ".reference .constructors_used" or ".reference .destructors_used"
     /// directive after the a static ctor/dtor list.  This directive is only
@@ -97,7 +101,11 @@ namespace llvm {
     /// AllowNameToStartWithDigit - This is true if the assembler allows symbol
     /// names to start with a digit (e.g., "0x0021").  This defaults to false.
     bool AllowNameToStartWithDigit;
-    
+
+    /// AllowPeriodsInName - This is true if the assembler allows periods in
+    /// symbol names.  This defaults to true.
+    bool AllowPeriodsInName;
+
     //===--- Data Emission Directives -------------------------------------===//
 
     /// ZeroDirective - this should be set to the directive used to get some
@@ -223,14 +231,6 @@ namespace llvm {
 
     //===--- Dwarf Emission Directives -----------------------------------===//
 
-    /// AbsoluteDebugSectionOffsets - True if we should emit abolute section
-    /// offsets for debug information.
-    bool AbsoluteDebugSectionOffsets;        // Defaults to false.
-
-    /// AbsoluteEHSectionOffsets - True if we should emit abolute section
-    /// offsets for EH information. Defaults to false.
-    bool AbsoluteEHSectionOffsets;
-
     /// HasLEB128 - True if target asm supports leb128 directives.
     bool HasLEB128;                          // Defaults to false.
 
@@ -288,7 +288,7 @@ namespace llvm {
     /// getNonexecutableStackSection - Targets can implement this method to
     /// specify a section to switch to if the translation unit doesn't have any
     /// trampolines that require an executable stack.
-    virtual MCSection *getNonexecutableStackSection(MCContext &Ctx) const {
+    virtual const MCSection *getNonexecutableStackSection(MCContext &Ctx) const{
       return 0;
     }
     
@@ -307,6 +307,7 @@ namespace llvm {
     // Accessors.
     //
     bool hasMachoZeroFillDirective() const { return HasMachoZeroFillDirective; }
+    bool hasMachoTBSSDirective() const { return HasMachoTBSSDirective; }
     bool hasStaticCtorDtorReferenceInStaticMode() const {
       return HasStaticCtorDtorReferenceInStaticMode;
     }
@@ -349,6 +350,9 @@ namespace llvm {
     bool doesAllowNameToStartWithDigit() const {
       return AllowNameToStartWithDigit;
     }
+    bool doesAllowPeriodsInName() const {
+      return AllowPeriodsInName;
+    }
     const char *getZeroDirective() const {
       return ZeroDirective;
     }
@@ -388,12 +392,6 @@ namespace llvm {
     MCSymbolAttr getHiddenVisibilityAttr() const { return HiddenVisibilityAttr;}
     MCSymbolAttr getProtectedVisibilityAttr() const {
       return ProtectedVisibilityAttr;
-    }
-    bool isAbsoluteDebugSectionOffsets() const {
-      return AbsoluteDebugSectionOffsets;
-    }
-    bool isAbsoluteEHSectionOffsets() const {
-      return AbsoluteEHSectionOffsets;
     }
     bool hasLEB128() const {
       return HasLEB128;

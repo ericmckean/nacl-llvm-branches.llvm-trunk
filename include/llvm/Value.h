@@ -93,8 +93,8 @@ protected:
   /// printing behavior.
   virtual void printCustom(raw_ostream &O) const;
 
-public:
   Value(const Type *Ty, unsigned scid);
+public:
   virtual ~Value();
 
   /// dump - Support for debugging, callable in GDB: V->dump()
@@ -157,13 +157,13 @@ public:
   // Methods for handling the chain of uses of this Value.
   //
   typedef value_use_iterator<User>       use_iterator;
-  typedef value_use_iterator<const User> use_const_iterator;
+  typedef value_use_iterator<const User> const_use_iterator;
 
   bool               use_empty() const { return UseList == 0; }
   use_iterator       use_begin()       { return use_iterator(UseList); }
-  use_const_iterator use_begin() const { return use_const_iterator(UseList); }
+  const_use_iterator use_begin() const { return const_use_iterator(UseList); }
   use_iterator       use_end()         { return use_iterator(0);   }
-  use_const_iterator use_end()   const { return use_const_iterator(0);   }
+  const_use_iterator use_end()   const { return const_use_iterator(0);   }
   User              *use_back()        { return *use_begin(); }
   const User        *use_back()  const { return *use_begin(); }
 
@@ -172,7 +172,7 @@ public:
   /// traversing the whole use list.
   ///
   bool hasOneUse() const {
-    use_const_iterator I = use_begin(), E = use_end();
+    const_use_iterator I = use_begin(), E = use_end();
     if (I == E) return false;
     return ++I == E;
   }
@@ -210,7 +210,7 @@ public:
     UndefValueVal,            // This is an instance of UndefValue
     BlockAddressVal,          // This is an instance of BlockAddress
     ConstantExprVal,          // This is an instance of ConstantExpr
-    ConstantAggregateZeroVal, // This is an instance of ConstantAggregateNull
+    ConstantAggregateZeroVal, // This is an instance of ConstantAggregateZero
     ConstantIntVal,           // This is an instance of ConstantInt
     ConstantFPVal,            // This is an instance of ConstantFP
     ConstantArrayVal,         // This is an instance of ConstantArray
@@ -266,6 +266,10 @@ public:
     SubclassOptionalData &= V->SubclassOptionalData;
   }
 
+  /// hasValueHandle - Return true if there is a value handle associated with
+  /// this value.
+  bool hasValueHandle() const { return HasValueHandle; }
+  
   // Methods for support type inquiry through isa, cast, and dyn_cast:
   static inline bool classof(const Value *) {
     return true; // Values are always values.
@@ -324,39 +328,67 @@ void Use::set(Value *V) {
 // isa - Provide some specializations of isa so that we don't have to include
 // the subtype header files to test to see if the value is a subclass...
 //
-template <> inline bool isa_impl<Constant, Value>(const Value &Val) {
-  return Val.getValueID() >= Value::ConstantFirstVal &&
-         Val.getValueID() <= Value::ConstantLastVal;
-}
-template <> inline bool isa_impl<Argument, Value>(const Value &Val) {
-  return Val.getValueID() == Value::ArgumentVal;
-}
-template <> inline bool isa_impl<InlineAsm, Value>(const Value &Val) {
-  return Val.getValueID() == Value::InlineAsmVal;
-}
-template <> inline bool isa_impl<Instruction, Value>(const Value &Val) {
-  return Val.getValueID() >= Value::InstructionVal;
-}
-template <> inline bool isa_impl<BasicBlock, Value>(const Value &Val) {
-  return Val.getValueID() == Value::BasicBlockVal;
-}
-template <> inline bool isa_impl<Function, Value>(const Value &Val) {
-  return Val.getValueID() == Value::FunctionVal;
-}
-template <> inline bool isa_impl<GlobalVariable, Value>(const Value &Val) {
-  return Val.getValueID() == Value::GlobalVariableVal;
-}
-template <> inline bool isa_impl<GlobalAlias, Value>(const Value &Val) {
-  return Val.getValueID() == Value::GlobalAliasVal;
-}
-template <> inline bool isa_impl<GlobalValue, Value>(const Value &Val) {
-  return isa<GlobalVariable>(Val) || isa<Function>(Val) ||
-         isa<GlobalAlias>(Val);
-}
-template <> inline bool isa_impl<MDNode, Value>(const Value &Val) {
-  return Val.getValueID() == Value::MDNodeVal;
-}
-  
+template <> struct isa_impl<Constant, Value> {
+  static inline bool doit(const Value &Val) {
+    return Val.getValueID() >= Value::ConstantFirstVal &&
+      Val.getValueID() <= Value::ConstantLastVal;
+  }
+};
+
+template <> struct isa_impl<Argument, Value> {
+  static inline bool doit (const Value &Val) {
+    return Val.getValueID() == Value::ArgumentVal;
+  }
+};
+
+template <> struct isa_impl<InlineAsm, Value> { 
+  static inline bool doit(const Value &Val) {
+    return Val.getValueID() == Value::InlineAsmVal;
+  }
+};
+
+template <> struct isa_impl<Instruction, Value> { 
+  static inline bool doit(const Value &Val) {
+    return Val.getValueID() >= Value::InstructionVal;
+  }
+};
+
+template <> struct isa_impl<BasicBlock, Value> { 
+  static inline bool doit(const Value &Val) {
+    return Val.getValueID() == Value::BasicBlockVal;
+  }
+};
+
+template <> struct isa_impl<Function, Value> { 
+  static inline bool doit(const Value &Val) {
+    return Val.getValueID() == Value::FunctionVal;
+  }
+};
+
+template <> struct isa_impl<GlobalVariable, Value> { 
+  static inline bool doit(const Value &Val) {
+    return Val.getValueID() == Value::GlobalVariableVal;
+  }
+};
+
+template <> struct isa_impl<GlobalAlias, Value> { 
+  static inline bool doit(const Value &Val) {
+    return Val.getValueID() == Value::GlobalAliasVal;
+  }
+};
+
+template <> struct isa_impl<GlobalValue, Value> { 
+  static inline bool doit(const Value &Val) {
+    return isa<GlobalVariable>(Val) || isa<Function>(Val) ||
+      isa<GlobalAlias>(Val);
+  }
+};
+
+template <> struct isa_impl<MDNode, Value> { 
+  static inline bool doit(const Value &Val) {
+    return Val.getValueID() == Value::MDNodeVal;
+  }
+};
   
 // Value* is only 4-byte aligned.
 template<>

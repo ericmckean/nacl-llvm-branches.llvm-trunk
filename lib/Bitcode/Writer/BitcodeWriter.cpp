@@ -313,6 +313,7 @@ static unsigned getEncodedLinkage(const GlobalValue *GV) {
   case GlobalValue::LinkOnceODRLinkage:         return 11;
   case GlobalValue::AvailableExternallyLinkage: return 12;
   case GlobalValue::LinkerPrivateLinkage:       return 13;
+  case GlobalValue::LinkerPrivateWeakLinkage:   return 14;
   }
 }
 
@@ -577,10 +578,9 @@ static void WriteFunctionLocalMetadata(const Function &F,
                                        BitstreamWriter &Stream) {
   bool StartedMetadataBlock = false;
   SmallVector<uint64_t, 64> Record;
-  const ValueEnumerator::ValueList &Vals = VE.getMDValues();
-  
+  const SmallVector<const MDNode *, 8> &Vals = VE.getFunctionLocalMDValues();
   for (unsigned i = 0, e = Vals.size(); i != e; ++i)
-    if (const MDNode *N = dyn_cast<MDNode>(Vals[i].first))
+    if (const MDNode *N = Vals[i])
       if (N->isFunctionLocal() && N->getFunction() == &F) {
         if (!StartedMetadataBlock) {
           Stream.EnterSubblock(bitc::METADATA_BLOCK_ID, 3);
@@ -588,7 +588,7 @@ static void WriteFunctionLocalMetadata(const Function &F,
         }
         WriteMDNode(N, VE, Stream, Record);
       }
-
+      
   if (StartedMetadataBlock)
     Stream.ExitBlock();
 }
@@ -596,7 +596,8 @@ static void WriteFunctionLocalMetadata(const Function &F,
 static void WriteMetadataAttachment(const Function &F,
                                     const ValueEnumerator &VE,
                                     BitstreamWriter &Stream) {
-  bool StartedMetadataBlock = false;
+  Stream.EnterSubblock(bitc::METADATA_ATTACHMENT_ID, 3);
+
   SmallVector<uint64_t, 64> Record;
 
   // Write metadata attachments
@@ -607,7 +608,7 @@ static void WriteMetadataAttachment(const Function &F,
     for (BasicBlock::const_iterator I = BB->begin(), E = BB->end();
          I != E; ++I) {
       MDs.clear();
-      I->getAllMetadata(MDs);
+      I->getAllMetadataOtherThanDebugLoc(MDs);
       
       // If no metadata, ignore instruction.
       if (MDs.empty()) continue;
@@ -618,16 +619,11 @@ static void WriteMetadataAttachment(const Function &F,
         Record.push_back(MDs[i].first);
         Record.push_back(VE.getValueID(MDs[i].second));
       }
-      if (!StartedMetadataBlock)  {
-        Stream.EnterSubblock(bitc::METADATA_ATTACHMENT_ID, 3);
-        StartedMetadataBlock = true;
-      }
       Stream.EmitRecord(bitc::METADATA_ATTACHMENT, Record, 0);
       Record.clear();
     }
 
-  if (StartedMetadataBlock)
-    Stream.ExitBlock();
+  Stream.ExitBlock();
 }
 
 static void WriteModuleMetadataStore(const Module *M, BitstreamWriter &Stream) {
@@ -638,12 +634,11 @@ static void WriteModuleMetadataStore(const Module *M, BitstreamWriter &Stream) {
   SmallVector<StringRef, 4> Names;
   M->getMDKindNames(Names);
   
-  assert(Names[0] == "" && "MDKind #0 is invalid");
-  if (Names.size() == 1) return;
+  if (Names.empty()) return;
 
   Stream.EnterSubblock(bitc::METADATA_BLOCK_ID, 3);
   
-  for (unsigned MDKindID = 1, e = Names.size(); MDKindID != e; ++MDKindID) {
+  for (unsigned MDKindID = 0, e = Names.size(); MDKindID != e; ++MDKindID) {
     Record.push_back(MDKindID);
     StringRef KName = Names[MDKindID];
     Record.append(KName.begin(), KName.end());
@@ -808,10 +803,24 @@ static void WriteConstants(unsigned FirstVal, unsigned LastVal,
       else if (isCStr7)
         AbbrevToUse = CString7Abbrev;
     } else if (isa<ConstantArray>(C) || isa<ConstantStruct>(V) ||
-               isa<ConstantUnion>(C) || isa<ConstantVector>(V)) {
+               isa<ConstantVector>(V)) {
       Code = bitc::CST_CODE_AGGREGATE;
       for (unsigned i = 0, e = C->getNumOperands(); i != e; ++i)
         Record.push_back(VE.getValueID(C->getOperand(i)));
+      AbbrevToUse = AggregateAbbrev;
+    } else if (isa<ConstantUnion>(C)) {
+      Code = bitc::CST_CODE_AGGREGATE;
+
+      // Unions only have one entry but we must send type along with it.
+      const Type *EntryKind = C->getOperand(0)->getType();
+
+      const UnionType *UnTy = cast<UnionType>(C->getType());
+      int UnionIndex = UnTy->getElementTypeIndex(EntryKind);
+      assert(UnionIndex != -1 && "Constant union contains invalid entry");
+
+      Record.push_back(UnionIndex);
+      Record.push_back(VE.getValueID(C->getOperand(0)));
+
       AbbrevToUse = AggregateAbbrev;
     } else if (const ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
       switch (CE->getOpcode()) {
@@ -1076,11 +1085,11 @@ static void WriteInstruction(const Instruction &I, unsigned InstID,
 
     // Emit value #'s for the fixed parameters.
     for (unsigned i = 0, e = FTy->getNumParams(); i != e; ++i)
-      Vals.push_back(VE.getValueID(I.getOperand(i+3)));  // fixed param.
+      Vals.push_back(VE.getValueID(I.getOperand(i)));  // fixed param.
 
     // Emit type/value pairs for varargs params.
     if (FTy->isVarArg()) {
-      for (unsigned i = 3+FTy->getNumParams(), e = I.getNumOperands();
+      for (unsigned i = FTy->getNumParams(), e = I.getNumOperands()-3;
            i != e; ++i)
         PushValueAndType(I.getOperand(i), InstID, Vals, VE); // vararg
     }
@@ -1104,6 +1113,7 @@ static void WriteInstruction(const Instruction &I, unsigned InstID,
   case Instruction::Alloca:
     Code = bitc::FUNC_CODE_INST_ALLOCA;
     Vals.push_back(VE.getTypeID(I.getType()));
+    Vals.push_back(VE.getTypeID(I.getOperand(0)->getType()));
     Vals.push_back(VE.getValueID(I.getOperand(0))); // size.
     Vals.push_back(Log2_32(cast<AllocaInst>(I).getAlignment())+1);
     break;
@@ -1124,26 +1134,25 @@ static void WriteInstruction(const Instruction &I, unsigned InstID,
     Vals.push_back(cast<StoreInst>(I).isVolatile());
     break;
   case Instruction::Call: {
-    const PointerType *PTy = cast<PointerType>(I.getOperand(0)->getType());
+    const CallInst &CI = cast<CallInst>(I);
+    const PointerType *PTy = cast<PointerType>(CI.getCalledValue()->getType());
     const FunctionType *FTy = cast<FunctionType>(PTy->getElementType());
 
     Code = bitc::FUNC_CODE_INST_CALL;
 
-    const CallInst *CI = cast<CallInst>(&I);
-    Vals.push_back(VE.getAttributeID(CI->getAttributes()));
-    Vals.push_back((CI->getCallingConv() << 1) | unsigned(CI->isTailCall()));
-    PushValueAndType(CI->getOperand(0), InstID, Vals, VE);  // Callee
+    Vals.push_back(VE.getAttributeID(CI.getAttributes()));
+    Vals.push_back((CI.getCallingConv() << 1) | unsigned(CI.isTailCall()));
+    PushValueAndType(CI.getCalledValue(), InstID, Vals, VE);  // Callee
 
     // Emit value #'s for the fixed parameters.
     for (unsigned i = 0, e = FTy->getNumParams(); i != e; ++i)
-      Vals.push_back(VE.getValueID(I.getOperand(i+1)));  // fixed param.
+      Vals.push_back(VE.getValueID(CI.getArgOperand(i)));  // fixed param.
 
     // Emit type/value pairs for varargs params.
     if (FTy->isVarArg()) {
-      unsigned NumVarargs = I.getNumOperands()-1-FTy->getNumParams();
-      for (unsigned i = I.getNumOperands()-NumVarargs, e = I.getNumOperands();
+      for (unsigned i = FTy->getNumParams(), e = CI.getNumArgOperands();
            i != e; ++i)
-        PushValueAndType(I.getOperand(i), InstID, Vals, VE);  // varargs
+        PushValueAndType(CI.getArgOperand(i), InstID, Vals, VE);  // varargs
     }
     break;
   }
@@ -1242,19 +1251,49 @@ static void WriteFunction(const Function &F, ValueEnumerator &VE,
   // Keep a running idea of what the instruction ID is.
   unsigned InstID = CstEnd;
 
+  bool NeedsMetadataAttachment = false;
+  
+  DebugLoc LastDL;
+  
   // Finally, emit all the instructions, in order.
   for (Function::const_iterator BB = F.begin(), E = F.end(); BB != E; ++BB)
     for (BasicBlock::const_iterator I = BB->begin(), E = BB->end();
          I != E; ++I) {
       WriteInstruction(*I, InstID, VE, Stream, Vals);
+      
       if (!I->getType()->isVoidTy())
         ++InstID;
+      
+      // If the instruction has metadata, write a metadata attachment later.
+      NeedsMetadataAttachment |= I->hasMetadataOtherThanDebugLoc();
+      
+      // If the instruction has a debug location, emit it.
+      DebugLoc DL = I->getDebugLoc();
+      if (DL.isUnknown()) {
+        // nothing todo.
+      } else if (DL == LastDL) {
+        // Just repeat the same debug loc as last time.
+        Stream.EmitRecord(bitc::FUNC_CODE_DEBUG_LOC_AGAIN, Vals);
+      } else {
+        MDNode *Scope, *IA;
+        DL.getScopeAndInlinedAt(Scope, IA, I->getContext());
+        
+        Vals.push_back(DL.getLine());
+        Vals.push_back(DL.getCol());
+        Vals.push_back(Scope ? VE.getValueID(Scope)+1 : 0);
+        Vals.push_back(IA ? VE.getValueID(IA)+1 : 0);
+        Stream.EmitRecord(bitc::FUNC_CODE_DEBUG_LOC, Vals);
+        Vals.clear();
+        
+        LastDL = DL;
+      }
     }
 
   // Emit names for all the instructions etc.
   WriteValueSymbolTable(F.getValueSymbolTable(), VE, Stream);
 
-  WriteMetadataAttachment(F, VE, Stream);
+  if (NeedsMetadataAttachment)
+    WriteMetadataAttachment(F, VE, Stream);
   VE.purgeFunction();
   Stream.ExitBlock();
 }
@@ -1622,15 +1661,8 @@ void llvm::WriteBitcodeToFile(const Module *M, raw_ostream &Out) {
 
   WriteBitcodeToStream( M, Stream );
 
-  // If writing to stdout, set binary mode.
-  if (&llvm::outs() == &Out)
-    sys::Program::ChangeStdoutToBinary();
-
   // Write the generated bitstream to "Out".
   Out.write((char*)&Buffer.front(), Buffer.size());
-
-  // Make sure it hits disk now.
-  Out.flush();
 }
 
 /// WriteBitcodeToStream - Write the specified module to the specified output
