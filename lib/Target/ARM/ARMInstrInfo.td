@@ -1398,11 +1398,21 @@ let mayStore = 1, hasExtraSrcRegAllocReq = 1 in {
 def STM : AXI4st<(outs), (ins addrmode4:$addr, pred:$p,
                           reglist:$srcs, variable_ops),
                  IndexModeNone, LdStMulFrm, IIC_iStorem,
+//@LOCALMOD-START
+// TODO: move those into a post pass
+// c.f. ARMAsmPrinter::printAddrMode4Operand()
+                 "sfi_store_preamble ${addr:base}, ${p}\n\t"
+//@LOCALMOD-END
                  "stm${addr:submode}${p}\t$addr, $srcs", "", []>;
 
 def STM_UPD : AXI4st<(outs GPR:$wb), (ins addrmode4:$addr, pred:$p,
                                       reglist:$srcs, variable_ops),
                      IndexModeUpd, LdStMulFrm, IIC_iStorem,
+//@LOCALMOD-START
+// TODO: move those into a post pass
+// c.f. ARMAsmPrinter::printAddrMode4Operand()
+                     "sfi_store_preamble ${addr:base}, ${p}\n\t"
+//@LOCALMOD-END
                      "stm${addr:submode}${p}\t$addr, $srcs",
                      "$addr.addr = $wb", []>;
 } // mayStore, hasExtraSrcRegAllocReq
