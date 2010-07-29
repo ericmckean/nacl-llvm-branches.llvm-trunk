@@ -151,12 +151,8 @@ static bool IsDangerousStore(const MachineInstr &MI, int *AddrIdx) {
   default: return false;
 
   // Instructions with base address register in position 0...
-  case ARM::STM:
-  case ARM::STM_UPD:
   case ARM::VSTMD:
   case ARM::VSTMS:
-  case ARM::VSTMD_UPD:
-  case ARM::VSTMS_UPD:
     *AddrIdx = 0;
     break;
 
