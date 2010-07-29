@@ -48,7 +48,7 @@ namespace ARMCC {
     AL
   };
 
-  inline static CondCodes getOppositeCondition(CondCodes CC){
+  inline static CondCodes getOppositeCondition(CondCodes CC) {
     switch (CC) {
     default: llvm_unreachable("Unknown condition code");
     case EQ: return NE;
@@ -67,7 +67,7 @@ namespace ARMCC {
     case LE: return GT;
     }
   }
-}
+} // namespace ARMCC
 
 inline static const char *ARMCondCodeToString(ARMCC::CondCodes CC) {
   switch (CC) {

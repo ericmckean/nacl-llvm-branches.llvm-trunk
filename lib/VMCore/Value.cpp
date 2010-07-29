@@ -86,7 +86,7 @@ Value::~Value() {
 /// hasNUses - Return true if this Value has exactly N users.
 ///
 bool Value::hasNUses(unsigned N) const {
-  use_const_iterator UI = use_begin(), E = use_end();
+  const_use_iterator UI = use_begin(), E = use_end();
 
   for (; N; --N, ++UI)
     if (UI == E) return false;  // Too few.
@@ -97,7 +97,7 @@ bool Value::hasNUses(unsigned N) const {
 /// logically equivalent to getNumUses() >= N.
 ///
 bool Value::hasNUsesOrMore(unsigned N) const {
-  use_const_iterator UI = use_begin(), E = use_end();
+  const_use_iterator UI = use_begin(), E = use_end();
 
   for (; N; --N, ++UI)
     if (UI == E) return false;  // Too few.
@@ -108,7 +108,7 @@ bool Value::hasNUsesOrMore(unsigned N) const {
 /// isUsedInBasicBlock - Return true if this value is used in the specified
 /// basic block.
 bool Value::isUsedInBasicBlock(const BasicBlock *BB) const {
-  for (use_const_iterator I = use_begin(), E = use_end(); I != E; ++I) {
+  for (const_use_iterator I = use_begin(), E = use_end(); I != E; ++I) {
     const Instruction *User = dyn_cast<Instruction>(*I);
     if (User && User->getParent() == BB)
       return true;
@@ -322,7 +322,13 @@ void Value::replaceAllUsesWith(Value *New) {
 Value *Value::stripPointerCasts() {
   if (!getType()->isPointerTy())
     return this;
+
+  // Even though we don't look through PHI nodes, we could be called on an
+  // instruction in an unreachable block, which may be on a cycle.
+  SmallPtrSet<Value *, 4> Visited;
+
   Value *V = this;
+  Visited.insert(V);
   do {
     if (GEPOperator *GEP = dyn_cast<GEPOperator>(V)) {
       if (!GEP->hasAllZeroIndices())
@@ -338,7 +344,9 @@ Value *Value::stripPointerCasts() {
       return V;
     }
     assert(V->getType()->isPointerTy() && "Unexpected operand type!");
-  } while (1);
+  } while (Visited.insert(V));
+
+  return V;
 }
 
 Value *Value::getUnderlyingObject(unsigned MaxLookup) {

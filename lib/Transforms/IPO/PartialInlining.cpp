@@ -66,13 +66,13 @@ Function* PartialInliner::unswitchFunction(Function* F) {
     return 0;
   
   // Clone the function, so that we can hack away on it.
-  DenseMap<const Value*, Value*> ValueMap;
-  Function* duplicateFunction = CloneFunction(F, ValueMap);
+  ValueMap<const Value*, Value*> VMap;
+  Function* duplicateFunction = CloneFunction(F, VMap);
   duplicateFunction->setLinkage(GlobalValue::InternalLinkage);
   F->getParent()->getFunctionList().push_back(duplicateFunction);
-  BasicBlock* newEntryBlock = cast<BasicBlock>(ValueMap[entryBlock]);
-  BasicBlock* newReturnBlock = cast<BasicBlock>(ValueMap[returnBlock]);
-  BasicBlock* newNonReturnBlock = cast<BasicBlock>(ValueMap[nonReturnBlock]);
+  BasicBlock* newEntryBlock = cast<BasicBlock>(VMap[entryBlock]);
+  BasicBlock* newReturnBlock = cast<BasicBlock>(VMap[returnBlock]);
+  BasicBlock* newNonReturnBlock = cast<BasicBlock>(VMap[nonReturnBlock]);
   
   // Go ahead and update all uses to the duplicate, so that we can just
   // use the inliner functionality when we're done hacking.
@@ -120,15 +120,17 @@ Function* PartialInliner::unswitchFunction(Function* F) {
   // Extract the body of the if.
   Function* extractedFunction = ExtractCodeRegion(DT, toExtract);
   
+  InlineFunctionInfo IFI;
+  
   // Inline the top-level if test into all callers.
   std::vector<User*> Users(duplicateFunction->use_begin(), 
                            duplicateFunction->use_end());
   for (std::vector<User*>::iterator UI = Users.begin(), UE = Users.end();
        UI != UE; ++UI)
-    if (CallInst* CI = dyn_cast<CallInst>(*UI))
-      InlineFunction(CI);
-    else if (InvokeInst* II = dyn_cast<InvokeInst>(*UI))
-      InlineFunction(II);
+    if (CallInst *CI = dyn_cast<CallInst>(*UI))
+      InlineFunction(CI, IFI);
+    else if (InvokeInst *II = dyn_cast<InvokeInst>(*UI))
+      InlineFunction(II, IFI);
   
   // Ditch the duplicate, since we're done with it, and rewrite all remaining
   // users (function pointers, etc.) back to the original function.

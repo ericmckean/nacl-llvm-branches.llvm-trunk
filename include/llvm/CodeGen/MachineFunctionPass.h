@@ -48,7 +48,11 @@ protected:
   virtual void getAnalysisUsage(AnalysisUsage &AU) const;
 
 private:
-  bool runOnFunction(Function &F);
+  /// createPrinterPass - Get a machine function printer pass.
+  virtual Pass *createPrinterPass(raw_ostream &O,
+                                  const std::string &Banner) const;
+
+  virtual bool runOnFunction(Function &F);
 };
 
 } // End llvm namespace

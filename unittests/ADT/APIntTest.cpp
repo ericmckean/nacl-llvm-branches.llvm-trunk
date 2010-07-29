@@ -20,8 +20,8 @@ namespace {
 TEST(APIntTest, ShiftLeftByZero) {
   APInt One = APInt::getNullValue(65) + 1;
   APInt Shl = One.shl(0);
-  EXPECT_EQ(true, Shl[0]);
-  EXPECT_EQ(false, Shl[1]);
+  EXPECT_TRUE(Shl[0]);
+  EXPECT_FALSE(Shl[1]);
 }
 
 TEST(APIntTest, i128_NegativeCount) {
@@ -328,6 +328,7 @@ TEST(APIntTest, Log2) {
 }
 
 #ifdef GTEST_HAS_DEATH_TEST
+#ifndef NDEBUG
 TEST(APIntTest, StringDeath) {
   EXPECT_DEATH(APInt(0, "", 0), "Bitwidth too small");
   EXPECT_DEATH(APInt(32, "", 0), "Invalid string length");
@@ -339,6 +340,7 @@ TEST(APIntTest, StringDeath) {
   EXPECT_DEATH(APInt(32, StringRef("1\02", 3), 10), "Invalid character in digit string");
   EXPECT_DEATH(APInt(32, "1L", 10), "Invalid character in digit string");
 }
+#endif
 #endif
 
 }

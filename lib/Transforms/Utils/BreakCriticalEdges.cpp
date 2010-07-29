@@ -94,7 +94,7 @@ bool llvm::isCriticalEdge(const TerminatorInst *TI, unsigned SuccNum,
   if (TI->getNumSuccessors() == 1) return false;
 
   const BasicBlock *Dest = TI->getSuccessor(SuccNum);
-  pred_const_iterator I = pred_begin(Dest), E = pred_end(Dest);
+  const_pred_iterator I = pred_begin(Dest), E = pred_end(Dest);
 
   // If there is more than one predecessor, this is a critical edge...
   assert(I != E && "No preds, but we have an edge to the block?");
@@ -106,11 +106,12 @@ bool llvm::isCriticalEdge(const TerminatorInst *TI, unsigned SuccNum,
   // If AllowIdenticalEdges is true, then we allow this edge to be considered
   // non-critical iff all preds come from TI's block.
   while (I != E) {
-    if (*I != FirstPred)
+    const BasicBlock *P = *I;
+    if (P != FirstPred)
       return true;
     // Note: leave this as is until no one ever compiles with either gcc 4.0.1
     // or Xcode 2. This seems to work around the pred_iterator assert in PR 2207
-    E = pred_end(*I);
+    E = pred_end(P);
     ++I;
   }
   return false;
@@ -277,11 +278,13 @@ BasicBlock *llvm::SplitCriticalEdge(TerminatorInst *TI, unsigned SuccNum,
         OtherPreds.push_back(PN->getIncomingBlock(i));
   } else {
     for (pred_iterator I = pred_begin(DestBB), E = pred_end(DestBB);
-         I != E; ++I)
-      if (*I != NewBB)
-        OtherPreds.push_back(*I);
+         I != E; ++I) {
+      BasicBlock *P = *I;
+      if (P != NewBB)
+          OtherPreds.push_back(P);
+    }
   }
-  
+
   bool NewBBDominatesDestBB = true;
   
   // Should we update DominatorTree information?
@@ -400,11 +403,13 @@ BasicBlock *llvm::SplitCriticalEdge(TerminatorInst *TI, unsigned SuccNum,
           bool HasPredOutsideOfLoop = false;
           BasicBlock *Exit = ExitBlocks[i];
           for (pred_iterator I = pred_begin(Exit), E = pred_end(Exit);
-               I != E; ++I)
-            if (TIL->contains(*I))
-              Preds.push_back(*I);
+               I != E; ++I) {
+            BasicBlock *P = *I;
+            if (TIL->contains(P))
+              Preds.push_back(P);
             else
               HasPredOutsideOfLoop = true;
+          }
           // If there are any preds not in the loop, we'll need to split
           // the edges. The Preds.empty() check is needed because a block
           // may appear multiple times in the list. We can't use

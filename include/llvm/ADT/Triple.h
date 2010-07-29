@@ -95,12 +95,14 @@ public:
     Lv2,        // PS3
     MinGW32,
     MinGW64,
+    NativeClient,
     NetBSD,
     OpenBSD,
     Psp,
     Solaris,
     Win32,
-    Haiku
+    Haiku,
+    Minix
   };
   
 private:
@@ -242,8 +244,8 @@ public:
   /// environment components with a single string.
   void setOSAndEnvironmentName(StringRef Str);
 
-  /// getArchNameForAssembler - Get an architecture name that is understood by the
-  /// target assembler.
+  /// getArchNameForAssembler - Get an architecture name that is understood by
+  /// the target assembler.
   const char *getArchNameForAssembler();
 
   /// @}

@@ -4,7 +4,7 @@ project(LLVM)
 cmake_minimum_required(VERSION 2.6.1)
 
 set(PACKAGE_NAME llvm)
-set(PACKAGE_VERSION 2.7svn)
+set(PACKAGE_VERSION 2.8svn)
 set(PACKAGE_STRING "${PACKAGE_NAME} ${PACKAGE_VERSION}")
 set(PACKAGE_BUGREPORT "llvmbugs@cs.uiuc.edu")
 
@@ -217,7 +217,9 @@ if( MSVC )
   # List of valid CRTs for MSVC
   set(MSVC_CRT
     MD
-    MDd)
+    MDd
+    MT
+    MTd)
 
   set(LLVM_USE_CRT "" CACHE STRING "Specify VC++ CRT to use for debug/release configurations.")
   add_llvm_definitions( -D_CRT_SECURE_NO_DEPRECATE -D_CRT_SECURE_NO_WARNINGS )
@@ -306,6 +308,7 @@ add_subdirectory(lib/Analysis)
 add_subdirectory(lib/Analysis/IPA)
 add_subdirectory(lib/MC)
 add_subdirectory(lib/MC/MCParser)
+add_subdirectory(lib/MC/MCDisassembler)
 add_subdirectory(test)
 
 add_subdirectory(utils/FileCheck)

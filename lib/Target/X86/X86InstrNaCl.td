@@ -21,7 +21,7 @@
 
 // TODO: indicate that we clobber rcx
 let isTerminator = 1, isReturn = 1, isBarrier = 1,
-    hasCtrlDep = 1, FPForm = SpecialFP, FPFormBits = SpecialFP.Value in {
+    hasCtrlDep = 1, FPForm = SpecialFP in {
 
   def NACL_RET32   : I<0, Pseudo, (outs), (ins variable_ops),
                     "pop %ecx\n\tnacljmp %ecx",
@@ -142,8 +142,8 @@ let Defs = [RSP, EFLAGS], Uses = [RSP] in {
    def NACL_ADJ_SP   : I<0, Pseudo, (outs GR64:$dst),
                       // We only need the offset. However, we are rewriting
                       // an LEA, so we should keep the num of operands the same.
-                      // see lea64mem for operands.
-                      (ins GR64:$base, i8imm:$scale, GR64:$index, i32imm:$off),
+                      (ins GR64:$base, i8imm:$scale, GR64:$index,
+                       i32imm:$off, i8imm:$seg),
                       "naclspadj{q}\t{$off, %r15|%r15, $off}",
                       []>, Requires<[IsNaCl64]>;
 
@@ -182,7 +182,7 @@ def : Pat<(X86call (i32 imm:$dst)),
 
 // TODO: indicate that we clobber rcx
 let isTerminator = 1, isReturn = 1, isBarrier = 1,
-    hasCtrlDep = 1, FPForm = SpecialFP, FPFormBits = SpecialFP.Value in {
+    hasCtrlDep = 1, FPForm = SpecialFP in {
 
   def NACL_RET64    : I<0, Pseudo, (outs), (ins variable_ops),
                      "pop %rcx\n\tnacljmp %ecx, %r15",
@@ -263,13 +263,12 @@ def MOV32mr_TC_64 : I<0x89, MRMDestMem, (outs),
                     []>;
 
 let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
-  def NACL_JMP64r     : I<0, Pseudo, (outs), (ins GR64:$dst),
+  def NACL_JMP64r     : I<0, Pseudo, (outs), (ins GR32:$dst),
                         "nacljmp\t$dst, %r15",
-                        []>,
+                        [(brind GR32:$dst)]>,
                         Requires<[IsNaCl64]>;
 
 }
-
 
 let Defs = [RSP] in
 def NACL_SET_SPr   : I<0, Pseudo,
@@ -304,7 +303,7 @@ let Defs = [RAX, RCX, RDX, RSI, RDI, R8, R9, R10, R11,
             XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
             XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15, EFLAGS],
     Uses = [RSP] in
-def NACL_TLS_addr64 : I<0, Pseudo, (outs), (ins lea32mem:$sym),
+def NACL_TLS_addr64 : I<0, Pseudo, (outs), (ins i32mem:$sym),
                       "movq\t$$$sym, %rdi; "
                       "call\t__tls_get_addr@PLT",
                      [(X86tlsaddr tls32addr:$sym)]>,

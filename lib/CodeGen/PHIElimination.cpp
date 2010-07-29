@@ -27,7 +27,6 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Statistic.h"
-#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/Debug.h"
 #include <algorithm>
@@ -35,7 +34,6 @@
 using namespace llvm;
 
 STATISTIC(NumAtomic, "Number of atomic phis lowered");
-STATISTIC(NumSplits, "Number of critical edges split on demand");
 STATISTIC(NumReused, "Number of reused lowered phis");
 
 char PHIElimination::ID = 0;
@@ -52,40 +50,41 @@ void llvm::PHIElimination::getAnalysisUsage(AnalysisUsage &AU) const {
   MachineFunctionPass::getAnalysisUsage(AU);
 }
 
-bool llvm::PHIElimination::runOnMachineFunction(MachineFunction &Fn) {
-  MRI = &Fn.getRegInfo();
+bool llvm::PHIElimination::runOnMachineFunction(MachineFunction &MF) {
+  MRI = &MF.getRegInfo();
 
   bool Changed = false;
 
   // Split critical edges to help the coalescer
   if (LiveVariables *LV = getAnalysisIfAvailable<LiveVariables>())
-    for (MachineFunction::iterator I = Fn.begin(), E = Fn.end(); I != E; ++I)
-      Changed |= SplitPHIEdges(Fn, *I, *LV);
+    for (MachineFunction::iterator I = MF.begin(), E = MF.end(); I != E; ++I)
+      Changed |= SplitPHIEdges(MF, *I, *LV);
 
   // Populate VRegPHIUseCount
-  analyzePHINodes(Fn);
+  analyzePHINodes(MF);
 
   // Eliminate PHI instructions by inserting copies into predecessor blocks.
-  for (MachineFunction::iterator I = Fn.begin(), E = Fn.end(); I != E; ++I)
-    Changed |= EliminatePHINodes(Fn, *I);
+  for (MachineFunction::iterator I = MF.begin(), E = MF.end(); I != E; ++I)
+    Changed |= EliminatePHINodes(MF, *I);
 
   // Remove dead IMPLICIT_DEF instructions.
   for (SmallPtrSet<MachineInstr*, 4>::iterator I = ImpDefs.begin(),
          E = ImpDefs.end(); I != E; ++I) {
     MachineInstr *DefMI = *I;
     unsigned DefReg = DefMI->getOperand(0).getReg();
-    if (MRI->use_empty(DefReg))
+    if (MRI->use_nodbg_empty(DefReg))
       DefMI->eraseFromParent();
   }
 
   // Clean up the lowered PHI instructions.
   for (LoweredPHIMap::iterator I = LoweredPHIs.begin(), E = LoweredPHIs.end();
        I != E; ++I)
-    Fn.DeleteMachineInstr(I->first);
+    MF.DeleteMachineInstr(I->first);
 
   LoweredPHIs.clear();
   ImpDefs.clear();
   VRegPHIUseCount.clear();
+
   return Changed;
 }
 
@@ -184,7 +183,6 @@ void llvm::PHIElimination::LowerAtomicPHINode(
 
   // Create a new register for the incoming PHI arguments.
   MachineFunction &MF = *MBB.getParent();
-  const TargetRegisterClass *RC = MF.getRegInfo().getRegClass(DestReg);
   unsigned IncomingReg = 0;
   bool reusedIncoming = false;  // Is IncomingReg reused from an earlier PHI?
 
@@ -208,9 +206,12 @@ void llvm::PHIElimination::LowerAtomicPHINode(
       ++NumReused;
       DEBUG(dbgs() << "Reusing %reg" << IncomingReg << " for " << *MPhi);
     } else {
+      const TargetRegisterClass *RC = MF.getRegInfo().getRegClass(DestReg);
       entry = IncomingReg = MF.getRegInfo().createVirtualRegister(RC);
     }
-    TII->copyRegToReg(MBB, AfterPHIsIt, DestReg, IncomingReg, RC, RC);
+    BuildMI(MBB, AfterPHIsIt, MPhi->getDebugLoc(),
+            TII->get(TargetOpcode::COPY), DestReg)
+      .addReg(IncomingReg);
   }
 
   // Update live variable information if there is any.
@@ -292,7 +293,8 @@ void llvm::PHIElimination::LowerAtomicPHINode(
 
     // Insert the copy.
     if (!reusedIncoming && IncomingReg)
-      TII->copyRegToReg(opBlock, InsertPos, IncomingReg, SrcReg, RC, RC);
+      BuildMI(opBlock, InsertPos, MPhi->getDebugLoc(),
+              TII->get(TargetOpcode::COPY), IncomingReg).addReg(SrcReg);
 
     // Now update live variable information if we have it.  Otherwise we're done
     if (!LV) continue;
@@ -364,8 +366,8 @@ void llvm::PHIElimination::LowerAtomicPHINode(
 /// used in a PHI node. We map that to the BB the vreg is coming from. This is
 /// used later to determine when the vreg is killed in the BB.
 ///
-void llvm::PHIElimination::analyzePHINodes(const MachineFunction& Fn) {
-  for (MachineFunction::const_iterator I = Fn.begin(), E = Fn.end();
+void llvm::PHIElimination::analyzePHINodes(const MachineFunction& MF) {
+  for (MachineFunction::const_iterator I = MF.begin(), E = MF.end();
        I != E; ++I)
     for (MachineBasicBlock::const_iterator BBI = I->begin(), BBE = I->end();
          BBI != BBE && BBI->isPHI(); ++BBI)
@@ -389,57 +391,8 @@ bool llvm::PHIElimination::SplitPHIEdges(MachineFunction &MF,
       // (not considering PHI nodes). If the register is live in to this block
       // anyway, we would gain nothing from splitting.
       if (!LV.isLiveIn(Reg, MBB) && LV.isLiveOut(Reg, *PreMBB))
-        SplitCriticalEdge(PreMBB, &MBB);
+        PreMBB->SplitCriticalEdge(&MBB, this);
     }
   }
   return true;
-}
-
-MachineBasicBlock *PHIElimination::SplitCriticalEdge(MachineBasicBlock *A,
-                                                     MachineBasicBlock *B) {
-  assert(A && B && "Missing MBB end point");
-
-  MachineFunction *MF = A->getParent();
-
-  // We may need to update A's terminator, but we can't do that if AnalyzeBranch
-  // fails. If A uses a jump table, we won't touch it.
-  const TargetInstrInfo *TII = MF->getTarget().getInstrInfo();
-  MachineBasicBlock *TBB = 0, *FBB = 0;
-  SmallVector<MachineOperand, 4> Cond;
-  if (TII->AnalyzeBranch(*A, TBB, FBB, Cond))
-    return NULL;
-
-  ++NumSplits;
-
-  MachineBasicBlock *NMBB = MF->CreateMachineBasicBlock();
-  MF->insert(llvm::next(MachineFunction::iterator(A)), NMBB);
-  DEBUG(dbgs() << "PHIElimination splitting critical edge:"
-        " BB#" << A->getNumber()
-        << " -- BB#" << NMBB->getNumber()
-        << " -- BB#" << B->getNumber() << '\n');
-
-  A->ReplaceUsesOfBlockWith(B, NMBB);
-  A->updateTerminator();
-
-  // Insert unconditional "jump B" instruction in NMBB if necessary.
-  NMBB->addSuccessor(B);
-  if (!NMBB->isLayoutSuccessor(B)) {
-    Cond.clear();
-    MF->getTarget().getInstrInfo()->InsertBranch(*NMBB, B, NULL, Cond);
-  }
-
-  // Fix PHI nodes in B so they refer to NMBB instead of A
-  for (MachineBasicBlock::iterator i = B->begin(), e = B->end();
-       i != e && i->isPHI(); ++i)
-    for (unsigned ni = 1, ne = i->getNumOperands(); ni != ne; ni += 2)
-      if (i->getOperand(ni+1).getMBB() == A)
-        i->getOperand(ni+1).setMBB(NMBB);
-
-  if (LiveVariables *LV=getAnalysisIfAvailable<LiveVariables>())
-    LV->addNewBlock(NMBB, A, B);
-
-  if (MachineDominatorTree *MDT=getAnalysisIfAvailable<MachineDominatorTree>())
-    MDT->addNewBlock(NMBB, A);
-
-  return NMBB;
 }
