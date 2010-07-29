@@ -331,8 +331,7 @@ namespace {
 // createMemCpyOptPass - The public interface to this file...
 FunctionPass *llvm::createMemCpyOptPass() { return new MemCpyOpt(); }
 
-static RegisterPass<MemCpyOpt> X("memcpyopt",
-                                 "MemCpy Optimization");
+INITIALIZE_PASS(MemCpyOpt, "memcpyopt", "MemCpy Optimization", false, false);
 
 
 
@@ -374,7 +373,7 @@ bool MemCpyOpt::processStore(StoreInst *SI, BasicBlock::iterator &BBI) {
       // If the call is readnone, ignore it, otherwise bail out.  We don't even
       // allow readonly here because we don't want something like:
       // A[1] = 2; strlen(A); A[2] = 2; -> memcpy(A, ...); strlen(A).
-      if (AA.getModRefBehavior(CallSite::get(BI)) ==
+      if (AA.getModRefBehavior(CallSite(BI)) ==
             AliasAnalysis::DoesNotAccessMemory)
         continue;
       
@@ -744,7 +743,8 @@ bool MemCpyOpt::processMemMove(MemMoveInst *M) {
   const Type *ArgTys[3] = { M->getRawDest()->getType(),
                             M->getRawSource()->getType(),
                             M->getLength()->getType() };
-  M->setCalledFunction(Intrinsic::getDeclaration(Mod, Intrinsic::memcpy, ArgTys, 3));
+  M->setCalledFunction(Intrinsic::getDeclaration(Mod, Intrinsic::memcpy,
+                                                 ArgTys, 3));
 
   // MemDep may have over conservative information about this instruction, just
   // conservatively flush it from the cache.

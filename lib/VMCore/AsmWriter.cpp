@@ -63,8 +63,6 @@ static const Module *getModuleFromVal(const Value *V) {
   
   if (const GlobalValue *GV = dyn_cast<GlobalValue>(V))
     return GV->getParent();
-  if (const NamedMDNode *NMD = dyn_cast<NamedMDNode>(V))
-    return NMD->getParent();
   return 0;
 }
 
@@ -638,10 +636,8 @@ void SlotTracker::processModule() {
          I = TheModule->named_metadata_begin(),
          E = TheModule->named_metadata_end(); I != E; ++I) {
     const NamedMDNode *NMD = I;
-    for (unsigned i = 0, e = NMD->getNumOperands(); i != e; ++i) {
-      if (MDNode *MD = NMD->getOperand(i))
-        CreateMetadataSlot(MD);
-    }
+    for (unsigned i = 0, e = NMD->getNumOperands(); i != e; ++i)
+      CreateMetadataSlot(NMD->getOperand(i));
   }
 
   // Add all the unnamed functions to the table.
@@ -1424,10 +1420,7 @@ void AssemblyWriter::printNamedMDNode(const NamedMDNode *NMD) {
   Out << "!" << NMD->getName() << " = !{";
   for (unsigned i = 0, e = NMD->getNumOperands(); i != e; ++i) {
     if (i) Out << ", ";
-    if (MDNode *MD = NMD->getOperand(i))
-      Out << '!' << Machine.getMetadataSlot(MD);
-    else
-      Out << "null";
+    Out << '!' << Machine.getMetadataSlot(NMD->getOperand(i));
   }
   Out << "}\n";
 }
@@ -2116,6 +2109,13 @@ void Module::print(raw_ostream &ROS, AssemblyAnnotationWriter *AAW) const {
   W.printModule(this);
 }
 
+void NamedMDNode::print(raw_ostream &ROS, AssemblyAnnotationWriter *AAW) const {
+  SlotTracker SlotTable(getParent());
+  formatted_raw_ostream OS(ROS);
+  AssemblyWriter W(OS, SlotTable, getParent(), AAW);
+  W.printNamedMDNode(this);
+}
+
 void Type::print(raw_ostream &OS) const {
   if (this == 0) {
     OS << "<null Type>";
@@ -2153,10 +2153,6 @@ void Value::print(raw_ostream &ROS, AssemblyAnnotationWriter *AAW) const {
     SlotTracker SlotTable(F);
     AssemblyWriter W(OS, SlotTable, F ? F->getParent() : 0, AAW);
     W.printMDNodeBody(N);
-  } else if (const NamedMDNode *N = dyn_cast<NamedMDNode>(this)) {
-    SlotTracker SlotTable(N->getParent());
-    AssemblyWriter W(OS, SlotTable, N->getParent(), AAW);
-    W.printNamedMDNode(N);
   } else if (const Constant *C = dyn_cast<Constant>(this)) {
     TypePrinting TypePrinter;
     TypePrinter.print(C->getType(), OS);
