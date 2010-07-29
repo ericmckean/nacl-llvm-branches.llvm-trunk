@@ -460,7 +460,7 @@ public:
 /// blocks each of which is a successor of the specified BB and has no other
 /// predecessor.
 static void findSinglePredSuccessor(MachineBasicBlock *MBB,
-                                   SmallVectorImpl<MachineBasicBlock *> &Succs) {
+                                   SmallVectorImpl<MachineBasicBlock *> &Succs){
   for (MachineBasicBlock::succ_iterator SI = MBB->succ_begin(),
          SE = MBB->succ_end(); SI != SE; ++SI) {
     MachineBasicBlock *SuccMBB = *SI;
@@ -852,8 +852,8 @@ unsigned ReuseInfo::GetRegForReload(const TargetRegisterClass *RC,
       // Yup, use the reload register that we didn't use before.
       unsigned NewReg = Op.AssignedPhysReg;
       Rejected.insert(PhysReg);
-      return GetRegForReload(RC, NewReg, MF, MI, Spills, MaybeDeadStores, Rejected,
-                             RegKills, KillOps, VRM);
+      return GetRegForReload(RC, NewReg, MF, MI, Spills, MaybeDeadStores,
+                             Rejected, RegKills, KillOps, VRM);
     } else {
       // Otherwise, we might also have a problem if a previously reused
       // value aliases the new register. If so, codegen the previous reload
@@ -1864,7 +1864,7 @@ bool LocalRewriter::InsertSpills(MachineInstr *MI) {
 
 
 /// rewriteMBB - Keep track of which spills are available even after the
-/// register allocator is done with them.  If possible, avid reloading vregs.
+/// register allocator is done with them.  If possible, avoid reloading vregs.
 void
 LocalRewriter::RewriteMBB(LiveIntervals *LIs,
                           AvailableSpills &Spills, BitVector &RegKills,
@@ -2302,7 +2302,7 @@ LocalRewriter::RewriteMBB(LiveIntervals *LIs,
           unsigned PhysReg = Spills.getSpillSlotOrReMatPhysReg(SS);
           SmallVector<MachineInstr*, 4> NewMIs;
           if (PhysReg &&
-              TII->unfoldMemoryOperand(MF, &MI, PhysReg, false, false, NewMIs)) {
+              TII->unfoldMemoryOperand(MF, &MI, PhysReg, false, false, NewMIs)){
             MBB->insert(MII, NewMIs[0]);
             InvalidateKills(MI, TRI, RegKills, KillOps);
             VRM->RemoveMachineInstrFromMaps(&MI);
