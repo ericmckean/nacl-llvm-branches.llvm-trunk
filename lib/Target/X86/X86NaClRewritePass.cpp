@@ -420,7 +420,6 @@ bool X86NaClRewritePass::AlignJumpTableTargets(MachineFunction &MF) {
     for (unsigned i = 0; i < JT.size(); ++i) {
       const std::vector<MachineBasicBlock*>& MBBs(JT[i].MBBs);
       for (unsigned j = 0; j < MBBs.size(); ++j) {
-        dbgs() << "ALIGNING JT TARGET!\n";
         MBBs[j]->setAlignment(32); // in bits
         Modified |= true;
       }
