@@ -462,11 +462,7 @@ void SelectionDAGISel::CodeGenAndEmitDAG() {
                 FuncInfo->MBB->getBasicBlock()->getNameStr();
 
   DEBUG(dbgs() << "Initial selection DAG:\n"; CurDAG->dump());
-  dbgs() << "BLOCKNAME IS " << BlockName << "\n";
-  // @LOCALMOD
-  if (BlockName == "_malloc_r:bb94") {
   if (ViewDAGCombine1) CurDAG->viewGraph("dag-combine1 input for " + BlockName);
-  }
 
   // Run the DAG combiner in pre-legalize mode.
   {
@@ -478,11 +474,8 @@ void SelectionDAGISel::CodeGenAndEmitDAG() {
 
   // Second step, hack on the DAG until it only uses operations and types that
   // the target supports.
-  // @LOCALMOD
-  if (BlockName == "_malloc_r:bb94") {
   if (ViewLegalizeTypesDAGs) CurDAG->viewGraph("legalize-types input for " +
                                                BlockName);
-  }
 
   bool Changed;
   {
@@ -493,11 +486,8 @@ void SelectionDAGISel::CodeGenAndEmitDAG() {
   DEBUG(dbgs() << "Type-legalized selection DAG:\n"; CurDAG->dump());
 
   if (Changed) {
-    // @LOCALMOD
-    if (BlockName == "_malloc_r:bb94") {
     if (ViewDAGCombineLT)
       CurDAG->viewGraph("dag-combine-lt input for " + BlockName);
-    }
     // Run the DAG combiner in post-type-legalize mode.
     {
       NamedRegionTimer T("DAG Combining after legalize types", GroupName,
@@ -519,11 +509,8 @@ void SelectionDAGISel::CodeGenAndEmitDAG() {
       NamedRegionTimer T("Type Legalization 2", GroupName, TimePassesIsEnabled);
       CurDAG->LegalizeTypes();
     }
-    // @LOCALMOD
-    if (BlockName == "_malloc_r:bb94") {
     if (ViewDAGCombineLT)
       CurDAG->viewGraph("dag-combine-lv input for " + BlockName);
-    }
     // Run the DAG combiner in post-type-legalize mode.
     {
       NamedRegionTimer T("DAG Combining after legalize vectors", GroupName,
@@ -534,20 +521,14 @@ void SelectionDAGISel::CodeGenAndEmitDAG() {
     DEBUG(dbgs() << "Optimized vector-legalized selection DAG:\n";
           CurDAG->dump());
   }
-  // @LOCALMOD
-  if (BlockName == "_malloc_r:bb94") {
   if (ViewLegalizeDAGs) CurDAG->viewGraph("legalize input for " + BlockName);
-  }
   {
     NamedRegionTimer T("DAG Legalization", GroupName, TimePassesIsEnabled);
     CurDAG->Legalize(OptLevel);
   }
   DEBUG(dbgs() << "Legalized selection DAG:\n"; CurDAG->dump());
 
-  // @LOCALMOD
-  if (BlockName == "_malloc_r:bb94") {
   if (ViewDAGCombine2) CurDAG->viewGraph("dag-combine2 input for " + BlockName);
-  }
   // Run the DAG combiner in post-legalize mode.
   {
     NamedRegionTimer T("DAG Combining 2", GroupName, TimePassesIsEnabled);
@@ -559,10 +540,8 @@ void SelectionDAGISel::CodeGenAndEmitDAG() {
   if (OptLevel != CodeGenOpt::None)
     ComputeLiveOutVRegInfo();
 
-  // @LOCALMOD
-  if (BlockName == "_malloc_r:bb94") {
   if (ViewISelDAGs) CurDAG->viewGraph("isel input for " + BlockName);
-  }
+
   // Third, instruction select all of the operations to machine code, adding the
   // code to the MachineBasicBlock.
   {
@@ -572,10 +551,7 @@ void SelectionDAGISel::CodeGenAndEmitDAG() {
 
   DEBUG(dbgs() << "Selected selection DAG:\n"; CurDAG->dump());
 
-  // @LOCALMOD
-  if (BlockName == "_malloc_r:bb94") {
   if (ViewSchedDAGs) CurDAG->viewGraph("scheduler input for " + BlockName);
-  }
 
   // Schedule machine code.
   ScheduleDAGSDNodes *Scheduler = CreateScheduler();
@@ -585,10 +561,7 @@ void SelectionDAGISel::CodeGenAndEmitDAG() {
     Scheduler->Run(CurDAG, FuncInfo->MBB, FuncInfo->InsertPt);
   }
 
-  // @LOCALMOD
-  if (BlockName == "_malloc_r:bb94") {
   if (ViewSUnitDAGs) Scheduler->viewGraph();
-  }
 
   // Emit machine code to BB.  This can change 'BB' to the last block being
   // inserted into.
