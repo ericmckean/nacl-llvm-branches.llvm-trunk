@@ -325,17 +325,17 @@ const TargetRegisterClass *
 X86RegisterInfo::getPointerRegClass(unsigned Kind) const {
   // @LOCALMOD-BEGIN
   const X86Subtarget &Subtarget = TM.getSubtarget<X86Subtarget>();
-  bool is64BitPtrs = Subtarget.is64Bit() && !Subtarget.isTargetNaCl();
+  bool isPTR64Bit = Subtarget.isPTR64Bit();
   // @LOCALMOD-END
 
   switch (Kind) {
   default: llvm_unreachable("Unexpected Kind in getPointerRegClass!");
   case 0: // Normal GPRs.
-    if (is64BitPtrs)   // @LOCALMOD
+    if (isPTR64Bit)   // @LOCALMOD
       return &X86::GR64RegClass;
     return &X86::GR32RegClass;
   case 1: // Normal GRPs except the stack pointer (for encoding reasons).
-    if (is64BitPtrs)   // @LOCALMOD
+    if (isPTR64Bit)   // @LOCALMOD
       return &X86::GR64_NOSPRegClass;
     return &X86::GR32_NOSPRegClass;
   }
@@ -861,10 +861,11 @@ void X86RegisterInfo::emitCalleeSavedFrameMoves(MachineFunction &MF,
   bool HasFP = hasFP(MF);
 
   // Calculate amount of bytes used for return address storing.
+  int RASize = Is64Bit ? 8 : 4;  // @LOCALMOD
   int stackGrowth =
     (MF.getTarget().getFrameInfo()->getStackGrowthDirection() ==
      TargetFrameInfo::StackGrowsUp ?
-     TD->getPointerSize() : -TD->getPointerSize());
+     RASize : -RASize);
 
   // FIXME: This is dirty hack. The code itself is pretty mess right now.
   // It should be rewritten from scratch and generalized sometimes.

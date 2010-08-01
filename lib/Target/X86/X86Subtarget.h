@@ -136,6 +136,10 @@ public:
 
   bool is64Bit() const { return Is64Bit; }
 
+  // LOCALMOD-BEGIN
+  bool isPTR64Bit() const { return Is64Bit && !isTargetNaCl(); }
+  // LOCALMOD-END
+
   PICStyles::Style getPICStyle() const { return PICStyle; }
   void setPICStyle(PICStyles::Style Style)  { PICStyle = Style; }
 

@@ -202,7 +202,7 @@ namespace {
                              SDValue &Segment,
                              SDValue &NodeWithChain);
     // @LOCALMOD-BEGIN
-    void PreventNegativeIndex(SDValue N, X86ISelAddressMode &AM);
+    void LegalizeIndexForNaCl(SDValue N, X86ISelAddressMode &AM);
     // @LOCALMOD-END
 
     
@@ -287,13 +287,6 @@ namespace {
     const X86InstrInfo *getInstrInfo() {
       return getTargetMachine().getInstrInfo();
     }
-
-    // @LOCALMO-START
-    bool RestrictUseOfBaseReg() {
-      return Subtarget->isTargetNaCl() && Subtarget->is64Bit();
-    }
-    // @LOCALMO-END
-
 
   };
 }
@@ -677,7 +670,6 @@ bool X86DAGToDAGISel::MatchAddress(SDValue N, X86ISelAddressMode &AM) {
     return true;
 
 
-  if (!RestrictUseOfBaseReg()) {   // @LOCALMOD
   // Post-processing: Convert lea(,%reg,2) to lea(%reg,%reg), which has
   // a smaller encoding and avoids a scaled-index.
   if (AM.Scale == 2 &&
@@ -686,7 +678,6 @@ bool X86DAGToDAGISel::MatchAddress(SDValue N, X86ISelAddressMode &AM) {
     AM.Base_Reg = AM.IndexReg;
     AM.Scale = 1;
   }
-  } // @LOCALMOD
   
   // Post-processing: Convert foo to foo(%rip), even in non-PIC mode,
   // because it has a smaller encoding.
@@ -839,7 +830,6 @@ bool X86DAGToDAGISel::MatchAddressRecursively(SDValue N, X86ISelAddressMode &AM,
     // FALL THROUGH
   case ISD::MUL:
   case X86ISD::MUL_IMM:
-   if (!RestrictUseOfBaseReg()) { // @LOCALMOD
     // X*[3,5,9] -> X+X*[2,4,8]
     if (AM.BaseType == X86ISelAddressMode::RegBase &&
         AM.Base_Reg.getNode() == 0 &&
@@ -877,7 +867,6 @@ bool X86DAGToDAGISel::MatchAddressRecursively(SDValue N, X86ISelAddressMode &AM,
           return false;
         }
     }
-   } // @LOCALMOD
     break;
 
   case ISD::SUB: {
@@ -978,7 +967,6 @@ bool X86DAGToDAGISel::MatchAddressRecursively(SDValue N, X86ISelAddressMode &AM,
     LHS = Handle.getValue().getNode()->getOperand(0);
     RHS = Handle.getValue().getNode()->getOperand(1);
 
-    if (!RestrictUseOfBaseReg()) { // @LOCALMOD
     // If we couldn't fold both operands into the address at the same time,
     // see if we can just put each operand into a register and fold at least
     // the add.
@@ -990,7 +978,6 @@ bool X86DAGToDAGISel::MatchAddressRecursively(SDValue N, X86ISelAddressMode &AM,
       AM.Scale = 1;
       return false;
     }
-    } // @LOCALMOD
     break;
   }
 
@@ -1144,14 +1131,6 @@ bool X86DAGToDAGISel::MatchAddressRecursively(SDValue N, X86ISelAddressMode &AM,
 /// MatchAddressBase - Helper for MatchAddress. Add the specified node to the
 /// specified addressing mode without any further recursion.
 bool X86DAGToDAGISel::MatchAddressBase(SDValue N, X86ISelAddressMode &AM) {
-  if (RestrictUseOfBaseReg()) { // @LOCALMOD
-    if (AM.IndexReg.getNode() == 0) {
-      AM.IndexReg = N;
-      AM.Scale = 1;
-      return false;
-    }
-    return true;
-  } // @LOCALMOD
 // Is the base register already occupied?
   if (AM.BaseType != X86ISelAddressMode::RegBase || AM.Base_Reg.getNode()) {
     // If so, check to see if the scale index register is set.
@@ -1187,7 +1166,7 @@ bool X86DAGToDAGISel::SelectAddr(SDNode *Op, SDValue N, SDValue &Base,
   if (Subtarget->isTargetNaCl64()) {
     // NaCl needs to zero the top 32-bits of the index, so we can't
     // allow the index register to be negative.
-    PreventNegativeIndex(N, AM);
+    LegalizeIndexForNaCl(N, AM);
   }
   // @LOCALMOD-END
   
@@ -1351,7 +1330,7 @@ bool X86DAGToDAGISel::TryFoldLoad(SDNode *P, SDValue N,
 }
 
 // @LOCALMOD-BEGIN
-// PreventNegativeIndex - NaCl specific addressing fix
+// LegalizeIndexForNaCl - NaCl specific addressing fix
 //
 //   Because NaCl needs to zero the top 32-bits of the index, we can't
 //   allow the index register to be negative. However, if we are using a base
@@ -1377,13 +1356,34 @@ bool X86DAGToDAGISel::TryFoldLoad(SDNode *P, SDValue N,
 //  valid and not depend on further patching. A more desirable fix is
 //  probably to update the matching code to avoid assigning a register
 //  to a value that we cannot prove is positive.
-void X86DAGToDAGISel::PreventNegativeIndex(SDValue N, X86ISelAddressMode &AM) {
-  bool NeedsFixing =
+void X86DAGToDAGISel::LegalizeIndexForNaCl(SDValue N, X86ISelAddressMode &AM) {
+
+
+  if (AM.isRIPRelative())
+    return;
+
+  // MatchAddress wants to use the base register when there's only
+  // one register and no scale. We need to use the index register instead.
+  if (AM.BaseType == X86ISelAddressMode::RegBase &&
+      AM.Base_Reg.getNode() &&
+      !AM.IndexReg.getNode()) {
+    AM.IndexReg = AM.Base_Reg;
+    AM.setBaseReg(SDValue());
+  }
+
+  // Case 1: Prevent negative indexes
+  bool NeedsFixing1 =
        (AM.BaseType == X86ISelAddressMode::FrameIndexBase || AM.GV || AM.CP) &&
        AM.IndexReg.getNode() && 
        AM.Disp > 0;
 
-  if (!NeedsFixing) 
+  // Case 2: Both index and base registers are being used
+  bool NeedsFixing2 =
+       (AM.BaseType == X86ISelAddressMode::RegBase) &&
+       AM.Base_Reg.getNode() &&
+       AM.IndexReg.getNode();
+
+  if (!NeedsFixing1 && !NeedsFixing2) 
     return;
 
   DebugLoc dl = N->getDebugLoc();
@@ -1393,9 +1393,6 @@ void X86DAGToDAGISel::PreventNegativeIndex(SDValue N, X86ISelAddressMode &AM) {
   assert(ScaleLog <= 3);
   SmallVector<SDNode*, 8> NewNodes;
   
-  SDValue DispNode = CurDAG->getConstant(AM.Disp, N.getValueType());
-  NewNodes.push_back(DispNode.getNode());
-
   SDValue NewIndex = AM.IndexReg;
   if (ScaleLog > 0) {
     SDValue ShlCount = CurDAG->getConstant(ScaleLog, MVT::i8);
@@ -1405,12 +1402,23 @@ void X86DAGToDAGISel::PreventNegativeIndex(SDValue N, X86ISelAddressMode &AM) {
     NewNodes.push_back(ShlNode.getNode());
     NewIndex = ShlNode;
   }
+  if (AM.Disp > 0) {
+    SDValue DispNode = CurDAG->getConstant(AM.Disp, N.getValueType());
+    NewNodes.push_back(DispNode.getNode());
 
-  SDValue AddNode = CurDAG->getNode(ISD::ADD, dl, N.getValueType(), 
-                                NewIndex, DispNode);
-  NewNodes.push_back(AddNode.getNode());
-  NewIndex = AddNode;
+    SDValue AddNode = CurDAG->getNode(ISD::ADD, dl, N.getValueType(), 
+                                  NewIndex, DispNode);
+    NewNodes.push_back(AddNode.getNode());
+    NewIndex = AddNode;
+  }
 
+  if (NeedsFixing2) {
+    SDValue AddBase = CurDAG->getNode(ISD::ADD, dl, N.getValueType(),
+                                      NewIndex, AM.Base_Reg); 
+    NewNodes.push_back(AddBase.getNode());
+    NewIndex = AddBase;
+    AM.setBaseReg(SDValue());
+  }
   AM.Disp = 0;
   AM.Scale = 1;
   AM.IndexReg = NewIndex;
