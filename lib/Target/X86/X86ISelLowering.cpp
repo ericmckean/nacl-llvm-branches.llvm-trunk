@@ -392,7 +392,9 @@ X86TargetLowering::X86TargetLowering(X86TargetMachine &TM)
   setOperationAction(ISD::EHSELECTION,   MVT::i64, Expand);
   setOperationAction(ISD::EXCEPTIONADDR, MVT::i32, Expand);
   setOperationAction(ISD::EHSELECTION,   MVT::i32, Expand);
-  if (Subtarget->is64Bit()) {
+  // @LOCALMOD
+  // NaCl uses 32-bit pointers, so use 32-bit registers for EH-related pointers.
+  if (Subtarget->is64Bit() && !Subtarget->isTargetNaCl()) {
     setExceptionPointerRegister(X86::RAX);
     setExceptionSelectorRegister(X86::RDX);
   } else {
@@ -8697,8 +8699,6 @@ X86TargetLowering::EmitVAARG64WithCustomInserter(
   // 8  ) Align         : Alignment of type
   // 9  ) EFLAGS (implicit-def)
 
-  dbgs() << "EMITTING VAARG64:\n";
-  MI->dump();
   assert(MI->getNumOperands() == 10 && "VAARG_64 should have 10 operands!");
   assert(X86::AddrNumOperands == 5 && "VAARG_64 assumes 5 address operands");
 

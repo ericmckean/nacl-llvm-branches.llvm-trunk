@@ -722,6 +722,21 @@ bool X86NaClRewritePass::PassSandboxingControlFlow(
       Modified = true;
       break;
 
+     case X86::EH_RETURN:
+     case X86::EH_RETURN64:
+      // EH_RETURN has a single argment which is not actually used directly.
+      // The argument gives the location where to reposition the stack pointer before returning.
+      // EmitPrologue takes care of that repositioning.
+      // So EH_RETURN just ultimately emits a plain "ret"
+
+      if (is64Bit) {
+        MI.setDesc(TII->get(X86::NACL_RET64));
+      } else {
+        MI.setDesc(TII->get(X86::NACL_RET32));
+      }
+      Modified = true;
+      break;
+
      case X86::RETI:
        if (is64Bit) {
          // Not yet sure when this is needed.
