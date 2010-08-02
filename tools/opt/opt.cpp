@@ -28,7 +28,6 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/IRReader.h"
 #include "llvm/Support/ManagedStatic.h"
-#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/PluginLoader.h"
 #include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/StandardPasses.h"
@@ -113,7 +112,7 @@ OptLevelO3("O3",
 static cl::opt<bool>
 UnitAtATime("funit-at-a-time",
             cl::desc("Enable IPO. This is same as llvm-gcc's -funit-at-a-time"),
-	    cl::init(true));
+            cl::init(true));
 
 static cl::opt<bool>
 DisableSimplifyLibCalls("disable-simplify-libcalls",
@@ -142,15 +141,14 @@ struct CallGraphSCCPassPrinter : public CallGraphSCCPass {
   CallGraphSCCPassPrinter(const PassInfo *PI) :
     CallGraphSCCPass(&ID), PassToPrint(PI) {}
 
-  virtual bool runOnSCC(std::vector<CallGraphNode *>&SCC) {
+  virtual bool runOnSCC(CallGraphSCC &SCC) {
     if (!Quiet) {
       outs() << "Printing analysis '" << PassToPrint->getPassName() << "':\n";
 
-      for (unsigned i = 0, e = SCC.size(); i != e; ++i) {
-        Function *F = SCC[i]->getFunction();
-        if (F) {
+      for (CallGraphSCC::iterator I = SCC.begin(), E = SCC.end(); I != E; ++I) {
+        Function *F = (*I)->getFunction();
+        if (F)
           getAnalysisID<Pass>(PassToPrint).print(outs(), F->getParent());
-        }
       }
     }
     // Get and print pass...
@@ -270,7 +268,7 @@ struct BasicBlockPassPrinter : public BasicBlockPass {
 };
 
 char BasicBlockPassPrinter::ID = 0;
-inline void addPass(PassManager &PM, Pass *P) {
+inline void addPass(PassManagerBase &PM, Pass *P) {
   // Add the pass to the pass manager...
   PM.add(P);
 
@@ -283,7 +281,7 @@ inline void addPass(PassManager &PM, Pass *P) {
 /// duplicates llvm-gcc behaviour.
 ///
 /// OptLevel - Optimization Level
-void AddOptimizationPasses(PassManager &MPM, FunctionPassManager &FPM,
+void AddOptimizationPasses(PassManagerBase &MPM, PassManagerBase &FPM,
                            unsigned OptLevel) {
   createStandardFunctionPasses(&FPM, OptLevel);
 
@@ -307,7 +305,7 @@ void AddOptimizationPasses(PassManager &MPM, FunctionPassManager &FPM,
                              InliningPass);
 }
 
-void AddStandardCompilePasses(PassManager &PM) {
+void AddStandardCompilePasses(PassManagerBase &PM) {
   PM.add(createVerifierPass());                  // Verify that input is correct
 
   addPass(PM, createLowerSetJmpPass());          // Lower llvm.setjmp/.longjmp
@@ -330,7 +328,7 @@ void AddStandardCompilePasses(PassManager &PM) {
                              InliningPass);
 }
 
-void AddStandardLinkPasses(PassManager &PM) {
+void AddStandardLinkPasses(PassManagerBase &PM) {
   PM.add(createVerifierPass());                  // Verify that input is correct
 
   // If the -strip-debug command line option was specified, do it.
@@ -379,24 +377,34 @@ int main(int argc, char **argv) {
   }
 
   // Figure out what stream we are supposed to write to...
-  // FIXME: outs() is not binary!
-  raw_ostream *Out = &outs();  // Default to printing to stdout...
-  if (OutputFilename != "-") {
-    if (NoOutput || AnalyzeOnly) {
-      errs() << "WARNING: The -o (output filename) option is ignored when\n"
-                "the --disable-output or --analyze options are used.\n";
+  raw_ostream *Out = 0;
+  bool DeleteStream = false;
+  if (!NoOutput && !AnalyzeOnly) {
+    if (OutputFilename == "-") {
+      // Print to stdout.
+      Out = &outs();
+      // If we're printing a bitcode file, switch stdout to binary mode.
+      // FIXME: This switches outs() globally, not just for the bitcode output.
+      if (!OutputAssembly)
+        sys::Program::ChangeStdoutToBinary(); 
     } else {
-      // Make sure that the Output file gets unlinked from the disk if we get a
-      // SIGINT
-      sys::RemoveFileOnSignal(sys::Path(OutputFilename));
+      if (NoOutput || AnalyzeOnly) {
+        errs() << "WARNING: The -o (output filename) option is ignored when\n"
+                  "the --disable-output or --analyze options are used.\n";
+      } else {
+        // Make sure that the Output file gets unlinked from the disk if we get
+        // a SIGINT.
+        sys::RemoveFileOnSignal(sys::Path(OutputFilename));
 
-      std::string ErrorInfo;
-      Out = new raw_fd_ostream(OutputFilename.c_str(), ErrorInfo,
-                               raw_fd_ostream::F_Binary);
-      if (!ErrorInfo.empty()) {
-        errs() << ErrorInfo << '\n';
-        delete Out;
-        return 1;
+        std::string ErrorInfo;
+        Out = new raw_fd_ostream(OutputFilename.c_str(), ErrorInfo,
+                                 raw_fd_ostream::F_Binary);
+        if (!ErrorInfo.empty()) {
+          errs() << ErrorInfo << '\n';
+          delete Out;
+          return 1;
+        }
+        DeleteStream = true;
       }
     }
   }
@@ -424,9 +432,9 @@ int main(int argc, char **argv) {
   if (TD)
     Passes.add(TD);
 
-  FunctionPassManager *FPasses = NULL;
+  OwningPtr<PassManager> FPasses;
   if (OptLevelO1 || OptLevelO2 || OptLevelO3) {
-    FPasses = new FunctionPassManager(M.get());
+    FPasses.reset(new PassManager());
     if (TD)
       FPasses->add(new TargetData(*TD));
   }
@@ -523,12 +531,8 @@ int main(int argc, char **argv) {
   if (OptLevelO3)
     AddOptimizationPasses(Passes, *FPasses, 3);
 
-  if (OptLevelO1 || OptLevelO2 || OptLevelO3) {
-    FPasses->doInitialization();
-    for (Module::iterator I = M.get()->begin(), E = M.get()->end();
-         I != E; ++I)
-      FPasses->run(*I);
-  }
+  if (OptLevelO1 || OptLevelO2 || OptLevelO3)
+    FPasses->run(*M.get());
 
   // Check that the module is well formed on completion of optimization
   if (!NoVerify && !VerifyEach)
@@ -546,7 +550,7 @@ int main(int argc, char **argv) {
   Passes.run(*M.get());
 
   // Delete the raw_fd_ostream.
-  if (Out != &outs())
+  if (DeleteStream)
     delete Out;
   return 0;
 }

@@ -30,7 +30,8 @@
 #define LLVM_PASS_H
 
 #include "llvm/System/DataTypes.h"
-#include <cassert>
+
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -87,13 +88,8 @@ class Pass {
   Pass(const Pass &);           // DO NOT IMPLEMENT
   
 public:
-  explicit Pass(PassKind K, intptr_t pid) : Resolver(0), PassID(pid), Kind(K) {
-    assert(pid && "pid cannot be 0");
-  }
-  explicit Pass(PassKind K, const void *pid)
-    : Resolver(0), PassID((intptr_t)pid), Kind(K) {
-    assert(pid && "pid cannot be 0"); 
-  }
+  explicit Pass(PassKind K, intptr_t pid);
+  explicit Pass(PassKind K, const void *pid);
   virtual ~Pass();
 
   
@@ -120,6 +116,11 @@ public:
   virtual void print(raw_ostream &O, const Module *M) const;
   void dump() const; // dump - Print to stderr.
 
+  /// createPrinterPass - Get a Pass appropriate to print the IR this
+  /// pass operates one (Module, Function or MachineFunction).
+  virtual Pass *createPrinterPass(raw_ostream &O,
+                                  const std::string &Banner) const = 0;
+
   /// Each pass is responsible for assigning a pass manager to itself.
   /// PMS is the stack of available pass manager. 
   virtual void assignPassManager(PMStack &, 
@@ -131,13 +132,8 @@ public:
   virtual PassManagerType getPotentialPassManagerType() const;
 
   // Access AnalysisResolver
-  inline void setResolver(AnalysisResolver *AR) { 
-    assert(!Resolver && "Resolver is already set");
-    Resolver = AR; 
-  }
-  inline AnalysisResolver *getResolver() { 
-    return Resolver; 
-  }
+  void setResolver(AnalysisResolver *AR);
+  AnalysisResolver *getResolver() const { return Resolver; }
 
   /// getAnalysisUsage - This function should be overriden by passes that need
   /// analysis information to do their job.  If a pass specifies that it uses a
@@ -163,11 +159,9 @@ public:
   /// an analysis interface through multiple inheritance.  If needed, it should
   /// override this to adjust the this pointer as needed for the specified pass
   /// info.
-  virtual void *getAdjustedAnalysisPointer(const PassInfo *) {
-    return this;
-  }
-  virtual ImmutablePass *getAsImmutablePass() { return 0; }
-  virtual PMDataManager *getAsPMDataManager() { return 0; }
+  virtual void *getAdjustedAnalysisPointer(const PassInfo *);
+  virtual ImmutablePass *getAsImmutablePass();
+  virtual PMDataManager *getAsPMDataManager();
   
   /// verifyAnalysis() - This member can be implemented by a analysis pass to
   /// check state of analysis information. 
@@ -233,6 +227,9 @@ public:
 ///
 class ModulePass : public Pass {
 public:
+  /// createPrinterPass - Get a module printer pass.
+  Pass *createPrinterPass(raw_ostream &O, const std::string &Banner) const;
+
   /// runOnModule - Virtual method overriden by subclasses to process the module
   /// being operated on.
   virtual bool runOnModule(Module &M) = 0;
@@ -293,6 +290,9 @@ public:
   explicit FunctionPass(intptr_t pid) : Pass(PT_Function, pid) {}
   explicit FunctionPass(const void *pid) : Pass(PT_Function, pid) {}
 
+  /// createPrinterPass - Get a function printer pass.
+  Pass *createPrinterPass(raw_ostream &O, const std::string &Banner) const;
+
   /// doInitialization - Virtual method overridden by subclasses to do
   /// any necessary per-module initialization.
   ///
@@ -342,6 +342,9 @@ class BasicBlockPass : public Pass {
 public:
   explicit BasicBlockPass(intptr_t pid) : Pass(PT_BasicBlock, pid) {}
   explicit BasicBlockPass(const void *pid) : Pass(PT_BasicBlock, pid) {}
+
+  /// createPrinterPass - Get a function printer pass.
+  Pass *createPrinterPass(raw_ostream &O, const std::string &Banner) const;
 
   /// doInitialization - Virtual method overridden by subclasses to do
   /// any necessary per-module initialization.

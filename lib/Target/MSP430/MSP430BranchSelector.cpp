@@ -52,7 +52,8 @@ FunctionPass *llvm::createMSP430BranchSelectionPass() {
 }
 
 bool MSP430BSel::runOnMachineFunction(MachineFunction &Fn) {
-  const TargetInstrInfo *TII = Fn.getTarget().getInstrInfo();
+  const MSP430InstrInfo *TII =
+             static_cast<const MSP430InstrInfo*>(Fn.getTarget().getInstrInfo());
   // Give the blocks of the function a dense, in-order, numbering.
   Fn.RenumberBlocks();
   BlockSizes.resize(Fn.getNumBlockIDs());
@@ -157,7 +158,7 @@ bool MSP430BSel::runOnMachineFunction(MachineFunction &Fn) {
           NewSize = 6;
         }
         // Uncond branch to the real destination.
-        I = BuildMI(MBB, I, dl, TII->get(MSP430::B)).addMBB(Dest);
+        I = BuildMI(MBB, I, dl, TII->get(MSP430::Bi)).addMBB(Dest);
 
         // Remove the old branch from the function.
         OldBranch->eraseFromParent();

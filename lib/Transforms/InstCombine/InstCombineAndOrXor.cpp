@@ -472,6 +472,22 @@ Value *InstCombiner::FoldAndOfICmps(ICmpInst *LHS, ICmpInst *RHS) {
       Value *NewOr = Builder->CreateOr(Val, Val2);
       return Builder->CreateICmp(LHSCC, NewOr, LHSCst);
     }
+    
+    // (icmp ne (A & C1), 0) & (icmp ne (A & C2), 0) -->
+    // (icmp eq (A & (C1|C2)), (C1|C2)) where C1 and C2 are non-zero POT
+    if (LHSCC == ICmpInst::ICMP_NE && LHSCst->isZero()) {
+      Value *Op1 = 0, *Op2 = 0;
+      ConstantInt *CI1 = 0, *CI2 = 0;
+      if (match(LHS->getOperand(0), m_And(m_Value(Op1), m_ConstantInt(CI1))) &&
+          match(RHS->getOperand(0), m_And(m_Value(Op2), m_ConstantInt(CI2)))) {
+        if (Op1 == Op2 && !CI1->isZero() && !CI2->isZero() &&
+            CI1->getValue().isPowerOf2() && CI2->getValue().isPowerOf2()) {
+          Constant *ConstOr = ConstantExpr::getOr(CI1, CI2);
+          Value *NewAnd = Builder->CreateAnd(Op1, ConstOr);
+          return Builder->CreateICmp(ICmpInst::ICMP_EQ, NewAnd, ConstOr);
+        }
+      }
+    }
   }
   
   // From here on, we only handle:
@@ -1158,6 +1174,22 @@ Value *InstCombiner::FoldOrOfICmps(ICmpInst *LHS, ICmpInst *RHS) {
     return Builder->CreateICmp(LHSCC, NewOr, LHSCst);
   }
   
+  // (icmp eq (A & C1), 0) | (icmp eq (A & C2), 0) -->
+  // (icmp ne (A & (C1|C2)), (C1|C2)) where C1 and C2 are non-zero POT
+  if (LHSCC == ICmpInst::ICMP_EQ && LHSCst->isZero()) {
+    Value *Op1 = 0, *Op2 = 0;
+    ConstantInt *CI1 = 0, *CI2 = 0;
+    if (match(LHS->getOperand(0), m_And(m_Value(Op1), m_ConstantInt(CI1))) &&
+        match(RHS->getOperand(0), m_And(m_Value(Op2), m_ConstantInt(CI2)))) {
+      if (Op1 == Op2 && !CI1->isZero() && !CI2->isZero() &&
+          CI1->getValue().isPowerOf2() && CI2->getValue().isPowerOf2()) {
+        Constant *ConstOr = ConstantExpr::getOr(CI1, CI2);
+        Value *NewAnd = Builder->CreateAnd(Op1, ConstOr);
+        return Builder->CreateICmp(ICmpInst::ICMP_NE, NewAnd, ConstOr);
+      }
+    }
+  }
+  
   // From here on, we only handle:
   //    (icmp1 A, C1) | (icmp2 A, C2) --> something simpler.
   if (Val != Val2) return 0;
@@ -1584,6 +1616,19 @@ Instruction *InstCombiner::visitOr(BinaryOperator &I) {
     if ((match(A, m_Not(m_Specific(B))) &&
          match(D, m_Not(m_Specific(C)))))
       return BinaryOperator::CreateXor(C, B);
+
+    // ((A|B)&1)|(B&-2) -> (A&1) | B
+    if (match(A, m_Or(m_Value(V1), m_Specific(B))) ||
+        match(A, m_Or(m_Specific(B), m_Value(V1)))) {
+      Instruction *Ret = FoldOrWithConstants(I, Op1, V1, B, C);
+      if (Ret) return Ret;
+    }
+    // (B&-2)|((A|B)&1) -> (A&1) | B
+    if (match(B, m_Or(m_Specific(A), m_Value(V1))) ||
+        match(B, m_Or(m_Value(V1), m_Specific(A)))) {
+      Instruction *Ret = FoldOrWithConstants(I, Op0, A, V1, D);
+      if (Ret) return Ret;
+    }
   }
   
   // (X >> Z) | (Y >> Z)  -> (X|Y) >> Z  for all shifts.
@@ -1597,19 +1642,6 @@ Instruction *InstCombiner::visitOr(BinaryOperator &I) {
         return BinaryOperator::Create(SI1->getOpcode(), NewOp, 
                                       SI1->getOperand(1));
       }
-  }
-
-  // ((A|B)&1)|(B&-2) -> (A&1) | B
-  if (match(Op0, m_And(m_Or(m_Value(A), m_Value(B)), m_Value(C))) ||
-      match(Op0, m_And(m_Value(C), m_Or(m_Value(A), m_Value(B))))) {
-    Instruction *Ret = FoldOrWithConstants(I, Op1, A, B, C);
-    if (Ret) return Ret;
-  }
-  // (B&-2)|((A|B)&1) -> (A&1) | B
-  if (match(Op1, m_And(m_Or(m_Value(A), m_Value(B)), m_Value(C))) ||
-      match(Op1, m_And(m_Value(C), m_Or(m_Value(A), m_Value(B))))) {
-    Instruction *Ret = FoldOrWithConstants(I, Op0, A, B, C);
-    if (Ret) return Ret;
   }
 
   // (~A | ~B) == (~(A & B)) - De Morgan's Law
@@ -1735,16 +1767,12 @@ Instruction *InstCombiner::visitXor(BinaryOperator &I) {
   
   
   if (ConstantInt *RHS = dyn_cast<ConstantInt>(Op1)) {
-    if (RHS->isOne() && Op0->hasOneUse()) {
+    if (RHS->isOne() && Op0->hasOneUse())
       // xor (cmp A, B), true = not (cmp A, B) = !cmp A, B
-      if (ICmpInst *ICI = dyn_cast<ICmpInst>(Op0))
-        return new ICmpInst(ICI->getInversePredicate(),
-                            ICI->getOperand(0), ICI->getOperand(1));
-
-      if (FCmpInst *FCI = dyn_cast<FCmpInst>(Op0))
-        return new FCmpInst(FCI->getInversePredicate(),
-                            FCI->getOperand(0), FCI->getOperand(1));
-    }
+      if (CmpInst *CI = dyn_cast<CmpInst>(Op0))
+        return CmpInst::Create(CI->getOpcode(),
+                               CI->getInversePredicate(),
+                               CI->getOperand(0), CI->getOperand(1));
 
     // fold (xor(zext(cmp)), 1) and (xor(sext(cmp)), -1) to ext(!cmp).
     if (CastInst *Op0C = dyn_cast<CastInst>(Op0)) {

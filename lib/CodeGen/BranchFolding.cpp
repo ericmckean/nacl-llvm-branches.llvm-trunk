@@ -193,7 +193,7 @@ bool BranchFolder::OptimizeFunction(MachineFunction &MF,
     MadeChange |= MadeChangeThisIteration;
   }
 
-  // See if any jump tables have become mergable or dead as the code generator
+  // See if any jump tables have become dead as the code generator
   // did its thing.
   MachineJumpTableInfo *JTI = MF.getJumpTableInfo();
   if (JTI == 0) {
@@ -201,27 +201,8 @@ bool BranchFolder::OptimizeFunction(MachineFunction &MF,
     return MadeChange;
   }
   
-  const std::vector<MachineJumpTableEntry> &JTs = JTI->getJumpTables();
-  // Figure out how these jump tables should be merged.
-  std::vector<unsigned> JTMapping;
-  JTMapping.reserve(JTs.size());
-
-  // We always keep the 0th jump table.
-  JTMapping.push_back(0);
-
-  // Scan the jump tables, seeing if there are any duplicates.  Note that this
-  // is N^2, which should be fixed someday.
-  for (unsigned i = 1, e = JTs.size(); i != e; ++i) {
-    if (JTs[i].MBBs.empty())
-      JTMapping.push_back(i);
-    else
-      JTMapping.push_back(JTI->getJumpTableIndex(JTs[i].MBBs));
-  }
-
-  // If a jump table was merge with another one, walk the function rewriting
-  // references to jump tables to reference the new JT ID's.  Keep track of
-  // whether we see a jump table idx, if not, we can delete the JT.
-  BitVector JTIsLive(JTs.size());
+  // Walk the function to find jump tables that are live.
+  BitVector JTIsLive(JTI->getJumpTables().size());
   for (MachineFunction::iterator BB = MF.begin(), E = MF.end();
        BB != E; ++BB) {
     for (MachineBasicBlock::iterator I = BB->begin(), E = BB->end();
@@ -229,11 +210,9 @@ bool BranchFolder::OptimizeFunction(MachineFunction &MF,
       for (unsigned op = 0, e = I->getNumOperands(); op != e; ++op) {
         MachineOperand &Op = I->getOperand(op);
         if (!Op.isJTI()) continue;
-        unsigned NewIdx = JTMapping[Op.getIndex()];
-        Op.setIndex(NewIdx);
 
         // Remember that this JT is live.
-        JTIsLive.set(NewIdx);
+        JTIsLive.set(Op.getIndex());
       }
   }
 
@@ -246,18 +225,14 @@ bool BranchFolder::OptimizeFunction(MachineFunction &MF,
       if (!CPs[i].isMachineConstantPoolEntry()) continue;
       unsigned *JTIndex = CPs[i].Val.MachineCPVal->getJumpTableIndex();
       if (!JTIndex) continue;
-      // Remap index.
-      const unsigned NewIdx = JTMapping[*JTIndex];
-      *JTIndex = NewIdx;
       // Remember that this JT is live.
-      JTIsLive.set(NewIdx);
+      JTIsLive.set(*JTIndex);
     }
     // @LOCALMOD-END
 
 
-  // Finally, remove dead jump tables.  This happens either because the
-  // indirect jump was unreachable (and thus deleted) or because the jump
-  // table was merged with some other one.
+  // Finally, remove dead jump tables.  This happens when the
+  // indirect jump was unreachable (and thus deleted).
   for (unsigned i = 0, e = JTIsLive.size(); i != e; ++i)
     if (!JTIsLive.test(i)) {
       JTI->RemoveJumpTable(i);
@@ -305,14 +280,8 @@ static unsigned HashMachineInstr(const MachineInstr *MI) {
   return Hash;
 }
 
-/// HashEndOfMBB - Hash the last few instructions in the MBB.  For blocks
-/// with no successors, we hash two instructions, because cross-jumping
-/// only saves code when at least two instructions are removed (since a
-/// branch must be inserted).  For blocks with a successor, one of the
-/// two blocks to be tail-merged will end with a branch already, so
-/// it gains to cross-jump even for one instruction.
-static unsigned HashEndOfMBB(const MachineBasicBlock *MBB,
-                             unsigned minCommonTailLength) {
+/// HashEndOfMBB - Hash the last instruction in the MBB.
+static unsigned HashEndOfMBB(const MachineBasicBlock *MBB) {
   MachineBasicBlock::const_iterator I = MBB->end();
   if (I == MBB->begin())
     return 0;   // Empty MBB.
@@ -324,20 +293,8 @@ static unsigned HashEndOfMBB(const MachineBasicBlock *MBB,
       return 0;      // MBB empty except for debug info.
     --I;
   }
-  unsigned Hash = HashMachineInstr(I);
 
-  if (I == MBB->begin() || minCommonTailLength == 1)
-    return Hash;   // Single instr MBB.
-
-  --I;
-  while (I->isDebugValue()) {
-    if (I==MBB->begin())
-      return Hash;      // MBB with single non-debug instr.
-    --I;
-  }
-  // Hash in the second-to-last instruction.
-  Hash ^= HashMachineInstr(I) << 2;
-  return Hash;
+  return HashMachineInstr(I);
 }
 
 /// ComputeCommonTailLength - Given two machine basic blocks, compute the number
@@ -417,23 +374,10 @@ static unsigned ComputeCommonTailLength(MachineBasicBlock *MBB1,
 }
 
 /// ReplaceTailWithBranchTo - Delete the instruction OldInst and everything
-/// after it, replacing it with an unconditional branch to NewDest.  This
-/// returns true if OldInst's block is modified, false if NewDest is modified.
+/// after it, replacing it with an unconditional branch to NewDest.
 void BranchFolder::ReplaceTailWithBranchTo(MachineBasicBlock::iterator OldInst,
                                            MachineBasicBlock *NewDest) {
-  MachineBasicBlock *OldBB = OldInst->getParent();
-
-  // Remove all the old successors of OldBB from the CFG.
-  while (!OldBB->succ_empty())
-    OldBB->removeSuccessor(OldBB->succ_begin());
-
-  // Remove all the dead instructions from the end of OldBB.
-  OldBB->erase(OldInst, OldBB->end());
-
-  // If OldBB isn't immediately before OldBB, insert a branch to it.
-  if (++MachineFunction::iterator(OldBB) != MachineFunction::iterator(NewDest))
-    TII->InsertBranch(*OldBB, NewDest, 0, SmallVector<MachineOperand, 0>());
-  OldBB->addSuccessor(NewDest);
+  TII->ReplaceTailWithBranchTo(OldInst, NewDest);
   ++NumTailMerge;
 }
 
@@ -442,6 +386,9 @@ void BranchFolder::ReplaceTailWithBranchTo(MachineBasicBlock::iterator OldInst,
 /// iterator.  This returns the new MBB.
 MachineBasicBlock *BranchFolder::SplitMBBAt(MachineBasicBlock &CurMBB,
                                             MachineBasicBlock::iterator BBI1) {
+  if (!TII->isLegalToSplitMBBAt(CurMBB, BBI1))
+    return 0;
+
   MachineFunction &MF = *CurMBB.getParent();
 
   // Create the fall-through block.
@@ -502,18 +449,20 @@ static void FixTail(MachineBasicBlock *CurMBB, MachineBasicBlock *SuccBB,
   MachineFunction::iterator I = llvm::next(MachineFunction::iterator(CurMBB));
   MachineBasicBlock *TBB = 0, *FBB = 0;
   SmallVector<MachineOperand, 4> Cond;
+  DebugLoc dl;  // FIXME: this is nowhere
   if (I != MF->end() &&
       !TII->AnalyzeBranch(*CurMBB, TBB, FBB, Cond, true)) {
     MachineBasicBlock *NextBB = I;
     if (TBB == NextBB && !Cond.empty() && !FBB) {
       if (!TII->ReverseBranchCondition(Cond)) {
         TII->RemoveBranch(*CurMBB);
-        TII->InsertBranch(*CurMBB, SuccBB, NULL, Cond);
+        TII->InsertBranch(*CurMBB, SuccBB, NULL, Cond, dl);
         return;
       }
     }
   }
-  TII->InsertBranch(*CurMBB, SuccBB, NULL, SmallVector<MachineOperand, 0>());
+  TII->InsertBranch(*CurMBB, SuccBB, NULL,
+                    SmallVector<MachineOperand, 0>(), dl);
 }
 
 bool
@@ -684,9 +633,10 @@ void BranchFolder::RemoveBlocksWithHash(unsigned CurHash,
 
 /// CreateCommonTailOnlyBlock - None of the blocks to be tail-merged consist
 /// only of the common tail.  Create a block that does by splitting one.
-unsigned BranchFolder::CreateCommonTailOnlyBlock(MachineBasicBlock *&PredBB,
-                                             unsigned maxCommonTailLength) {
-  unsigned commonTailIndex = 0;
+bool BranchFolder::CreateCommonTailOnlyBlock(MachineBasicBlock *&PredBB,
+                                             unsigned maxCommonTailLength,
+                                             unsigned &commonTailIndex) {
+  commonTailIndex = 0;
   unsigned TimeEstimate = ~0U;
   for (unsigned i = 0, e = SameTails.size(); i != e; ++i) {
     // Use PredBB if possible; that doesn't require a new branch.
@@ -714,6 +664,11 @@ unsigned BranchFolder::CreateCommonTailOnlyBlock(MachineBasicBlock *&PredBB,
                << maxCommonTailLength);
 
   MachineBasicBlock *newMBB = SplitMBBAt(*MBB, BBI);
+  if (!newMBB) {
+    DEBUG(dbgs() << "... failed!");
+    return false;
+  }
+
   SameTails[commonTailIndex].setBlock(newMBB);
   SameTails[commonTailIndex].setTailStartPos(newMBB->begin());
 
@@ -721,7 +676,7 @@ unsigned BranchFolder::CreateCommonTailOnlyBlock(MachineBasicBlock *&PredBB,
   if (PredBB == MBB)
     PredBB = newMBB;
 
-  return commonTailIndex;
+  return true;
 }
 
 // See if any of the blocks in MergePotentials (which all have a common single
@@ -816,7 +771,11 @@ bool BranchFolder::TryTailMergeBlocks(MachineBasicBlock *SuccBB,
          !SameTails[commonTailIndex].tailIsWholeBlock())) {
       // None of the blocks consist entirely of the common tail.
       // Split a block so that one does.
-      commonTailIndex = CreateCommonTailOnlyBlock(PredBB, maxCommonTailLength);
+      if (!CreateCommonTailOnlyBlock(PredBB,
+                                     maxCommonTailLength, commonTailIndex)) {
+        RemoveBlocksWithHash(CurHash, SuccBB, PredBB);
+        continue;
+      }
     }
 
     MachineBasicBlock *MBB = SameTails[commonTailIndex].getBlock();
@@ -852,7 +811,7 @@ bool BranchFolder::TailMergeBlocks(MachineFunction &MF) {
   MergePotentials.clear();
   for (MachineFunction::iterator I = MF.begin(), E = MF.end(); I != E; ++I) {
     if (I->succ_empty())
-      MergePotentials.push_back(MergePotentialsElt(HashEndOfMBB(I, 2U), I));
+      MergePotentials.push_back(MergePotentialsElt(HashEndOfMBB(I), I));
   }
 
   // See if we can do any tail merging on those.
@@ -933,13 +892,13 @@ bool BranchFolder::TailMergeBlocks(MachineFunction &MF) {
           }
           // Remove the unconditional branch at the end, if any.
           if (TBB && (Cond.empty() || FBB)) {
+            DebugLoc dl;  // FIXME: this is nowhere
             TII->RemoveBranch(*PBB);
             if (!Cond.empty())
               // reinsert conditional branch only, for now
-              TII->InsertBranch(*PBB, (TBB == IBB) ? FBB : TBB, 0, NewCond);
+              TII->InsertBranch(*PBB, (TBB == IBB) ? FBB : TBB, 0, NewCond, dl);
           }
-          MergePotentials.push_back(MergePotentialsElt(HashEndOfMBB(PBB, 1U),
-                                                       *P));
+          MergePotentials.push_back(MergePotentialsElt(HashEndOfMBB(PBB), *P));
         }
       }
       if (MergePotentials.size() >= 2)
@@ -1013,15 +972,21 @@ static bool IsBetterFallthrough(MachineBasicBlock *MBB1,
   // MBB1 doesn't, we prefer to fall through into MBB1.  This allows us to
   // optimize branches that branch to either a return block or an assert block
   // into a fallthrough to the return.
-  if (MBB1->empty() || MBB2->empty()) return false;
+  if (IsEmptyBlock(MBB1) || IsEmptyBlock(MBB2)) return false;
 
   // If there is a clear successor ordering we make sure that one block
   // will fall through to the next
   if (MBB1->isSuccessor(MBB2)) return true;
   if (MBB2->isSuccessor(MBB1)) return false;
 
-  MachineInstr *MBB1I = --MBB1->end();
-  MachineInstr *MBB2I = --MBB2->end();
+  // Neither block consists entirely of debug info (per IsEmptyBlock check),
+  // so we needn't test for falling off the beginning here.
+  MachineBasicBlock::iterator MBB1I = --MBB1->end();
+  while (MBB1I->isDebugValue())
+    --MBB1I;
+  MachineBasicBlock::iterator MBB2I = --MBB2->end();
+  while (MBB2I->isDebugValue())
+    --MBB2I;
   return MBB2I->getDesc().isCall() && !MBB1I->getDesc().isCall();
 }
 
@@ -1030,6 +995,7 @@ static bool IsBetterFallthrough(MachineBasicBlock *MBB1,
 bool BranchFolder::OptimizeBlock(MachineBasicBlock *MBB) {
   bool MadeChange = false;
   MachineFunction &MF = *MBB->getParent();
+  DebugLoc dl;  // FIXME: this is nowhere
 ReoptimizeBlock:
 
   MachineFunction::iterator FallThrough = MBB;
@@ -1081,7 +1047,7 @@ ReoptimizeBlock:
       TII->RemoveBranch(PrevBB);
       PriorCond.clear();
       if (PriorTBB != MBB)
-        TII->InsertBranch(PrevBB, PriorTBB, 0, PriorCond);
+        TII->InsertBranch(PrevBB, PriorTBB, 0, PriorCond, dl);
       MadeChange = true;
       ++NumBranchOpts;
       goto ReoptimizeBlock;
@@ -1120,7 +1086,7 @@ ReoptimizeBlock:
     // the condition is false, remove the uncond second branch.
     if (PriorFBB == MBB) {
       TII->RemoveBranch(PrevBB);
-      TII->InsertBranch(PrevBB, PriorTBB, 0, PriorCond);
+      TII->InsertBranch(PrevBB, PriorTBB, 0, PriorCond, dl);
       MadeChange = true;
       ++NumBranchOpts;
       goto ReoptimizeBlock;
@@ -1133,7 +1099,7 @@ ReoptimizeBlock:
       SmallVector<MachineOperand, 4> NewPriorCond(PriorCond);
       if (!TII->ReverseBranchCondition(NewPriorCond)) {
         TII->RemoveBranch(PrevBB);
-        TII->InsertBranch(PrevBB, PriorFBB, 0, NewPriorCond);
+        TII->InsertBranch(PrevBB, PriorFBB, 0, NewPriorCond, dl);
         MadeChange = true;
         ++NumBranchOpts;
         goto ReoptimizeBlock;
@@ -1162,22 +1128,6 @@ ReoptimizeBlock:
           !IsBetterFallthrough(PriorTBB, MBB))
         DoTransform = false;
 
-      // We don't want to do this transformation if we have control flow like:
-      //   br cond BB2
-      // BB1:
-      //   ..
-      //   jmp BBX
-      // BB2:
-      //   ..
-      //   ret
-      //
-      // In this case, we could actually be moving the return block *into* a
-      // loop!
-      if (DoTransform && !MBB->succ_empty() &&
-          (!PriorTBB->canFallThrough() || PriorTBB->empty()))
-        DoTransform = false;
-
-
       if (DoTransform) {
         // Reverse the branch so we will fall through on the previous true cond.
         SmallVector<MachineOperand, 4> NewPriorCond(PriorCond);
@@ -1186,7 +1136,7 @@ ReoptimizeBlock:
                        << "To make fallthrough to: " << *PriorTBB << "\n");
 
           TII->RemoveBranch(PrevBB);
-          TII->InsertBranch(PrevBB, MBB, 0, NewPriorCond);
+          TII->InsertBranch(PrevBB, MBB, 0, NewPriorCond, dl);
 
           // Move this block to the end of the function.
           MBB->moveAfter(--MF.end());
@@ -1215,7 +1165,7 @@ ReoptimizeBlock:
       SmallVector<MachineOperand, 4> NewCond(CurCond);
       if (!TII->ReverseBranchCondition(NewCond)) {
         TII->RemoveBranch(*MBB);
-        TII->InsertBranch(*MBB, CurFBB, CurTBB, NewCond);
+        TII->InsertBranch(*MBB, CurFBB, CurTBB, NewCond, dl);
         MadeChange = true;
         ++NumBranchOpts;
         goto ReoptimizeBlock;
@@ -1270,7 +1220,7 @@ ReoptimizeBlock:
               PriorFBB = MBB;
             }
             TII->RemoveBranch(PrevBB);
-            TII->InsertBranch(PrevBB, PriorTBB, PriorFBB, PriorCond);
+            TII->InsertBranch(PrevBB, PriorTBB, PriorFBB, PriorCond, dl);
           }
 
           // Iterate through all the predecessors, revectoring each in-turn.
@@ -1296,7 +1246,7 @@ ReoptimizeBlock:
               if (!NewCurUnAnalyzable && NewCurTBB && NewCurTBB == NewCurFBB) {
                 TII->RemoveBranch(*PMBB);
                 NewCurCond.clear();
-                TII->InsertBranch(*PMBB, NewCurTBB, 0, NewCurCond);
+                TII->InsertBranch(*PMBB, NewCurTBB, 0, NewCurCond, dl);
                 MadeChange = true;
                 ++NumBranchOpts;
                 PMBB->CorrectExtraCFGEdges(NewCurTBB, 0, false);
@@ -1316,7 +1266,7 @@ ReoptimizeBlock:
       }
 
       // Add the branch back if the block is more than just an uncond branch.
-      TII->InsertBranch(*MBB, CurTBB, 0, CurCond);
+      TII->InsertBranch(*MBB, CurTBB, 0, CurCond, dl);
     }
   }
 
@@ -1356,7 +1306,7 @@ ReoptimizeBlock:
           if (CurFallsThru) {
             MachineBasicBlock *NextBB = llvm::next(MachineFunction::iterator(MBB));
             CurCond.clear();
-            TII->InsertBranch(*MBB, NextBB, 0, CurCond);
+            TII->InsertBranch(*MBB, NextBB, 0, CurCond, dl);
           }
           MBB->moveAfter(PredBB);
           MadeChange = true;

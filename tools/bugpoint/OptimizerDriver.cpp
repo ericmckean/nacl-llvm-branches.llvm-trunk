@@ -45,21 +45,19 @@ namespace {
   // ChildOutput - This option captures the name of the child output file that
   // is set up by the parent bugpoint process
   cl::opt<std::string> ChildOutput("child-output", cl::ReallyHidden);
-  cl::opt<bool> UseValgrind("enable-valgrind",
-                            cl::desc("Run optimizations through valgrind"));
 }
 
 /// writeProgramToFile - This writes the current "Program" to the named bitcode
 /// file.  If an error occurs, true is returned.
 ///
 bool BugDriver::writeProgramToFile(const std::string &Filename,
-                                   Module *M) const {
+                                   const Module *M) const {
   std::string ErrInfo;
   raw_fd_ostream Out(Filename.c_str(), ErrInfo,
                      raw_fd_ostream::F_Binary);
   if (!ErrInfo.empty()) return true;
   
-  WriteBitcodeToFile(M ? M : Program, Out);
+  WriteBitcodeToFile(M, Out);
   return false;
 }
 
@@ -67,12 +65,13 @@ bool BugDriver::writeProgramToFile(const std::string &Filename,
 /// EmitProgressBitcode - This function is used to output the current Program
 /// to a file named "bugpoint-ID.bc".
 ///
-void BugDriver::EmitProgressBitcode(const std::string &ID, bool NoFlyer) {
+void BugDriver::EmitProgressBitcode(const Module *M,
+                                    const std::string &ID, bool NoFlyer) {
   // Output the input to the current pass to a bitcode file, emit a message
   // telling the user how to reproduce it: opt -foo blah.bc
   //
   std::string Filename = OutputPrefix + "-" + ID + ".bc";
-  if (writeProgramToFile(Filename)) {
+  if (writeProgramToFile(Filename, M)) {
     errs() <<  "Error opening file '" << Filename << "' for writing!\n";
     return;
   }
@@ -248,7 +247,7 @@ Module *BugDriver::runPassesOn(Module *M,
       errs() << " Error running this sequence of passes"
              << " on the input program!\n";
       delete OldProgram;
-      EmitProgressBitcode("pass-error",  false);
+      EmitProgressBitcode(Program, "pass-error",  false);
       exit(debugOptimizerCrash());
     }
     swapProgramIn(OldProgram);
