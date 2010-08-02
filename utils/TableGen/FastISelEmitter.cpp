@@ -31,7 +31,7 @@ namespace {
 struct InstructionMemo {
   std::string Name;
   const CodeGenRegisterClass *RC;
-  unsigned char SubRegNo;
+  std::string SubRegNo;
   std::vector<std::string>* PhysRegs;
 };
 
@@ -54,29 +54,34 @@ struct OperandsSignature {
   bool initialize(TreePatternNode *InstPatNode,
                   const CodeGenTarget &Target,
                   MVT::SimpleValueType VT) {
-    if (!InstPatNode->isLeaf() &&
-        InstPatNode->getOperator()->getName() == "imm") {
-      Operands.push_back("i");
-      return true;
-    }
-    if (!InstPatNode->isLeaf() &&
-        InstPatNode->getOperator()->getName() == "fpimm") {
-      Operands.push_back("f");
-      return true;
+
+    if (!InstPatNode->isLeaf()) {
+      if (InstPatNode->getOperator()->getName() == "imm") {
+        Operands.push_back("i");
+        return true;
+      }
+      if (InstPatNode->getOperator()->getName() == "fpimm") {
+        Operands.push_back("f");
+        return true;
+      }
     }
     
     const CodeGenRegisterClass *DstRC = 0;
     
     for (unsigned i = 0, e = InstPatNode->getNumChildren(); i != e; ++i) {
       TreePatternNode *Op = InstPatNode->getChild(i);
+      
       // For now, filter out any operand with a predicate.
-      if (!Op->getPredicateFns().empty())
-        return false;
       // For now, filter out any operand with multiple values.
-      assert(Op->hasTypeSet() && "Type infererence not done?");
-      // For now, all the operands must have the same type.
-      if (Op->getType() != VT)
+      if (!Op->getPredicateFns().empty() ||
+          Op->getNumTypes() != 1)
         return false;
+      
+      assert(Op->hasTypeSet(0) && "Type infererence not done?");
+      // For now, all the operands must have the same type.
+      if (Op->getType(0) != VT)
+        return false;
+      
       if (!Op->isLeaf()) {
         if (Op->getOperator()->getName() == "imm") {
           Operands.push_back("i");
@@ -102,6 +107,7 @@ struct OperandsSignature {
         RC = Target.getRegisterClassForRegister(OpLeafRec);
       else
         return false;
+        
       // For now, require the register operands' register classes to all
       // be the same.
       if (!RC)
@@ -120,7 +126,7 @@ struct OperandsSignature {
   void PrintParameters(raw_ostream &OS) const {
     for (unsigned i = 0, e = Operands.size(); i != e; ++i) {
       if (Operands[i] == "r") {
-        OS << "unsigned Op" << i;
+        OS << "unsigned Op" << i << ", bool Op" << i << "IsKill";
       } else if (Operands[i] == "i") {
         OS << "uint64_t imm" << i;
       } else if (Operands[i] == "f") {
@@ -146,7 +152,7 @@ struct OperandsSignature {
       if (PrintedArg)
         OS << ", ";
       if (Operands[i] == "r") {
-        OS << "Op" << i;
+        OS << "Op" << i << ", Op" << i << "IsKill";
         PrintedArg = true;
       } else if (Operands[i] == "i") {
         OS << "imm" << i;
@@ -164,7 +170,7 @@ struct OperandsSignature {
   void PrintArguments(raw_ostream &OS) const {
     for (unsigned i = 0, e = Operands.size(); i != e; ++i) {
       if (Operands[i] == "r") {
-        OS << "Op" << i;
+        OS << "Op" << i << ", Op" << i << "IsKill";
       } else if (Operands[i] == "i") {
         OS << "imm" << i;
       } else if (Operands[i] == "f") {
@@ -205,7 +211,8 @@ class FastISelMap {
   typedef std::map<MVT::SimpleValueType, PredMap> RetPredMap;
   typedef std::map<MVT::SimpleValueType, RetPredMap> TypeRetPredMap;
   typedef std::map<std::string, TypeRetPredMap> OpcodeTypeRetPredMap;
-  typedef std::map<OperandsSignature, OpcodeTypeRetPredMap> OperandsOpcodeTypeRetPredMap;
+  typedef std::map<OperandsSignature, OpcodeTypeRetPredMap> 
+            OperandsOpcodeTypeRetPredMap;
 
   OperandsOpcodeTypeRetPredMap SimplePatterns;
 
@@ -254,10 +261,19 @@ void FastISelMap::CollectPatterns(CodeGenDAGPatterns &CGP) {
     Record *Op = Dst->getOperator();
     if (!Op->isSubClassOf("Instruction"))
       continue;
-    CodeGenInstruction &II = CGP.getTargetInfo().getInstruction(Op->getName());
+    CodeGenInstruction &II = CGP.getTargetInfo().getInstruction(Op);
     if (II.OperandList.empty())
       continue;
 
+    // For now ignore instructions that have predicate operands.
+    bool HasPredicate = false;
+    for (unsigned i = 0, e = II.OperandList.size(); i != e; ++i) {
+      if(II.OperandList[i].Rec->isSubClassOf("PredicateOperand"))
+        HasPredicate = true;
+    }
+    if (HasPredicate)
+      continue;
+      
     // For now, ignore multi-instruction patterns.
     bool MultiInsts = false;
     for (unsigned i = 0, e = Dst->getNumChildren(); i != e; ++i) {
@@ -275,7 +291,7 @@ void FastISelMap::CollectPatterns(CodeGenDAGPatterns &CGP) {
     // For now, ignore instructions where the first operand is not an
     // output register.
     const CodeGenRegisterClass *DstRC = 0;
-    unsigned SubRegNo = ~0;
+    std::string SubRegNo;
     if (Op->getName() != "EXTRACT_SUBREG") {
       Record *Op0Rec = II.OperandList[0].Rec;
       if (!Op0Rec->isSubClassOf("RegisterClass"))
@@ -284,8 +300,15 @@ void FastISelMap::CollectPatterns(CodeGenDAGPatterns &CGP) {
       if (!DstRC)
         continue;
     } else {
-      SubRegNo = static_cast<IntInit*>(
-                 Dst->getChild(1)->getLeafValue())->getValue();
+      // If this isn't a leaf, then continue since the register classes are
+      // a bit too complicated for now.
+      if (!Dst->getChild(1)->isLeaf()) continue;
+      
+      DefInit *SR = dynamic_cast<DefInit*>(Dst->getChild(1)->getLeafValue());
+      if (SR)
+        SubRegNo = getQualifiedName(SR->getDef());
+      else
+        SubRegNo = Dst->getChild(1)->getLeafValue()->getAsString();
     }
 
     // Inspect the pattern.
@@ -293,12 +316,18 @@ void FastISelMap::CollectPatterns(CodeGenDAGPatterns &CGP) {
     if (!InstPatNode) continue;
     if (InstPatNode->isLeaf()) continue;
 
+    // Ignore multiple result nodes for now.
+    if (InstPatNode->getNumTypes() > 1) continue;
+    
     Record *InstPatOp = InstPatNode->getOperator();
     std::string OpcodeName = getOpcodeName(InstPatOp, CGP);
-    MVT::SimpleValueType RetVT = InstPatNode->getType();
+    MVT::SimpleValueType RetVT = MVT::isVoid;
+    if (InstPatNode->getNumTypes()) RetVT = InstPatNode->getType(0);
     MVT::SimpleValueType VT = RetVT;
-    if (InstPatNode->getNumChildren())
-      VT = InstPatNode->getChild(0)->getType();
+    if (InstPatNode->getNumChildren()) {
+      assert(InstPatNode->getChild(0)->getNumTypes() == 1);
+      VT = InstPatNode->getChild(0)->getType(0);
+    }
 
     // For now, filter out instructions which just set a register to
     // an Operand or an immediate, like MOV32ri.
@@ -359,7 +388,8 @@ void FastISelMap::CollectPatterns(CodeGenDAGPatterns &CGP) {
       SubRegNo,
       PhysRegInputs
     };
-    assert(!SimplePatterns[Operands][OpcodeName][VT][RetVT].count(PredicateCheck) &&
+    assert(!SimplePatterns[Operands][OpcodeName][VT][RetVT]
+            .count(PredicateCheck) &&
            "Duplicate pattern!");
     SimplePatterns[Operands][OpcodeName][VT][RetVT][PredicateCheck] = Memo;
   }
@@ -420,15 +450,13 @@ void FastISelMap::PrintFunctionDefinitions(raw_ostream &OS) {
               
               for (unsigned i = 0; i < Memo.PhysRegs->size(); ++i) {
                 if ((*Memo.PhysRegs)[i] != "")
-                  OS << "  TII.copyRegToReg(*MBB, MBB->end(), "
-                     << (*Memo.PhysRegs)[i] << ", Op" << i << ", "
-                     << "TM.getRegisterInfo()->getPhysicalRegisterRegClass("
-                     << (*Memo.PhysRegs)[i] << "), "
-                     << "MRI.getRegClass(Op" << i << "));\n";
+                  OS << "  BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DL, "
+                     << "TII.get(TargetOpcode::COPY), "
+                     << (*Memo.PhysRegs)[i] << ").addReg(Op" << i << ");\n";
               }
               
               OS << "  return FastEmitInst_";
-              if (Memo.SubRegNo == (unsigned char)~0) {
+              if (Memo.SubRegNo.empty()) {
                 Operands.PrintManglingSuffix(OS, *Memo.PhysRegs);
                 OS << "(" << InstNS << Memo.Name << ", ";
                 OS << InstNS << Memo.RC->getName() << "RegisterClass";
@@ -438,8 +466,8 @@ void FastISelMap::PrintFunctionDefinitions(raw_ostream &OS) {
                 OS << ");\n";
               } else {
                 OS << "extractsubreg(" << getName(RetVT);
-                OS << ", Op0, ";
-                OS << (unsigned)Memo.SubRegNo;
+                OS << ", Op0, Op0IsKill, ";
+                OS << Memo.SubRegNo;
                 OS << ");\n";
               }
               
@@ -512,18 +540,16 @@ void FastISelMap::PrintFunctionDefinitions(raw_ostream &OS) {
               HasPred = true;
             }
             
-             for (unsigned i = 0; i < Memo.PhysRegs->size(); ++i) {
-                if ((*Memo.PhysRegs)[i] != "")
-                  OS << "  TII.copyRegToReg(*MBB, MBB->end(), "
-                     << (*Memo.PhysRegs)[i] << ", Op" << i << ", "
-                     << "TM.getRegisterInfo()->getPhysicalRegisterRegClass("
-                     << (*Memo.PhysRegs)[i] << "), "
-                     << "MRI.getRegClass(Op" << i << "));\n";
-              }
+            for (unsigned i = 0; i < Memo.PhysRegs->size(); ++i) {
+              if ((*Memo.PhysRegs)[i] != "")
+                OS << "  BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DL, "
+                   << "TII.get(TargetOpcode::COPY), "
+                   << (*Memo.PhysRegs)[i] << ").addReg(Op" << i << ");\n";
+            }
             
             OS << "  return FastEmitInst_";
             
-            if (Memo.SubRegNo == (unsigned char)~0) {
+            if (Memo.SubRegNo.empty()) {
               Operands.PrintManglingSuffix(OS, *Memo.PhysRegs);
               OS << "(" << InstNS << Memo.Name << ", ";
               OS << InstNS << Memo.RC->getName() << "RegisterClass";
@@ -532,8 +558,8 @@ void FastISelMap::PrintFunctionDefinitions(raw_ostream &OS) {
               Operands.PrintArguments(OS, *Memo.PhysRegs);
               OS << ");\n";
             } else {
-              OS << "extractsubreg(RetVT, Op0, ";
-              OS << (unsigned)Memo.SubRegNo;
+              OS << "extractsubreg(RetVT, Op0, Op0IsKill, ";
+              OS << Memo.SubRegNo;
               OS << ");\n";
             }
             

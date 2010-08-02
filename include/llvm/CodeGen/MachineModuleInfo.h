@@ -37,6 +37,7 @@
 #include "llvm/CodeGen/MachineLocation.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/Support/Dwarf.h"
+#include "llvm/Support/DebugLoc.h"
 #include "llvm/Support/ValueHandle.h"
 #include "llvm/System/DataTypes.h"
 #include "llvm/ADT/DenseMap.h"
@@ -81,13 +82,15 @@ struct LandingPadInfo {
   SmallVector<MCSymbol*, 1> BeginLabels; // Labels prior to invoke.
   SmallVector<MCSymbol*, 1> EndLabels;   // Labels after invoke.
   MCSymbol *LandingPadLabel;             // Label at beginning of landing pad.
-  Function *Personality;                 // Personality function.
+  const Function *Personality;           // Personality function.
   std::vector<int> TypeIds;              // List of type ids (filters negative)
 
   explicit LandingPadInfo(MachineBasicBlock *MBB)
     : LandingPadBlock(MBB), LandingPadLabel(0), Personality(0) {}
 };
 
+class MMIAddrLabelMap;
+  
 //===----------------------------------------------------------------------===//
 /// MachineModuleInfo - This class contains meta information specific to a
 /// module.  Queries can be made by different debugging and exception handling 
@@ -96,6 +99,9 @@ struct LandingPadInfo {
 class MachineModuleInfo : public ImmutablePass {
   /// Context - This is the MCContext used for the entire code generator.
   MCContext Context;
+  
+  /// TheModule - This is the LLVM Module being worked on.
+  const Module *TheModule;
   
   /// ObjFileMMI - This is the object-file-format-specific implementation of
   /// MachineModuleInfoImpl, which lets targets accumulate whatever info they
@@ -119,7 +125,7 @@ class MachineModuleInfo : public ImmutablePass {
 
   // TypeInfos - List of C++ TypeInfo used in the current function.
   //
-  std::vector<GlobalVariable *> TypeInfos;
+  std::vector<const GlobalVariable *> TypeInfos;
 
   // FilterIds - List of typeids encoding filters used in the current function.
   //
@@ -132,7 +138,7 @@ class MachineModuleInfo : public ImmutablePass {
 
   // Personalities - Vector of all personality functions ever seen. Used to emit
   // common EH frames.
-  std::vector<Function *> Personalities;
+  std::vector<const Function *> Personalities;
 
   /// UsedFunctions - The functions in the @llvm.used list in a more easily
   /// searchable format.  This does not include the functions in
@@ -142,7 +148,7 @@ class MachineModuleInfo : public ImmutablePass {
   
   /// AddrLabelSymbols - This map keeps track of which symbol is being used for
   /// the specified basic block's address of label.
-  DenseMap<AssertingVH<BasicBlock>, MCSymbol*> AddrLabelSymbols;
+  MMIAddrLabelMap *AddrLabelSymbols;
   
   bool CallsEHReturn;
   bool CallsUnwindInit;
@@ -154,8 +160,8 @@ class MachineModuleInfo : public ImmutablePass {
 public:
   static char ID; // Pass identification, replacement for typeid
 
-  typedef std::pair<unsigned, TrackingVH<MDNode> > UnsignedAndMDNodePair;
-  typedef SmallVector< std::pair<TrackingVH<MDNode>, UnsignedAndMDNodePair>, 4>
+  typedef std::pair<unsigned, DebugLoc> UnsignedDebugLocPair;
+  typedef SmallVector<std::pair<TrackingVH<MDNode>, UnsignedDebugLocPair>, 4>
     VariableDbgInfoMapTy;
   VariableDbgInfoMapTy VariableDbgInfo;
 
@@ -173,6 +179,9 @@ public:
   const MCContext &getContext() const { return Context; }
   MCContext &getContext() { return Context; }
 
+  void setModule(const Module *M) { TheModule = M; }
+  const Module *getModule() const { return TheModule; }
+  
   /// getInfo - Keep track of various per-function pieces of information for
   /// backends that would like to do so.
   ///
@@ -190,7 +199,7 @@ public:
   
   /// AnalyzeModule - Scan the module for global debug information.
   ///
-  void AnalyzeModule(Module &M);
+  void AnalyzeModule(const Module &M);
   
   /// hasDebugInfo - Returns true if valid debug info is present.
   ///
@@ -212,6 +221,19 @@ public:
   /// block when its address is taken.  This cannot be its normal LBB label
   /// because the block may be accessed outside its containing function.
   MCSymbol *getAddrLabelSymbol(const BasicBlock *BB);
+
+  /// getAddrLabelSymbolToEmit - Return the symbol to be used for the specified
+  /// basic block when its address is taken.  If other blocks were RAUW'd to
+  /// this one, we may have to emit them as well, return the whole set.
+  std::vector<MCSymbol*> getAddrLabelSymbolToEmit(const BasicBlock *BB);
+  
+  /// takeDeletedSymbolsForFunction - If the specified function has had any
+  /// references to address-taken blocks generated, but the block got deleted,
+  /// return the symbol now so we can emit it.  This prevents emitting a
+  /// reference to a symbol that has no definition.
+  void takeDeletedSymbolsForFunction(const Function *F, 
+                                     std::vector<MCSymbol*> &Result);
+
   
   //===- EH ---------------------------------------------------------------===//
 
@@ -230,14 +252,15 @@ public:
   
   /// addPersonality - Provide the personality function for the exception
   /// information.
-  void addPersonality(MachineBasicBlock *LandingPad, Function *Personality);
+  void addPersonality(MachineBasicBlock *LandingPad,
+                      const Function *Personality);
 
   /// getPersonalityIndex - Get index of the current personality function inside
   /// Personalitites array
   unsigned getPersonalityIndex() const;
 
   /// getPersonalities - Return array of personality functions ever seen.
-  const std::vector<Function *>& getPersonalities() const {
+  const std::vector<const Function *>& getPersonalities() const {
     return Personalities;
   }
 
@@ -251,12 +274,12 @@ public:
   /// addCatchTypeInfo - Provide the catch typeinfo for a landing pad.
   ///
   void addCatchTypeInfo(MachineBasicBlock *LandingPad,
-                        std::vector<GlobalVariable *> &TyInfo);
+                        std::vector<const GlobalVariable *> &TyInfo);
 
   /// addFilterTypeInfo - Provide the filter typeinfo for a landing pad.
   ///
   void addFilterTypeInfo(MachineBasicBlock *LandingPad,
-                         std::vector<GlobalVariable *> &TyInfo);
+                         std::vector<const GlobalVariable *> &TyInfo);
 
   /// addCleanup - Add a cleanup action for a landing pad.
   ///
@@ -264,7 +287,7 @@ public:
 
   /// getTypeIDFor - Return the type id for the specified typeinfo.  This is 
   /// function wide.
-  unsigned getTypeIDFor(GlobalVariable *TI);
+  unsigned getTypeIDFor(const GlobalVariable *TI);
 
   /// getFilterIDFor - Return the id of the filter encoded by TyIds.  This is
   /// function wide.
@@ -272,7 +295,7 @@ public:
 
   /// TidyLandingPads - Remap landing pad labels and remove any deleted landing
   /// pads.
-  void TidyLandingPads();
+  void TidyLandingPads(DenseMap<MCSymbol*, uintptr_t> *LPMap = 0);
                         
   /// getLandingPads - Return a reference to the landing pad info for the
   /// current function.
@@ -301,7 +324,7 @@ public:
 
   /// getTypeInfos - Return a reference to the C++ typeinfo for the current
   /// function.
-  const std::vector<GlobalVariable *> &getTypeInfos() const {
+  const std::vector<const GlobalVariable *> &getTypeInfos() const {
     return TypeInfos;
   }
 
@@ -313,15 +336,15 @@ public:
 
   /// getPersonality - Return a personality function if available.  The presence
   /// of one is required to emit exception handling info.
-  Function *getPersonality() const;
+  const Function *getPersonality() const;
 
-  /// setVariableDbgInfo - Collect information used to emit debugging information
-  /// of a variable.
-  void setVariableDbgInfo(MDNode *N, unsigned Slot, MDNode *Scope) {
-    VariableDbgInfo.push_back(std::make_pair(N, std::make_pair(Slot, Scope)));
+  /// setVariableDbgInfo - Collect information used to emit debugging
+  /// information of a variable.
+  void setVariableDbgInfo(MDNode *N, unsigned Slot, DebugLoc Loc) {
+    VariableDbgInfo.push_back(std::make_pair(N, std::make_pair(Slot, Loc)));
   }
 
-  VariableDbgInfoMapTy &getVariableDbgInfo() {  return VariableDbgInfo;  }
+  VariableDbgInfoMapTy &getVariableDbgInfo() { return VariableDbgInfo; }
 
 }; // End class MachineModuleInfo
 

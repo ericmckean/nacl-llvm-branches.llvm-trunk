@@ -12,7 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/Transforms/Utils/ValueMapper.h"
+#include "ValueMapper.h"
 #include "llvm/Type.h"
 #include "llvm/Constants.h"
 #include "llvm/Function.h"
@@ -20,7 +20,7 @@
 #include "llvm/ADT/SmallVector.h"
 using namespace llvm;
 
-Value *llvm::MapValue(const Value *V, ValueMapTy &VM) {
+Value *llvm::MapValue(const Value *V, ValueToValueMapTy &VM) {
   Value *&VMSlot = VM[V];
   if (VMSlot) return VMSlot;      // Does it exist in the map yet?
   
@@ -28,7 +28,7 @@ Value *llvm::MapValue(const Value *V, ValueMapTy &VM) {
   // DenseMap.  This includes any recursive calls to MapValue.
 
   // Global values and non-function-local metadata do not need to be seeded into
-  // the ValueMap if they are using the identity mapping.
+  // the VM if they are using the identity mapping.
   if (isa<GlobalValue>(V) || isa<InlineAsm>(V) || isa<MDString>(V) ||
       (isa<MDNode>(V) && !cast<MDNode>(V)->isFunctionLocal()))
     return VMSlot = const_cast<Value*>(V);
@@ -45,7 +45,7 @@ Value *llvm::MapValue(const Value *V, ValueMapTy &VM) {
   
   if (isa<ConstantInt>(C) || isa<ConstantFP>(C) ||
       isa<ConstantPointerNull>(C) || isa<ConstantAggregateZero>(C) ||
-      isa<UndefValue>(C) || isa<MDString>(C))
+      isa<UndefValue>(C))
     return VMSlot = C;           // Primitive constants map directly
   
   if (ConstantArray *CA = dyn_cast<ConstantArray>(C)) {
@@ -125,11 +125,11 @@ Value *llvm::MapValue(const Value *V, ValueMapTy &VM) {
 }
 
 /// RemapInstruction - Convert the instruction operands from referencing the
-/// current values into those specified by ValueMap.
+/// current values into those specified by VMap.
 ///
-void llvm::RemapInstruction(Instruction *I, ValueMapTy &ValueMap) {
+void llvm::RemapInstruction(Instruction *I, ValueToValueMapTy &VMap) {
   for (User::op_iterator op = I->op_begin(), E = I->op_end(); op != E; ++op) {
-    Value *V = MapValue(*op, ValueMap);
+    Value *V = MapValue(*op, VMap);
     assert(V && "Referenced value not in value map!");
     *op = V;
   }

@@ -28,7 +28,7 @@ namespace {
     Hello() : FunctionPass(&ID) {}
 
     virtual bool runOnFunction(Function &F) {
-      HelloCounter++;
+      ++HelloCounter;
       errs() << "Hello: ";
       errs().write_escaped(F.getName()) << '\n';
       return false;
@@ -37,7 +37,7 @@ namespace {
 }
 
 char Hello::ID = 0;
-static RegisterPass<Hello> X("hello", "Hello World Pass");
+INITIALIZE_PASS(Hello, "hello", "Hello World Pass", false, false);
 
 namespace {
   // Hello2 - The second implementation with getAnalysisUsage implemented.
@@ -46,7 +46,7 @@ namespace {
     Hello2() : FunctionPass(&ID) {}
 
     virtual bool runOnFunction(Function &F) {
-      HelloCounter++;
+      ++HelloCounter;
       errs() << "Hello: ";
       errs().write_escaped(F.getName()) << '\n';
       return false;
@@ -60,5 +60,6 @@ namespace {
 }
 
 char Hello2::ID = 0;
-static RegisterPass<Hello2>
-Y("hello2", "Hello World Pass (with getAnalysisUsage implemented)");
+INITIALIZE_PASS(Hello2, "hello2",
+                "Hello World Pass (with getAnalysisUsage implemented)",
+                false, false);
