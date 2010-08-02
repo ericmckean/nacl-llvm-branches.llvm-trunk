@@ -162,6 +162,8 @@ public:
   bool isTargetNaCl32() const { return isTargetNaCl() && !is64Bit(); }
   bool isTargetNaCl64() const { return isTargetNaCl() && is64Bit(); }
 
+  bool has64BitPointers() const { return is64Bit() && !isTargetNaCl(); }
+
   bool isTargetWindows() const { return TargetType == isWindows; }
   bool isTargetMingw() const { return TargetType == isMingw; }
   bool isTargetCygwin() const { return TargetType == isCygwin; }
