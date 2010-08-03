@@ -309,11 +309,12 @@ namespace {
       return getTargetMachine().getInstrInfo();
     }
 
-    // @LOCALMO-START
+    // @LOCALMOD-START
+    bool selectingMemOp;
     bool RestrictUseOfBaseReg() {
-      return Subtarget->isTargetNaCl() && Subtarget->is64Bit();
+      return selectingMemOp && Subtarget->isTargetNaCl64();
     }
-    // @LOCALMO-END
+    // @LOCALMOD-END
 
 
   };
@@ -841,6 +842,8 @@ bool X86DAGToDAGISel::MatchAddressRecursively(SDValue N, X86ISelAddressMode &AM,
     // FALL THROUGH
   case ISD::MUL:
   case X86ISD::MUL_IMM:
+    // @LOCALMOD
+    if (!RestrictUseOfBaseReg()) {
     // X*[3,5,9] -> X+X*[2,4,8]
     if (AM.BaseType == X86ISelAddressMode::RegBase &&
         AM.getBaseReg().getNode() == 0 &&
@@ -879,6 +882,7 @@ bool X86DAGToDAGISel::MatchAddressRecursively(SDValue N, X86ISelAddressMode &AM,
           return false;
         }
     }
+    } // @LOCALMOD
     break;
 
   case ISD::SUB: {
@@ -1161,6 +1165,8 @@ bool X86DAGToDAGISel::SelectAddr(SDNode *Op, SDValue N, SDValue &Base,
                                  SDValue &Scale, SDValue &Index,
                                  SDValue &Disp, SDValue &Segment) {
   X86ISelAddressMode AM;
+  // @LOCALMOD
+  selectingMemOp = true;
   if (MatchAddress(N, AM))
     return false;
 
@@ -1244,6 +1250,8 @@ bool X86DAGToDAGISel::SelectLEAAddr(SDNode *Op, SDValue N,
   SDValue Copy = AM.Segment;
   SDValue T = CurDAG->getRegister(0, MVT::i32);
   AM.Segment = T;
+  // @LOCALMOD
+  selectingMemOp = false;
   if (MatchAddress(N, AM))
     return false;
   assert (T == AM.Segment);
