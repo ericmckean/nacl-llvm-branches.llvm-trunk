@@ -841,7 +841,6 @@ bool X86DAGToDAGISel::MatchAddressRecursively(SDValue N, X86ISelAddressMode &AM,
     // FALL THROUGH
   case ISD::MUL:
   case X86ISD::MUL_IMM:
-   if (!RestrictUseOfBaseReg()) { // @LOCALMOD
     // X*[3,5,9] -> X+X*[2,4,8]
     if (AM.BaseType == X86ISelAddressMode::RegBase &&
         AM.getBaseReg().getNode() == 0 &&
@@ -880,7 +879,6 @@ bool X86DAGToDAGISel::MatchAddressRecursively(SDValue N, X86ISelAddressMode &AM,
           return false;
         }
     }
-   } // @LOCALMOD
     break;
 
   case ISD::SUB: {
