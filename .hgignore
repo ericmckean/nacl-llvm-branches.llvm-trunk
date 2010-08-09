@@ -1,0 +1,24 @@
+# switch to glob syntax.
+syntax: glob
+
+*.o
+*.a
+*.d
+*~
+*.dir
+*.tmp
+*.inc
+Release/
+include/llvm/Config/
+tools/llvm-config/
+Makefile.*
+config.*
+*.cfg
+llvm-trunk/include/llvm/Intrinsics.gen
+llvm-trunk/include/llvm/System/DataTypes.h
+llvm-trunk/llvm.spec
+llvm-trunk/tools/llvmc/plugins/Base/Base.td
+
+# switch to regexp syntax.
+syntax: regexp
+
