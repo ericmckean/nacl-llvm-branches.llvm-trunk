@@ -22,7 +22,6 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/IRReader.h"
 #include "llvm/Support/ManagedStatic.h"
-#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/SystemUtils.h"
@@ -113,6 +112,7 @@ int main(int argc, char **argv) {
   Passes.add(createGVExtractionPass(GVs, DeleteFn, Relink));
   if (!DeleteFn)
     Passes.add(createGlobalDCEPass());           // Delete unreachable globals
+  Passes.add(createStripDeadDebugInfoPass());    // Remove dead debug info
   Passes.add(createDeadTypeEliminationPass());   // Remove dead types...
   Passes.add(createStripDeadPrototypesPass());   // Remove dead func decls
 

@@ -21,7 +21,7 @@
 #include <cstdlib>
 using namespace llvm;
 
-ARMConstantPoolValue::ARMConstantPoolValue(Constant *cval, unsigned id,
+ARMConstantPoolValue::ARMConstantPoolValue(const Constant *cval, unsigned id,
                                            ARMCP::ARMCPKind K,
                                            unsigned char PCAdj,
                                            const char *Modif,
@@ -41,7 +41,8 @@ ARMConstantPoolValue::ARMConstantPoolValue(LLVMContext &C,
     CVal(NULL), S(strdup(s)), JumpTableIndex(0), LabelId(id), Kind(ARMCP::CPExtSymbol),
     PCAdjust(PCAdj), Modifier(Modif), AddCurrentAddress(AddCA) {}
 
-ARMConstantPoolValue::ARMConstantPoolValue(GlobalValue *gv, const char *Modif)
+ARMConstantPoolValue::ARMConstantPoolValue(const GlobalValue *gv,
+                                           const char *Modif)
   : MachineConstantPoolValue((const Type*)Type::getInt32Ty(gv->getContext())),
     // @LOCALMOD
     CVal(gv), S(NULL), JumpTableIndex(0), LabelId(0), Kind(ARMCP::CPValue), PCAdjust(0),
@@ -56,11 +57,11 @@ ARMConstantPoolValue::ARMConstantPoolValue(LLVMContext &C, unsigned jt)
 
 
 
-GlobalValue *ARMConstantPoolValue::getGV() const {
+const GlobalValue *ARMConstantPoolValue::getGV() const {
   return dyn_cast_or_null<GlobalValue>(CVal);
 }
 
-BlockAddress *ARMConstantPoolValue::getBlockAddress() const {
+const BlockAddress *ARMConstantPoolValue::getBlockAddress() const {
   return dyn_cast_or_null<BlockAddress>(CVal);
 }
 

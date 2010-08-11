@@ -15,6 +15,7 @@
 #include "SPUISelLowering.h"
 #include "SPUTargetMachine.h"
 #include "SPUFrameInfo.h"
+#include "SPUMachineFunction.h"
 #include "llvm/Constants.h"
 #include "llvm/Function.h"
 #include "llvm/Intrinsics.h"
@@ -71,11 +72,8 @@ namespace {
 
 #ifndef NDEBUG
     if (retval == 0) {
-      std::string msg;
-      raw_string_ostream Msg(msg);
-      Msg << "getValueTypeMapEntry returns NULL for "
-           << VT.getEVTString();
-      llvm_report_error(Msg.str());
+      report_fatal_error("getValueTypeMapEntry returns NULL for " +
+                         Twine(VT.getEVTString()));
     }
 #endif
 
@@ -91,7 +89,7 @@ namespace {
 
   SDValue
   ExpandLibCall(RTLIB::Libcall LC, SDValue Op, SelectionDAG &DAG,
-                bool isSigned, SDValue &Hi, SPUTargetLowering &TLI) {
+                bool isSigned, SDValue &Hi, const SPUTargetLowering &TLI) {
     // The input chain to this libcall is the entry node of the function.
     // Legalizing the call will automatically add the previous call to the
     // dependence.
@@ -487,7 +485,7 @@ SPUTargetLowering::SPUTargetLowering(SPUTargetMachine &TM)
   // Set pre-RA register scheduler default to BURR, which produces slightly
   // better code than the default (could also be TDRR, but TargetLowering.h
   // needs a mod to support that model):
-  setSchedulingPreference(SchedulingForRegPressure);
+  setSchedulingPreference(Sched::RegPressure);
 }
 
 const char *
@@ -714,12 +712,9 @@ LowerLOAD(SDValue Op, SelectionDAG &DAG, const SPUSubtarget *ST) {
   case ISD::POST_DEC:
   case ISD::LAST_INDEXED_MODE:
     {
-      std::string msg;
-      raw_string_ostream Msg(msg);
-      Msg << "LowerLOAD: Got a LoadSDNode with an addr mode other than "
-            "UNINDEXED\n";
-      Msg << (unsigned) LN->getAddressingMode();
-      llvm_report_error(Msg.str());
+      report_fatal_error("LowerLOAD: Got a LoadSDNode with an addr mode other "
+                         "than UNINDEXED\n" +
+                         Twine((unsigned)LN->getAddressingMode()));
       /*NOTREACHED*/
     }
   }
@@ -884,12 +879,9 @@ LowerSTORE(SDValue Op, SelectionDAG &DAG, const SPUSubtarget *ST) {
   case ISD::POST_DEC:
   case ISD::LAST_INDEXED_MODE:
     {
-      std::string msg;
-      raw_string_ostream Msg(msg);
-      Msg << "LowerLOAD: Got a LoadSDNode with an addr mode other than "
-            "UNINDEXED\n";
-      Msg << (unsigned) SN->getAddressingMode();
-      llvm_report_error(Msg.str());
+      report_fatal_error("LowerLOAD: Got a LoadSDNode with an addr mode other "
+                         "than UNINDEXED\n" +
+                         Twine((unsigned)SN->getAddressingMode()));
       /*NOTREACHED*/
     }
   }
@@ -902,7 +894,7 @@ static SDValue
 LowerConstantPool(SDValue Op, SelectionDAG &DAG, const SPUSubtarget *ST) {
   EVT PtrVT = Op.getValueType();
   ConstantPoolSDNode *CP = cast<ConstantPoolSDNode>(Op);
-  Constant *C = CP->getConstVal();
+  const Constant *C = CP->getConstVal();
   SDValue CPI = DAG.getTargetConstantPool(C, PtrVT, CP->getAlignment());
   SDValue Zero = DAG.getConstant(0, PtrVT);
   const TargetMachine &TM = DAG.getTarget();
@@ -960,8 +952,9 @@ static SDValue
 LowerGlobalAddress(SDValue Op, SelectionDAG &DAG, const SPUSubtarget *ST) {
   EVT PtrVT = Op.getValueType();
   GlobalAddressSDNode *GSDN = cast<GlobalAddressSDNode>(Op);
-  GlobalValue *GV = GSDN->getGlobal();
-  SDValue GA = DAG.getTargetGlobalAddress(GV, PtrVT, GSDN->getOffset());
+  const GlobalValue *GV = GSDN->getGlobal();
+  SDValue GA = DAG.getTargetGlobalAddress(GV, Op.getDebugLoc(),
+                                          PtrVT, GSDN->getOffset());
   const TargetMachine &TM = DAG.getTarget();
   SDValue Zero = DAG.getConstant(0, PtrVT);
   // FIXME there is no actual debug info here
@@ -976,7 +969,7 @@ LowerGlobalAddress(SDValue Op, SelectionDAG &DAG, const SPUSubtarget *ST) {
       return DAG.getNode(SPUISD::IndirectAddr, dl, PtrVT, Hi, Lo);
     }
   } else {
-    llvm_report_error("LowerGlobalAddress: Relocation model other than static"
+    report_fatal_error("LowerGlobalAddress: Relocation model other than static"
                       "not supported.");
     /*NOTREACHED*/
   }
@@ -1013,14 +1006,13 @@ SPUTargetLowering::LowerFormalArguments(SDValue Chain,
                                         const SmallVectorImpl<ISD::InputArg>
                                           &Ins,
                                         DebugLoc dl, SelectionDAG &DAG,
-                                        SmallVectorImpl<SDValue> &InVals) {
+                                        SmallVectorImpl<SDValue> &InVals)
+                                          const {
 
   MachineFunction &MF = DAG.getMachineFunction();
   MachineFrameInfo *MFI = MF.getFrameInfo();
   MachineRegisterInfo &RegInfo = MF.getRegInfo();
-
-  const unsigned *ArgRegs = SPURegisterInfo::getArgRegs();
-  const unsigned NumArgRegs = SPURegisterInfo::getNumArgRegs();
+  SPUFunctionInfo *FuncInfo = MF.getInfo<SPUFunctionInfo>();
 
   unsigned ArgOffset = SPUFrameInfo::minStackSize();
   unsigned ArgRegIdx = 0;
@@ -1028,23 +1020,26 @@ SPUTargetLowering::LowerFormalArguments(SDValue Chain,
 
   EVT PtrVT = DAG.getTargetLoweringInfo().getPointerTy();
 
+  SmallVector<CCValAssign, 16> ArgLocs;
+  CCState CCInfo(CallConv, isVarArg, getTargetMachine(), ArgLocs,
+                 *DAG.getContext());
+  // FIXME: allow for other calling conventions
+  CCInfo.AnalyzeFormalArguments(Ins, CCC_SPU);
+
   // Add DAG nodes to load the arguments or copy them out of registers.
   for (unsigned ArgNo = 0, e = Ins.size(); ArgNo != e; ++ArgNo) {
     EVT ObjectVT = Ins[ArgNo].VT;
     unsigned ObjSize = ObjectVT.getSizeInBits()/8;
     SDValue ArgVal;
+    CCValAssign &VA = ArgLocs[ArgNo];
 
-    if (ArgRegIdx < NumArgRegs) {
+    if (VA.isRegLoc()) {
       const TargetRegisterClass *ArgRegClass;
 
       switch (ObjectVT.getSimpleVT().SimpleTy) {
-      default: {
-        std::string msg;
-        raw_string_ostream Msg(msg);
-        Msg << "LowerFormalArguments Unhandled argument type: "
-             << ObjectVT.getEVTString();
-        llvm_report_error(Msg.str());
-      }
+      default:
+        report_fatal_error("LowerFormalArguments Unhandled argument type: " +
+                           Twine(ObjectVT.getEVTString()));
       case MVT::i8:
         ArgRegClass = &SPU::R8CRegClass;
         break;
@@ -1077,14 +1072,14 @@ SPUTargetLowering::LowerFormalArguments(SDValue Chain,
       }
 
       unsigned VReg = RegInfo.createVirtualRegister(ArgRegClass);
-      RegInfo.addLiveIn(ArgRegs[ArgRegIdx], VReg);
+      RegInfo.addLiveIn(VA.getLocReg(), VReg);
       ArgVal = DAG.getCopyFromReg(Chain, dl, VReg, ObjectVT);
       ++ArgRegIdx;
     } else {
       // We need to load the argument to a virtual register if we determined
       // above that we ran out of physical registers of the appropriate type
       // or we're forced to do vararg
-      int FI = MFI->CreateFixedObject(ObjSize, ArgOffset, true, false);
+      int FI = MFI->CreateFixedObject(ObjSize, ArgOffset, true);
       SDValue FIN = DAG.getFrameIndex(FI, PtrVT);
       ArgVal = DAG.getLoad(ObjectVT, dl, Chain, FIN, NULL, 0, false, false, 0);
       ArgOffset += StackSlotSize;
@@ -1097,17 +1092,34 @@ SPUTargetLowering::LowerFormalArguments(SDValue Chain,
 
   // vararg handling:
   if (isVarArg) {
-    // unsigned int ptr_size = PtrVT.getSizeInBits() / 8;
+    // FIXME: we should be able to query the argument registers from 
+    //        tablegen generated code. 
+    static const unsigned ArgRegs[] = {
+      SPU::R3,  SPU::R4,  SPU::R5,  SPU::R6,  SPU::R7,  SPU::R8,  SPU::R9,
+      SPU::R10, SPU::R11, SPU::R12, SPU::R13, SPU::R14, SPU::R15, SPU::R16,
+      SPU::R17, SPU::R18, SPU::R19, SPU::R20, SPU::R21, SPU::R22, SPU::R23,
+      SPU::R24, SPU::R25, SPU::R26, SPU::R27, SPU::R28, SPU::R29, SPU::R30,
+      SPU::R31, SPU::R32, SPU::R33, SPU::R34, SPU::R35, SPU::R36, SPU::R37,
+      SPU::R38, SPU::R39, SPU::R40, SPU::R41, SPU::R42, SPU::R43, SPU::R44,
+      SPU::R45, SPU::R46, SPU::R47, SPU::R48, SPU::R49, SPU::R50, SPU::R51,
+      SPU::R52, SPU::R53, SPU::R54, SPU::R55, SPU::R56, SPU::R57, SPU::R58,
+      SPU::R59, SPU::R60, SPU::R61, SPU::R62, SPU::R63, SPU::R64, SPU::R65,
+      SPU::R66, SPU::R67, SPU::R68, SPU::R69, SPU::R70, SPU::R71, SPU::R72,
+      SPU::R73, SPU::R74, SPU::R75, SPU::R76, SPU::R77, SPU::R78, SPU::R79
+    };
+    // size of ArgRegs array
+    unsigned NumArgRegs = 77;
+
     // We will spill (79-3)+1 registers to the stack
     SmallVector<SDValue, 79-3+1> MemOps;
 
     // Create the frame slot
-
     for (; ArgRegIdx != NumArgRegs; ++ArgRegIdx) {
-      VarArgsFrameIndex = MFI->CreateFixedObject(StackSlotSize, ArgOffset,
-                                                 true, false);
-      SDValue FIN = DAG.getFrameIndex(VarArgsFrameIndex, PtrVT);
-      SDValue ArgVal = DAG.getRegister(ArgRegs[ArgRegIdx], MVT::v16i8);
+      FuncInfo->setVarArgsFrameIndex(
+        MFI->CreateFixedObject(StackSlotSize, ArgOffset, true));
+      SDValue FIN = DAG.getFrameIndex(FuncInfo->getVarArgsFrameIndex(), PtrVT);
+      unsigned VReg = MF.addLiveIn(ArgRegs[ArgRegIdx], &SPU::R32CRegClass);
+      SDValue ArgVal = DAG.getRegister(VReg, MVT::v16i8);
       SDValue Store = DAG.getStore(Chain, dl, ArgVal, FIN, NULL, 0,
                                    false, false, 0);
       Chain = Store.getOperand(0);
@@ -1143,17 +1155,25 @@ SPUTargetLowering::LowerCall(SDValue Chain, SDValue Callee,
                              CallingConv::ID CallConv, bool isVarArg,
                              bool &isTailCall,
                              const SmallVectorImpl<ISD::OutputArg> &Outs,
+                             const SmallVectorImpl<SDValue> &OutVals,
                              const SmallVectorImpl<ISD::InputArg> &Ins,
                              DebugLoc dl, SelectionDAG &DAG,
-                             SmallVectorImpl<SDValue> &InVals) {
+                             SmallVectorImpl<SDValue> &InVals) const {
   // CellSPU target does not yet support tail call optimization.
   isTailCall = false;
 
   const SPUSubtarget *ST = SPUTM.getSubtargetImpl();
   unsigned NumOps     = Outs.size();
   unsigned StackSlotSize = SPUFrameInfo::stackSlotSize();
-  const unsigned *ArgRegs = SPURegisterInfo::getArgRegs();
-  const unsigned NumArgRegs = SPURegisterInfo::getNumArgRegs();
+
+  SmallVector<CCValAssign, 16> ArgLocs;
+  CCState CCInfo(CallConv, isVarArg, getTargetMachine(), ArgLocs,
+                 *DAG.getContext()); 
+  // FIXME: allow for other calling conventions
+  CCInfo.AnalyzeCallOperands(Outs, CCC_SPU);
+  
+  const unsigned NumArgRegs = ArgLocs.size();
+
 
   // Handy pointer type
   EVT PtrVT = DAG.getTargetLoweringInfo().getPointerTy();
@@ -1173,8 +1193,9 @@ SPUTargetLowering::LowerCall(SDValue Chain, SDValue Callee,
   // And the arguments passed on the stack
   SmallVector<SDValue, 8> MemOpChains;
 
-  for (unsigned i = 0; i != NumOps; ++i) {
-    SDValue Arg = Outs[i].Val;
+  for (; ArgRegIdx != NumOps; ++ArgRegIdx) {
+    SDValue Arg = OutVals[ArgRegIdx];
+    CCValAssign &VA = ArgLocs[ArgRegIdx];
 
     // PtrOff will be used to store the current argument to the stack if a
     // register cannot be found for it.
@@ -1188,24 +1209,8 @@ SPUTargetLowering::LowerCall(SDValue Chain, SDValue Callee,
     case MVT::i32:
     case MVT::i64:
     case MVT::i128:
-      if (ArgRegIdx != NumArgRegs) {
-        RegsToPass.push_back(std::make_pair(ArgRegs[ArgRegIdx++], Arg));
-      } else {
-        MemOpChains.push_back(DAG.getStore(Chain, dl, Arg, PtrOff, NULL, 0,
-                                           false, false, 0));
-        ArgOffset += StackSlotSize;
-      }
-      break;
     case MVT::f32:
     case MVT::f64:
-      if (ArgRegIdx != NumArgRegs) {
-        RegsToPass.push_back(std::make_pair(ArgRegs[ArgRegIdx++], Arg));
-      } else {
-        MemOpChains.push_back(DAG.getStore(Chain, dl, Arg, PtrOff, NULL, 0,
-                                           false, false, 0));
-        ArgOffset += StackSlotSize;
-      }
-      break;
     case MVT::v2i64:
     case MVT::v2f64:
     case MVT::v4f32:
@@ -1213,7 +1218,7 @@ SPUTargetLowering::LowerCall(SDValue Chain, SDValue Callee,
     case MVT::v8i16:
     case MVT::v16i8:
       if (ArgRegIdx != NumArgRegs) {
-        RegsToPass.push_back(std::make_pair(ArgRegs[ArgRegIdx++], Arg));
+        RegsToPass.push_back(std::make_pair(VA.getLocReg(), Arg));
       } else {
         MemOpChains.push_back(DAG.getStore(Chain, dl, Arg, PtrOff, NULL, 0,
                                            false, false, 0));
@@ -1254,10 +1259,10 @@ SPUTargetLowering::LowerCall(SDValue Chain, SDValue Callee,
   // direct call is) turn it into a TargetGlobalAddress/TargetExternalSymbol
   // node so that legalize doesn't hack it.
   if (GlobalAddressSDNode *G = dyn_cast<GlobalAddressSDNode>(Callee)) {
-    GlobalValue *GV = G->getGlobal();
+    const GlobalValue *GV = G->getGlobal();
     EVT CalleeVT = Callee.getValueType();
     SDValue Zero = DAG.getConstant(0, PtrVT);
-    SDValue GA = DAG.getTargetGlobalAddress(GV, CalleeVT);
+    SDValue GA = DAG.getTargetGlobalAddress(GV, dl, CalleeVT);
 
     if (!ST->usingLargeMem()) {
       // Turn calls to targets that are defined (i.e., have bodies) into BRSL
@@ -1338,22 +1343,12 @@ SPUTargetLowering::LowerCall(SDValue Chain, SDValue Callee,
       InVals.push_back(Chain.getValue(0));
     }
     break;
+  case MVT::i8:
+  case MVT::i16:
   case MVT::i64:
-    Chain = DAG.getCopyFromReg(Chain, dl, SPU::R3, MVT::i64,
-                               InFlag).getValue(1);
-    InVals.push_back(Chain.getValue(0));
-    break;
   case MVT::i128:
-    Chain = DAG.getCopyFromReg(Chain, dl, SPU::R3, MVT::i128,
-                               InFlag).getValue(1);
-    InVals.push_back(Chain.getValue(0));
-    break;
   case MVT::f32:
   case MVT::f64:
-    Chain = DAG.getCopyFromReg(Chain, dl, SPU::R3, Ins[0].VT,
-                               InFlag).getValue(1);
-    InVals.push_back(Chain.getValue(0));
-    break;
   case MVT::v2f64:
   case MVT::v2i64:
   case MVT::v4f32:
@@ -1373,7 +1368,8 @@ SDValue
 SPUTargetLowering::LowerReturn(SDValue Chain,
                                CallingConv::ID CallConv, bool isVarArg,
                                const SmallVectorImpl<ISD::OutputArg> &Outs,
-                               DebugLoc dl, SelectionDAG &DAG) {
+                               const SmallVectorImpl<SDValue> &OutVals,
+                               DebugLoc dl, SelectionDAG &DAG) const {
 
   SmallVector<CCValAssign, 16> RVLocs;
   CCState CCInfo(CallConv, isVarArg, getTargetMachine(),
@@ -1394,7 +1390,7 @@ SPUTargetLowering::LowerReturn(SDValue Chain,
     CCValAssign &VA = RVLocs[i];
     assert(VA.isRegLoc() && "Can only return in registers!");
     Chain = DAG.getCopyToReg(Chain, dl, VA.getLocReg(),
-                             Outs[i].Val, Flag);
+                             OutVals[i], Flag);
     Flag = Chain.getValue(1);
   }
 
@@ -1491,7 +1487,7 @@ SDValue SPU::get_vec_i10imm(SDNode *N, SelectionDAG &DAG,
         return SDValue();
       Value = Value >> 32;
     }
-    if (isS10Constant(Value))
+    if (isInt<10>(Value))
       return DAG.getTargetConstant(Value, ValueType);
   }
 
@@ -1580,14 +1576,10 @@ LowerBUILD_VECTOR(SDValue Op, SelectionDAG &DAG) {
   uint64_t SplatBits = APSplatBits.getZExtValue();
 
   switch (VT.getSimpleVT().SimpleTy) {
-  default: {
-    std::string msg;
-    raw_string_ostream Msg(msg);
-    Msg << "CellSPU: Unhandled VT in LowerBUILD_VECTOR, VT = "
-         << VT.getEVTString();
-    llvm_report_error(Msg.str());
+  default:
+    report_fatal_error("CellSPU: Unhandled VT in LowerBUILD_VECTOR, VT = " +
+                       Twine(VT.getEVTString()));
     /*NOTREACHED*/
-  }
   case MVT::v4f32: {
     uint32_t Value32 = uint32_t(SplatBits);
     assert(SplatBitSize == 32
@@ -1768,15 +1760,20 @@ static SDValue LowerVECTOR_SHUFFLE(SDValue Op, SelectionDAG &DAG) {
   unsigned V0Elt = 0;
   bool monotonic = true;
   bool rotate = true;
+  EVT maskVT;             // which of the c?d instructions to use
 
   if (EltVT == MVT::i8) {
     V2EltIdx0 = 16;
+    maskVT = MVT::v16i8; 
   } else if (EltVT == MVT::i16) {
     V2EltIdx0 = 8;
+    maskVT = MVT::v8i16;
   } else if (EltVT == MVT::i32 || EltVT == MVT::f32) {
     V2EltIdx0 = 4;
+    maskVT = MVT::v4i32;
   } else if (EltVT == MVT::i64 || EltVT == MVT::f64) {
     V2EltIdx0 = 2;
+    maskVT = MVT::v2i64;
   } else
     llvm_unreachable("Unhandled vector type in LowerVECTOR_SHUFFLE");
 
@@ -1808,7 +1805,7 @@ static SDValue LowerVECTOR_SHUFFLE(SDValue Op, SelectionDAG &DAG) {
         } else {
           rotate = false;
         }
-      } else if (PrevElt == 0) {
+      } else if (i == 0) {
         // First time through, need to keep track of previous element
         PrevElt = SrcElt;
       } else {
@@ -1820,18 +1817,16 @@ static SDValue LowerVECTOR_SHUFFLE(SDValue Op, SelectionDAG &DAG) {
 
   if (EltsFromV2 == 1 && monotonic) {
     // Compute mask and shuffle
-    MachineFunction &MF = DAG.getMachineFunction();
-    MachineRegisterInfo &RegInfo = MF.getRegInfo();
-    unsigned VReg = RegInfo.createVirtualRegister(&SPU::R32CRegClass);
     EVT PtrVT = DAG.getTargetLoweringInfo().getPointerTy();
-    // Initialize temporary register to 0
-    SDValue InitTempReg =
-      DAG.getCopyToReg(DAG.getEntryNode(), dl, VReg, DAG.getConstant(0, PtrVT));
-    // Copy register's contents as index in SHUFFLE_MASK:
-    SDValue ShufMaskOp =
-      DAG.getNode(SPUISD::SHUFFLE_MASK, dl, MVT::v4i32,
-                  DAG.getTargetConstant(V2Elt, MVT::i32),
-                  DAG.getCopyFromReg(InitTempReg, dl, VReg, PtrVT));
+
+    // As SHUFFLE_MASK becomes a c?d instruction, feed it an address
+    // R1 ($sp) is used here only as it is guaranteed to have last bits zero
+    SDValue Pointer = DAG.getNode(SPUISD::IndirectAddr, dl, PtrVT,
+                                DAG.getRegister(SPU::R1, PtrVT),
+                                DAG.getConstant(V2Elt, MVT::i32));
+    SDValue ShufMaskOp = DAG.getNode(SPUISD::SHUFFLE_MASK, dl, 
+                                     maskVT, Pointer);
+
     // Use shuffle mask in SHUFB synthetic instruction:
     return DAG.getNode(SPUISD::SHUFB, dl, V1.getValueType(), V2, V1,
                        ShufMaskOp);
@@ -2003,7 +1998,7 @@ static SDValue LowerEXTRACT_VECTOR_ELT(SDValue Op, SelectionDAG &DAG) {
     // slot 0 across the vector
     EVT VecVT = N.getValueType();
     if (!VecVT.isSimple() || !VecVT.isVector() || !VecVT.is128BitVector()) {
-      llvm_report_error("LowerEXTRACT_VECTOR_ELT: Must have a simple, 128-bit"
+      report_fatal_error("LowerEXTRACT_VECTOR_ELT: Must have a simple, 128-bit"
                         "vector type!");
     }
 
@@ -2031,7 +2026,7 @@ static SDValue LowerEXTRACT_VECTOR_ELT(SDValue Op, SelectionDAG &DAG) {
 
     switch (VT.getSimpleVT().SimpleTy) {
     default:
-      llvm_report_error("LowerEXTRACT_VECTOR_ELT(varable): Unhandled vector"
+      report_fatal_error("LowerEXTRACT_VECTOR_ELT(varable): Unhandled vector"
                         "type");
       /*NOTREACHED*/
     case MVT::i8: {
@@ -2078,14 +2073,19 @@ static SDValue LowerINSERT_VECTOR_ELT(SDValue Op, SelectionDAG &DAG) {
   DebugLoc dl = Op.getDebugLoc();
   EVT VT = Op.getValueType();
 
-  ConstantSDNode *CN = cast<ConstantSDNode>(IdxOp);
-  assert(CN != 0 && "LowerINSERT_VECTOR_ELT: Index is not constant!");
+  // use 0 when the lane to insert to is 'undef'
+  int64_t Idx=0;
+  if (IdxOp.getOpcode() != ISD::UNDEF) {
+    ConstantSDNode *CN = cast<ConstantSDNode>(IdxOp);
+    assert(CN != 0 && "LowerINSERT_VECTOR_ELT: Index is not constant!");
+    Idx = (CN->getSExtValue());
+  }
 
   EVT PtrVT = DAG.getTargetLoweringInfo().getPointerTy();
   // Use $sp ($1) because it's always 16-byte aligned and it's available:
   SDValue Pointer = DAG.getNode(SPUISD::IndirectAddr, dl, PtrVT,
                                 DAG.getRegister(SPU::R1, PtrVT),
-                                DAG.getConstant(CN->getSExtValue(), PtrVT));
+                                DAG.getConstant(Idx, PtrVT));
   SDValue ShufMask = DAG.getNode(SPUISD::SHUFFLE_MASK, dl, VT, Pointer);
 
   SDValue result =
@@ -2367,7 +2367,7 @@ static SDValue LowerCTPOP(SDValue Op, SelectionDAG &DAG) {
  All conversions to i64 are expanded to a libcall.
  */
 static SDValue LowerFP_TO_INT(SDValue Op, SelectionDAG &DAG,
-                              SPUTargetLowering &TLI) {
+                              const SPUTargetLowering &TLI) {
   EVT OpVT = Op.getValueType();
   SDValue Op0 = Op.getOperand(0);
   EVT Op0VT = Op0.getValueType();
@@ -2393,7 +2393,7 @@ static SDValue LowerFP_TO_INT(SDValue Op, SelectionDAG &DAG,
  All conversions from i64 are expanded to a libcall.
  */
 static SDValue LowerINT_TO_FP(SDValue Op, SelectionDAG &DAG,
-                              SPUTargetLowering &TLI) {
+                              const SPUTargetLowering &TLI) {
   EVT OpVT = Op.getValueType();
   SDValue Op0 = Op.getOperand(0);
   EVT Op0VT = Op0.getValueType();
@@ -2514,7 +2514,7 @@ static SDValue LowerSETCC(SDValue Op, SelectionDAG &DAG,
   case ISD::SETONE:
     compareOp = ISD::SETNE; break;
   default:
-    llvm_report_error("CellSPU ISel Select: unimplemented f64 condition");
+    report_fatal_error("CellSPU ISel Select: unimplemented f64 condition");
   }
 
   SDValue result =
@@ -2669,7 +2669,7 @@ static SDValue LowerSIGN_EXTEND(SDValue Op, SelectionDAG &DAG)
   lowering of nodes.
  */
 SDValue
-SPUTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG)
+SPUTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const
 {
   unsigned Opc = (unsigned) Op.getOpcode();
   EVT VT = Op.getValueType();
@@ -2765,7 +2765,7 @@ SPUTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG)
 
 void SPUTargetLowering::ReplaceNodeResults(SDNode *N,
                                            SmallVectorImpl<SDValue>&Results,
-                                           SelectionDAG &DAG)
+                                           SelectionDAG &DAG) const
 {
 #if 0
   unsigned Opc = (unsigned) N->getOpcode();
@@ -2884,7 +2884,7 @@ SPUTargetLowering::PerformDAGCombine(SDNode *N, DAGCombinerInfo &DCI) const
   case SPUISD::IndirectAddr: {
     if (!ST->usingLargeMem() && Op0.getOpcode() == SPUISD::AFormAddr) {
       ConstantSDNode *CN = dyn_cast<ConstantSDNode>(N->getOperand(1));
-      if (CN != 0 && CN->getZExtValue() == 0) {
+      if (CN != 0 && CN->isNullValue()) {
         // (SPUindirect (SPUaform <addr>, 0), 0) ->
         // (SPUaform <addr>, 0)
 
@@ -3078,12 +3078,10 @@ SPUTargetLowering::ComputeNumSignBitsForTargetNode(SDValue Op,
 void
 SPUTargetLowering::LowerAsmOperandForConstraint(SDValue Op,
                                                 char ConstraintLetter,
-                                                bool hasMemory,
                                                 std::vector<SDValue> &Ops,
                                                 SelectionDAG &DAG) const {
   // Default, for the time being, to the base class handler
-  TargetLowering::LowerAsmOperandForConstraint(Op, ConstraintLetter, hasMemory,
-                                               Ops, DAG);
+  TargetLowering::LowerAsmOperandForConstraint(Op, ConstraintLetter, Ops, DAG);
 }
 
 /// isLegalAddressImmediate - Return true if the integer value can be used

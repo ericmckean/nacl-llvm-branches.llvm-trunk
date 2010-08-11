@@ -181,9 +181,10 @@ bool LowerIntrinsics::InsertRootInitializers(Function &F, AllocaInst **Roots,
   
   for (AllocaInst **I = Roots, **E = Roots + Count; I != E; ++I)
     if (!InitedRoots.count(*I)) {
-      new StoreInst(ConstantPointerNull::get(cast<PointerType>(
-                      cast<PointerType>((*I)->getType())->getElementType())),
-                    *I, IP);
+      StoreInst* SI = new StoreInst(ConstantPointerNull::get(cast<PointerType>(
+                        cast<PointerType>((*I)->getType())->getElementType())),
+                        *I);
+      SI->insertAfter(*I);
       MadeChange = true;
     }
   
@@ -259,7 +260,7 @@ bool LowerIntrinsics::PerformDefaultLowering(Function &F, GCStrategy &S) {
   bool LowerRd = !S.customReadBarrier();
   bool InitRoots = S.initializeRoots();
   
-  SmallVector<AllocaInst*,32> Roots;
+  SmallVector<AllocaInst*, 32> Roots;
   
   bool MadeChange = false;
   for (Function::iterator BB = F.begin(), E = F.end(); BB != E; ++BB) {
@@ -270,7 +271,8 @@ bool LowerIntrinsics::PerformDefaultLowering(Function &F, GCStrategy &S) {
         case Intrinsic::gcwrite:
           if (LowerWr) {
             // Replace a write barrier with a simple store.
-            Value *St = new StoreInst(CI->getOperand(1), CI->getOperand(3), CI);
+            Value *St = new StoreInst(CI->getArgOperand(0),
+                                      CI->getArgOperand(2), CI);
             CI->replaceAllUsesWith(St);
             CI->eraseFromParent();
           }
@@ -278,7 +280,7 @@ bool LowerIntrinsics::PerformDefaultLowering(Function &F, GCStrategy &S) {
         case Intrinsic::gcread:
           if (LowerRd) {
             // Replace a read barrier with a simple load.
-            Value *Ld = new LoadInst(CI->getOperand(2), "", CI);
+            Value *Ld = new LoadInst(CI->getArgOperand(1), "", CI);
             Ld->takeName(CI);
             CI->replaceAllUsesWith(Ld);
             CI->eraseFromParent();
@@ -289,7 +291,7 @@ bool LowerIntrinsics::PerformDefaultLowering(Function &F, GCStrategy &S) {
             // Initialize the GC root, but do not delete the intrinsic. The
             // backend needs the intrinsic to flag the stack slot.
             Roots.push_back(cast<AllocaInst>(
-                              CI->getOperand(1)->stripPointerCasts()));
+                              CI->getArgOperand(0)->stripPointerCasts()));
           }
           break;
         default:
@@ -332,7 +334,7 @@ void MachineCodeAnalysis::getAnalysisUsage(AnalysisUsage &AU) const {
 MCSymbol *MachineCodeAnalysis::InsertLabel(MachineBasicBlock &MBB, 
                                            MachineBasicBlock::iterator MI,
                                            DebugLoc DL) const {
-  MCSymbol *Label = MBB.getParent()->getContext().GetOrCreateTemporarySymbol();
+  MCSymbol *Label = MBB.getParent()->getContext().CreateTempSymbol();
   BuildMI(MBB, MI, DL, TII->get(TargetOpcode::GC_LABEL)).addSym(Label);
   return Label;
 }

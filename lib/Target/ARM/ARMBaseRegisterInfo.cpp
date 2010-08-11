@@ -38,11 +38,14 @@
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/CommandLine.h"
-using namespace llvm;
 
+namespace llvm {
 cl::opt<bool>
 ReuseFrameIndexVals("arm-reuse-frame-index-vals", cl::Hidden, cl::init(true),
           cl::desc("Reuse repeated frame index values"));
+}
+
+using namespace llvm;
 
 unsigned ARMBaseRegisterInfo::getRegisterNumbering(unsigned RegEnum,
                                                    bool *isSPVFP) {
@@ -80,7 +83,7 @@ unsigned ARMBaseRegisterInfo::getRegisterNumbering(unsigned RegEnum,
   case D23: return 23;
   case D24: return 24;
   case D25: return 25;
-  case D26: return 27;
+  case D26: return 26;
   case D27: return 27;
   case D28: return 28;
   case D29: return 29;
@@ -182,80 +185,6 @@ ARMBaseRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
   return CalleeSavedRegs;
 }
 
-const TargetRegisterClass* const *
-ARMBaseRegisterInfo::getCalleeSavedRegClasses(const MachineFunction *MF) const {
-  // FIXME: Having both getCalleeSavedRegClasses and getCalleeSavedRegs is
-  // error prone.
-  static const TargetRegisterClass * const CalleeSavedRegClasses[] = {
-    &ARM::GPRRegClass, &ARM::GPRRegClass, &ARM::GPRRegClass,
-    &ARM::GPRRegClass, &ARM::GPRRegClass, &ARM::GPRRegClass,
-    &ARM::GPRRegClass, &ARM::GPRRegClass, &ARM::GPRRegClass,
-
-    &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass,
-    &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass,
-    0
-  };
-
-  static const TargetRegisterClass * const CalleeSavedRegClassesNoR9[] = { // @LOCALMOD
-    &ARM::GPRRegClass, &ARM::GPRRegClass, &ARM::GPRRegClass,
-                       &ARM::GPRRegClass, &ARM::GPRRegClass,
-    &ARM::GPRRegClass, &ARM::GPRRegClass, &ARM::GPRRegClass,
-
-    &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass,
-    &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass,
-    0
-  };
-
-  static const TargetRegisterClass * const ThumbCalleeSavedRegClasses[] = {
-    &ARM::GPRRegClass, &ARM::GPRRegClass, &ARM::GPRRegClass,
-    &ARM::GPRRegClass, &ARM::GPRRegClass, &ARM::tGPRRegClass,
-    &ARM::tGPRRegClass,&ARM::tGPRRegClass,&ARM::tGPRRegClass,
-
-    &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass,
-    &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass,
-    0
-  };
-
-  static const TargetRegisterClass * const ThumbCalleeSavedRegClassesNoR9[] = { // @LOCALMOD
-    &ARM::GPRRegClass, &ARM::GPRRegClass, &ARM::GPRRegClass,
-                       &ARM::GPRRegClass, &ARM::tGPRRegClass,
-    &ARM::tGPRRegClass,&ARM::tGPRRegClass,&ARM::tGPRRegClass,
-
-    &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass,
-    &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass,
-    0
-  };
-
-  static const TargetRegisterClass * const DarwinCalleeSavedRegClasses[] = {
-    &ARM::GPRRegClass, &ARM::GPRRegClass, &ARM::GPRRegClass,
-    &ARM::GPRRegClass, &ARM::GPRRegClass, &ARM::GPRRegClass,
-    &ARM::GPRRegClass, &ARM::GPRRegClass,
-
-    &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass,
-    &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass,
-    0
-  };
-
-  static const TargetRegisterClass * const DarwinThumbCalleeSavedRegClasses[] ={
-    &ARM::GPRRegClass,  &ARM::tGPRRegClass, &ARM::tGPRRegClass,
-    &ARM::tGPRRegClass, &ARM::tGPRRegClass, &ARM::GPRRegClass,
-    &ARM::GPRRegClass,  &ARM::GPRRegClass,
-
-    &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass,
-    &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass, &ARM::DPRRegClass,
-    0
-  };
-
-  if (STI.isTargetDarwin())
-    return STI.isThumb1Only() ? DarwinThumbCalleeSavedRegClasses :
-      DarwinCalleeSavedRegClasses;
-  if (ReserveR9)
-    return STI.isThumb1Only() ? ThumbCalleeSavedRegClassesNoR9
-      : CalleeSavedRegClassesNoR9;
-  return STI.isThumb1Only() ? ThumbCalleeSavedRegClasses
-    : CalleeSavedRegClasses;
-}
-
 BitVector ARMBaseRegisterInfo::
 getReservedRegs(const MachineFunction &MF) const {
   // FIXME: avoid re-calculating this everytime.
@@ -295,10 +224,10 @@ ARMBaseRegisterInfo::getMatchingSuperRegClass(const TargetRegisterClass *A,
                                               unsigned SubIdx) const {
   switch (SubIdx) {
   default: return 0;
-  case 1:
-  case 2:
-  case 3:
-  case 4:
+  case ARM::ssub_0:
+  case ARM::ssub_1:
+  case ARM::ssub_2:
+  case ARM::ssub_3: {
     // S sub-registers.
     if (A->getSize() == 8) {
       if (B == &ARM::SPR_8RegClass)
@@ -309,21 +238,200 @@ ARMBaseRegisterInfo::getMatchingSuperRegClass(const TargetRegisterClass *A,
       return &ARM::DPR_VFP2RegClass;
     }
 
-    assert(A->getSize() == 16 && "Expecting a Q register class!");
-    if (B == &ARM::SPR_8RegClass)
-      return &ARM::QPR_8RegClass;
-    return &ARM::QPR_VFP2RegClass;
-  case 5:
-  case 6:
-    // D sub-registers.
-    if (B == &ARM::DPR_VFP2RegClass)
+    if (A->getSize() == 16) {
+      if (B == &ARM::SPR_8RegClass)
+        return &ARM::QPR_8RegClass;
       return &ARM::QPR_VFP2RegClass;
-    if (B == &ARM::DPR_8RegClass)
-      return &ARM::QPR_8RegClass;
+    }
+
+    if (A->getSize() == 32) {
+      if (B == &ARM::SPR_8RegClass)
+        return 0;  // Do not allow coalescing!
+      return &ARM::QQPR_VFP2RegClass;
+    }
+
+    assert(A->getSize() == 64 && "Expecting a QQQQ register class!");
+    return 0;  // Do not allow coalescing!
+  }
+  case ARM::dsub_0:
+  case ARM::dsub_1:
+  case ARM::dsub_2:
+  case ARM::dsub_3: {
+    // D sub-registers.
+    if (A->getSize() == 16) {
+      if (B == &ARM::DPR_VFP2RegClass)
+        return &ARM::QPR_VFP2RegClass;
+      if (B == &ARM::DPR_8RegClass)
+        return 0;  // Do not allow coalescing!
+      return A;
+    }
+
+    if (A->getSize() == 32) {
+      if (B == &ARM::DPR_VFP2RegClass)
+        return &ARM::QQPR_VFP2RegClass;
+      if (B == &ARM::DPR_8RegClass)
+        return 0;  // Do not allow coalescing!
+      return A;
+    }
+
+    assert(A->getSize() == 64 && "Expecting a QQQQ register class!");
+    if (B != &ARM::DPRRegClass)
+      return 0;  // Do not allow coalescing!
     return A;
+  }
+  case ARM::dsub_4:
+  case ARM::dsub_5:
+  case ARM::dsub_6:
+  case ARM::dsub_7: {
+    // D sub-registers of QQQQ registers.
+    if (A->getSize() == 64 && B == &ARM::DPRRegClass)
+      return A;
+    return 0;  // Do not allow coalescing!
+  }
+
+  case ARM::qsub_0:
+  case ARM::qsub_1: {
+    // Q sub-registers.
+    if (A->getSize() == 32) {
+      if (B == &ARM::QPR_VFP2RegClass)
+        return &ARM::QQPR_VFP2RegClass;
+      if (B == &ARM::QPR_8RegClass)
+        return 0;  // Do not allow coalescing!
+      return A;
+    }
+
+    assert(A->getSize() == 64 && "Expecting a QQQQ register class!");
+    if (B == &ARM::QPRRegClass)
+      return A;
+    return 0;  // Do not allow coalescing!
+  }
+  case ARM::qsub_2:
+  case ARM::qsub_3: {
+    // Q sub-registers of QQQQ registers.
+    if (A->getSize() == 64 && B == &ARM::QPRRegClass)
+      return A;
+    return 0;  // Do not allow coalescing!
+  }
   }
   return 0;
 }
+
+bool
+ARMBaseRegisterInfo::canCombineSubRegIndices(const TargetRegisterClass *RC,
+                                          SmallVectorImpl<unsigned> &SubIndices,
+                                          unsigned &NewSubIdx) const {
+
+  unsigned Size = RC->getSize() * 8;
+  if (Size < 6)
+    return 0;
+
+  NewSubIdx = 0;  // Whole register.
+  unsigned NumRegs = SubIndices.size();
+  if (NumRegs == 8) {
+    // 8 D registers -> 1 QQQQ register.
+    return (Size == 512 &&
+            SubIndices[0] == ARM::dsub_0 &&
+            SubIndices[1] == ARM::dsub_1 &&
+            SubIndices[2] == ARM::dsub_2 &&
+            SubIndices[3] == ARM::dsub_3 &&
+            SubIndices[4] == ARM::dsub_4 &&
+            SubIndices[5] == ARM::dsub_5 &&
+            SubIndices[6] == ARM::dsub_6 &&
+            SubIndices[7] == ARM::dsub_7);
+  } else if (NumRegs == 4) {
+    if (SubIndices[0] == ARM::qsub_0) {
+      // 4 Q registers -> 1 QQQQ register.
+      return (Size == 512 &&
+              SubIndices[1] == ARM::qsub_1 &&
+              SubIndices[2] == ARM::qsub_2 &&
+              SubIndices[3] == ARM::qsub_3);
+    } else if (SubIndices[0] == ARM::dsub_0) {
+      // 4 D registers -> 1 QQ register.
+      if (Size >= 256 &&
+          SubIndices[1] == ARM::dsub_1 &&
+          SubIndices[2] == ARM::dsub_2 &&
+          SubIndices[3] == ARM::dsub_3) {
+        if (Size == 512)
+          NewSubIdx = ARM::qqsub_0;
+        return true;
+      }
+    } else if (SubIndices[0] == ARM::dsub_4) {
+      // 4 D registers -> 1 QQ register (2nd).
+      if (Size == 512 &&
+          SubIndices[1] == ARM::dsub_5 &&
+          SubIndices[2] == ARM::dsub_6 &&
+          SubIndices[3] == ARM::dsub_7) {
+        NewSubIdx = ARM::qqsub_1;
+        return true;
+      }
+    } else if (SubIndices[0] == ARM::ssub_0) {
+      // 4 S registers -> 1 Q register.
+      if (Size >= 128 &&
+          SubIndices[1] == ARM::ssub_1 &&
+          SubIndices[2] == ARM::ssub_2 &&
+          SubIndices[3] == ARM::ssub_3) {
+        if (Size >= 256)
+          NewSubIdx = ARM::qsub_0;
+        return true;
+      }
+    }
+  } else if (NumRegs == 2) {
+    if (SubIndices[0] == ARM::qsub_0) {
+      // 2 Q registers -> 1 QQ register.
+      if (Size >= 256 && SubIndices[1] == ARM::qsub_1) {
+        if (Size == 512)
+          NewSubIdx = ARM::qqsub_0;
+        return true;
+      }
+    } else if (SubIndices[0] == ARM::qsub_2) {
+      // 2 Q registers -> 1 QQ register (2nd).
+      if (Size == 512 && SubIndices[1] == ARM::qsub_3) {
+        NewSubIdx = ARM::qqsub_1;
+        return true;
+      }
+    } else if (SubIndices[0] == ARM::dsub_0) {
+      // 2 D registers -> 1 Q register.
+      if (Size >= 128 && SubIndices[1] == ARM::dsub_1) {
+        if (Size >= 256)
+          NewSubIdx = ARM::qsub_0;
+        return true;
+      }
+    } else if (SubIndices[0] == ARM::dsub_2) {
+      // 2 D registers -> 1 Q register (2nd).
+      if (Size >= 256 && SubIndices[1] == ARM::dsub_3) {
+        NewSubIdx = ARM::qsub_1;
+        return true;
+      }
+    } else if (SubIndices[0] == ARM::dsub_4) {
+      // 2 D registers -> 1 Q register (3rd).
+      if (Size == 512 && SubIndices[1] == ARM::dsub_5) {
+        NewSubIdx = ARM::qsub_2;
+        return true;
+      }
+    } else if (SubIndices[0] == ARM::dsub_6) {
+      // 2 D registers -> 1 Q register (3rd).
+      if (Size == 512 && SubIndices[1] == ARM::dsub_7) {
+        NewSubIdx = ARM::qsub_3;
+        return true;
+      }
+    } else if (SubIndices[0] == ARM::ssub_0) {
+      // 2 S registers -> 1 D register.
+      if (SubIndices[1] == ARM::ssub_1) {
+        if (Size >= 128)
+          NewSubIdx = ARM::dsub_0;
+        return true;
+      }
+    } else if (SubIndices[0] == ARM::ssub_2) {
+      // 2 S registers -> 1 D register (2nd).
+      if (Size >= 128 && SubIndices[1] == ARM::ssub_3) {
+        NewSubIdx = ARM::dsub_1;
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 
 const TargetRegisterClass *
 ARMBaseRegisterInfo::getPointerRegClass(unsigned Kind) const {
@@ -517,7 +625,7 @@ ARMBaseRegisterInfo::UpdateRegAllocHint(unsigned Reg, unsigned NewReg,
 ///
 bool ARMBaseRegisterInfo::hasFP(const MachineFunction &MF) const {
   const MachineFrameInfo *MFI = MF.getFrameInfo();
-  return ((NoFramePointerElim && MFI->hasCalls())||
+  return ((DisableFramePointerElim(MF) && MFI->adjustsStack())||
           needsStackRealignment(MF) ||
           MFI->hasVarSizedObjects() ||
           MFI->isFrameAddressTaken());
@@ -534,18 +642,31 @@ bool ARMBaseRegisterInfo::canRealignStack(const MachineFunction &MF) const {
 bool ARMBaseRegisterInfo::
 needsStackRealignment(const MachineFunction &MF) const {
   const MachineFrameInfo *MFI = MF.getFrameInfo();
+  const Function *F = MF.getFunction();
   const ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
   unsigned StackAlign = MF.getTarget().getFrameInfo()->getStackAlignment();
-  return (RealignStack &&
-          !AFI->isThumb1OnlyFunction() &&
-          (MFI->getMaxAlignment() > StackAlign) &&
-          !MFI->hasVarSizedObjects());
+  bool requiresRealignment = ((MFI->getMaxAlignment() > StackAlign) ||
+                               F->hasFnAttr(Attribute::StackAlignment));
+    
+  // FIXME: Currently we don't support stack realignment for functions with
+  //        variable-sized allocas.
+  // FIXME: It's more complicated than this...
+  if (0 && requiresRealignment && MFI->hasVarSizedObjects())
+    report_fatal_error(
+      "Stack realignment in presense of dynamic allocas is not supported");
+  
+  // FIXME: This probably isn't the right place for this.
+  if (0 && requiresRealignment && AFI->isThumb1OnlyFunction())
+    report_fatal_error(
+      "Stack realignment in thumb1 functions is not supported");
+  
+  return requiresRealignment && canRealignStack(MF);
 }
 
 bool ARMBaseRegisterInfo::
 cannotEliminateFrame(const MachineFunction &MF) const {
   const MachineFrameInfo *MFI = MF.getFrameInfo();
-  if (NoFramePointerElim && MFI->hasCalls())
+  if (DisableFramePointerElim(MF) && MFI->adjustsStack())
     return true;
   return MFI->hasVarSizedObjects() || MFI->isFrameAddressTaken()
     || needsStackRealignment(MF);
@@ -582,29 +703,52 @@ ARMBaseRegisterInfo::estimateRSStackSizeLimit(MachineFunction &MF) const {
       for (unsigned i = 0, e = I->getNumOperands(); i != e; ++i) {
         if (!I->getOperand(i).isFI()) continue;
 
-        const TargetInstrDesc &Desc = TII.get(I->getOpcode());
-        unsigned AddrMode = (Desc.TSFlags & ARMII::AddrModeMask);
-        if (AddrMode == ARMII::AddrMode3 ||
-            AddrMode == ARMII::AddrModeT2_i8)
-          return (1 << 8) - 1;
+        // When using ADDri to get the address of a stack object, 255 is the
+        // largest offset guaranteed to fit in the immediate offset.
+        if (I->getOpcode() == ARM::ADDri) {
+          Limit = std::min(Limit, (1U << 8) - 1);
+          break;
+        }
 
-        if (AddrMode == ARMII::AddrMode5 ||
-            AddrMode == ARMII::AddrModeT2_i8s4)
+        // Otherwise check the addressing mode.
+        switch (I->getDesc().TSFlags & ARMII::AddrModeMask) {
+        case ARMII::AddrMode3:
+        case ARMII::AddrModeT2_i8:
+          Limit = std::min(Limit, (1U << 8) - 1);
+          break;
+        case ARMII::AddrMode5:
+        case ARMII::AddrModeT2_i8s4:
           Limit = std::min(Limit, ((1U << 8) - 1) * 4);
-
-        if (AddrMode == ARMII::AddrModeT2_i12 && hasFP(MF))
-          // When the stack offset is negative, we will end up using
-          // the i8 instructions instead.
-          return (1 << 8) - 1;
-
-        if (AddrMode == ARMII::AddrMode6)
+          break;
+        case ARMII::AddrModeT2_i12:
+          if (hasFP(MF)) Limit = std::min(Limit, (1U << 8) - 1);
+          break;
+        case ARMII::AddrMode6:
+          // Addressing mode 6 (load/store) instructions can't encode an
+          // immediate offset for stack references.
           return 0;
+        default:
+          break;
+        }
         break; // At most one FI per instruction
       }
     }
   }
 
   return Limit;
+}
+
+static unsigned GetFunctionSizeInBytes(const MachineFunction &MF,
+                                       const ARMBaseInstrInfo &TII) {
+  unsigned FnSize = 0;
+  for (MachineFunction::const_iterator MBBI = MF.begin(), E = MF.end();
+       MBBI != E; ++MBBI) {
+    const MachineBasicBlock &MBB = *MBBI;
+    for (MachineBasicBlock::const_iterator I = MBB.begin(),E = MBB.end();
+         I != E; ++I)
+      FnSize += TII.GetInstSizeInBytes(I);
+  }
+  return FnSize;
 }
 
 void
@@ -621,6 +765,7 @@ ARMBaseRegisterInfo::processFunctionBeforeCalleeSavedScan(MachineFunction &MF,
   SmallVector<unsigned, 4> UnspilledCS1GPRs;
   SmallVector<unsigned, 4> UnspilledCS2GPRs;
   ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
+  MachineFrameInfo *MFI = MF.getFrameInfo();
 
   // Spill R4 if Thumb2 function requires stack realignment - it will be used as
   // scratch register.
@@ -636,7 +781,6 @@ ARMBaseRegisterInfo::processFunctionBeforeCalleeSavedScan(MachineFunction &MF,
   // Don't spill FP if the frame can be eliminated. This is determined
   // by scanning the callee-save registers to see if any is used.
   const unsigned *CSRegs = getCalleeSavedRegs();
-  const TargetRegisterClass* const *CSRegClasses = getCalleeSavedRegClasses();
   for (unsigned i = 0; CSRegs[i]; ++i) {
     unsigned Reg = CSRegs[i];
     bool Spilled = false;
@@ -654,57 +798,57 @@ ARMBaseRegisterInfo::processFunctionBeforeCalleeSavedScan(MachineFunction &MF,
       }
     }
 
-    if (CSRegClasses[i] == ARM::GPRRegisterClass ||
-        CSRegClasses[i] == ARM::tGPRRegisterClass) {
-      if (Spilled) {
-        NumGPRSpills++;
+    if (!ARM::GPRRegisterClass->contains(Reg))
+      continue;
 
-        if (!STI.isTargetDarwin()) {
-          if (Reg == ARM::LR)
-            LRSpilled = true;
-          CS1Spilled = true;
-          continue;
-        }
+    if (Spilled) {
+      NumGPRSpills++;
 
-        // Keep track if LR and any of R4, R5, R6, and R7 is spilled.
-        switch (Reg) {
-        case ARM::LR:
+      if (!STI.isTargetDarwin()) {
+        if (Reg == ARM::LR)
           LRSpilled = true;
-          // Fallthrough
-        case ARM::R4:
-        case ARM::R5:
-        case ARM::R6:
-        case ARM::R7:
-          CS1Spilled = true;
-          break;
-        default:
-          break;
-        }
-      } else {
-        if (!STI.isTargetDarwin()) {
-          UnspilledCS1GPRs.push_back(Reg);
-          continue;
-        }
+        CS1Spilled = true;
+        continue;
+      }
 
-        switch (Reg) {
-        case ARM::R4:
-        case ARM::R5:
-        case ARM::R6:
-        case ARM::R7:
-        case ARM::LR:
-          UnspilledCS1GPRs.push_back(Reg);
-          break;
-        default:
-          UnspilledCS2GPRs.push_back(Reg);
-          break;
-        }
+      // Keep track if LR and any of R4, R5, R6, and R7 is spilled.
+      switch (Reg) {
+      case ARM::LR:
+        LRSpilled = true;
+        // Fallthrough
+      case ARM::R4:
+      case ARM::R5:
+      case ARM::R6:
+      case ARM::R7:
+        CS1Spilled = true;
+        break;
+      default:
+        break;
+      }
+    } else {
+      if (!STI.isTargetDarwin()) {
+        UnspilledCS1GPRs.push_back(Reg);
+        continue;
+      }
+
+      switch (Reg) {
+      case ARM::R4:
+      case ARM::R5:
+      case ARM::R6:
+      case ARM::R7:
+      case ARM::LR:
+        UnspilledCS1GPRs.push_back(Reg);
+        break;
+      default:
+        UnspilledCS2GPRs.push_back(Reg);
+        break;
       }
     }
   }
 
   bool ForceLRSpill = false;
   if (!LRSpilled && AFI->isThumb1OnlyFunction()) {
-    unsigned FnSize = TII.GetFunctionSizeInBytes(MF);
+    unsigned FnSize = GetFunctionSizeInBytes(MF, TII);
     // Force LR to be spilled if the Thumb function size is > 2048. This enables
     // use of BL to implement far jump. If it turns out that it's not needed
     // then the branch fix up path will undo it.
@@ -718,9 +862,16 @@ ARMBaseRegisterInfo::processFunctionBeforeCalleeSavedScan(MachineFunction &MF,
   // offset, make sure a register (or a spill slot) is available for the
   // register scavenger. Note that if we're indexing off the frame pointer, the
   // effective stack size is 4 bytes larger since the FP points to the stack
-  // slot of the previous FP.
-  bool BigStack = RS &&
-    estimateStackSize(MF) + (hasFP(MF) ? 4 : 0) >= estimateRSStackSizeLimit(MF);
+  // slot of the previous FP. Also, if we have variable sized objects in the
+  // function, stack slot references will often be negative, and some of
+  // our instructions are positive-offset only, so conservatively consider
+  // that case to want a spill slot (or register) as well.
+  // FIXME: We could add logic to be more precise about negative offsets
+  //        and which instructions will need a scratch register for them. Is it
+  //        worth the effort and added fragility?
+  bool BigStack =
+    (RS && (estimateStackSize(MF) + (hasFP(MF) ? 4:0) >=
+            estimateRSStackSizeLimit(MF))) || MFI->hasVarSizedObjects();
 
   bool ExtraCSSpill = false;
   if (BigStack || !CanEliminateFrame || cannotEliminateFrame(MF)) {
@@ -786,7 +937,9 @@ ARMBaseRegisterInfo::processFunctionBeforeCalleeSavedScan(MachineFunction &MF,
       while (NumExtras && !UnspilledCS1GPRs.empty()) {
         unsigned Reg = UnspilledCS1GPRs.back();
         UnspilledCS1GPRs.pop_back();
-        if (!isReservedReg(MF, Reg)) {
+        if (!isReservedReg(MF, Reg) &&
+            (!AFI->isThumb1OnlyFunction() || isARMLowRegister(Reg) ||
+             Reg == ARM::LR)) {
           Extras.push_back(Reg);
           NumExtras--;
         }
@@ -811,7 +964,6 @@ ARMBaseRegisterInfo::processFunctionBeforeCalleeSavedScan(MachineFunction &MF,
         // note: Thumb1 functions spill to R12, not the stack.  Reserve a slot
         // closest to SP or frame pointer.
         const TargetRegisterClass *RC = ARM::GPRRegisterClass;
-        MachineFrameInfo *MFI = MF.getFrameInfo();
         RS->setScavengingFrameIndex(MFI->CreateStackObject(RC->getSize(),
                                                            RC->getAlignment(),
                                                            false));
@@ -1089,7 +1241,7 @@ emitLoadConstPool(MachineBasicBlock &MBB,
                   unsigned PredReg) const {
   MachineFunction &MF = *MBB.getParent();
   MachineConstantPool *ConstantPool = MF.getConstantPool();
-  Constant *C =
+  const Constant *C =
         ConstantInt::get(Type::getInt32Ty(MF.getFunction()->getContext()), Val);
   unsigned Idx = ConstantPool->getConstantPoolIndex(C, 4);
 
@@ -1115,7 +1267,7 @@ requiresFrameIndexScavenging(const MachineFunction &MF) const {
 // add/sub sp brackets around call sites. Returns true if the call frame is
 // included as part of the stack frame.
 bool ARMBaseRegisterInfo::
-hasReservedCallFrame(MachineFunction &MF) const {
+hasReservedCallFrame(const MachineFunction &MF) const {
   const MachineFrameInfo *FFI = MF.getFrameInfo();
   unsigned CFSize = FFI->getMaxCallFrameSize();
   // It's not always a good idea to include the call frame as part of the
@@ -1133,7 +1285,7 @@ hasReservedCallFrame(MachineFunction &MF) const {
 // is not sufficient here since we still may reference some objects via SP
 // even when FP is available in Thumb2 mode.
 bool ARMBaseRegisterInfo::
-canSimplifyCallFramePseudos(MachineFunction &MF) const {
+canSimplifyCallFramePseudos(const MachineFunction &MF) const {
   return hasReservedCallFrame(MF) || MF.getFrameInfo()->hasVarSizedObjects();
 }
 
@@ -1218,6 +1370,13 @@ ARMBaseRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   if (FrameReg != ARM::SP)
     SPAdj = 0;
   Offset += SPAdj;
+
+  // Special handling of dbg_value instructions.
+  if (MI.isDebugValue()) {
+    MI.getOperand(i).  ChangeToRegister(FrameReg, false /*isDef*/);
+    MI.getOperand(i+1).ChangeToImmediate(Offset);
+    return 0;
+  }
 
   // Modify MI as necessary to handle as much of 'Offset' as possible
   bool Done = false;
@@ -1316,8 +1475,7 @@ emitPrologue(MachineFunction &MF) const {
   unsigned VARegSaveSize = AFI->getVarArgsRegSaveSize();
   unsigned NumBytes = MFI->getStackSize();
   const std::vector<CalleeSavedInfo> &CSI = MFI->getCalleeSavedInfo();
-  DebugLoc dl = (MBBI != MBB.end() ?
-                 MBBI->getDebugLoc() : DebugLoc::getUnknownLoc());
+  DebugLoc dl = MBBI != MBB.end() ? MBBI->getDebugLoc() : DebugLoc();
 
   // Determine the sizes of each callee-save spill areas and record which frame
   // belongs to which callee-save spill areas.
@@ -1470,6 +1628,7 @@ emitEpilogue(MachineFunction &MF, MachineBasicBlock &MBB) const {
   MachineBasicBlock::iterator MBBI = prior(MBB.end());
   assert(MBBI->getDesc().isReturn() &&
          "Can only insert epilog into returning blocks");
+  unsigned RetOpcode = MBBI->getOpcode();
   DebugLoc dl = MBBI->getDebugLoc();
   MachineFrameInfo *MFI = MF.getFrameInfo();
   ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
@@ -1542,6 +1701,39 @@ emitEpilogue(MachineFunction &MF, MachineBasicBlock &MBB) const {
     // Move SP to SP upon entry to the function.
     movePastCSLoadStoreOps(MBB, MBBI, ARM::LDR, ARM::t2LDRi12, 1, STI);
     emitSPUpdate(isARM, MBB, MBBI, dl, TII, AFI->getGPRCalleeSavedArea1Size());
+  }
+
+  if (RetOpcode == ARM::TCRETURNdi || RetOpcode == ARM::TCRETURNdiND ||
+      RetOpcode == ARM::TCRETURNri || RetOpcode == ARM::TCRETURNriND) {
+    // Tail call return: adjust the stack pointer and jump to callee.
+    MBBI = prior(MBB.end());
+    MachineOperand &JumpTarget = MBBI->getOperand(0);
+
+    // Jump to label or value in register.
+    if (RetOpcode == ARM::TCRETURNdi) {
+      BuildMI(MBB, MBBI, dl, 
+            TII.get(STI.isThumb() ? ARM::TAILJMPdt : ARM::TAILJMPd)).
+        addGlobalAddress(JumpTarget.getGlobal(), JumpTarget.getOffset(),
+                         JumpTarget.getTargetFlags());
+    } else if (RetOpcode == ARM::TCRETURNdiND) {
+      BuildMI(MBB, MBBI, dl,
+            TII.get(STI.isThumb() ? ARM::TAILJMPdNDt : ARM::TAILJMPdND)).
+        addGlobalAddress(JumpTarget.getGlobal(), JumpTarget.getOffset(),
+                         JumpTarget.getTargetFlags());
+    } else if (RetOpcode == ARM::TCRETURNri) {
+      BuildMI(MBB, MBBI, dl, TII.get(ARM::TAILJMPr)).
+        addReg(JumpTarget.getReg(), RegState::Kill);
+    } else if (RetOpcode == ARM::TCRETURNriND) {
+      BuildMI(MBB, MBBI, dl, TII.get(ARM::TAILJMPrND)).
+        addReg(JumpTarget.getReg(), RegState::Kill);
+    } 
+
+    MachineInstr *NewMI = prior(MBBI);
+    for (unsigned i = 1, e = MBBI->getNumOperands(); i != e; ++i)
+      NewMI->addOperand(MBBI->getOperand(i));
+
+    // Delete the pseudo instruction TCRETURN.
+    MBB.erase(MBBI);
   }
 
   if (VARegSaveSize)
