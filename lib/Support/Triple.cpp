@@ -98,12 +98,14 @@ const char *Triple::getOSTypeName(OSType Kind) {
   case Lv2: return "lv2";
   case MinGW32: return "mingw32";
   case MinGW64: return "mingw64";
+  case NativeClient: return "nacl";
   case NetBSD: return "netbsd";
   case OpenBSD: return "openbsd";
   case Psp: return "psp";
   case Solaris: return "solaris";
   case Win32: return "win32";
   case Haiku: return "haiku";
+  case Minix: return "minix";
   }
 
   return "<invalid>";
@@ -189,7 +191,7 @@ Triple::ArchType Triple::getArchTypeForDarwinArchName(StringRef Str) {
   return Triple::UnknownArch;
 }
 
-// Returns architecture name that is unsderstood by the target assembler.
+// Returns architecture name that is understood by the target assembler.
 const char *Triple::getArchNameForAssembler() {
   if (getOS() != Triple::Darwin && getVendor() != Triple::Apple)
     return NULL;
@@ -308,13 +310,17 @@ void Triple::Parse() const {
   else if (OSName.startswith("freebsd"))
     OS = FreeBSD;
   else if (OSName.startswith("linux"))
-    OS = Linux;
+    // TODO(pdox): Fix this when we stop using target linux
+    OS = NativeClient; // @LOCALMOD
+//    OS = Linux;
   else if (OSName.startswith("lv2"))
     OS = Lv2;
   else if (OSName.startswith("mingw32"))
     OS = MinGW32;
   else if (OSName.startswith("mingw64"))
     OS = MinGW64;
+  else if (OSName.startswith("nacl"))
+    OS = NativeClient;
   else if (OSName.startswith("netbsd"))
     OS = NetBSD;
   else if (OSName.startswith("openbsd"))
@@ -326,7 +332,9 @@ void Triple::Parse() const {
   else if (OSName.startswith("win32"))
     OS = Win32;
   else if (OSName.startswith("haiku"))
-  	OS = Haiku;
+    OS = Haiku;
+  else if (OSName.startswith("minix"))
+    OS = Minix;
   else
     OS = UnknownOS;
 

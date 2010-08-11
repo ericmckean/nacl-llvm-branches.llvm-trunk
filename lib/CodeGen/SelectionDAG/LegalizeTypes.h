@@ -32,8 +32,8 @@ namespace llvm {
 /// involves promoting small sizes to large sizes or splitting up large values
 /// into small values.
 ///
-class VISIBILITY_HIDDEN DAGTypeLegalizer {
-  TargetLowering &TLI;
+class LLVM_LIBRARY_VISIBILITY DAGTypeLegalizer {
+  const TargetLowering &TLI;
   SelectionDAG &DAG;
 public:
   // NodeIdFlags - This pass uses the NodeId on the SDNodes to hold information
@@ -345,6 +345,9 @@ private:
   void ExpandIntRes_UREM              (SDNode *N, SDValue &Lo, SDValue &Hi);
   void ExpandIntRes_Shift             (SDNode *N, SDValue &Lo, SDValue &Hi);
 
+  void ExpandIntRes_SADDSUBO          (SDNode *N, SDValue &Lo, SDValue &Hi);
+  void ExpandIntRes_UADDSUBO          (SDNode *N, SDValue &Lo, SDValue &Hi);
+
   void ExpandShiftByConstant(SDNode *N, unsigned Amt,
                              SDValue &Lo, SDValue &Hi);
   bool ExpandShiftWithKnownAmountBit(SDNode *N, SDValue &Lo, SDValue &Hi);
@@ -620,6 +623,7 @@ private:
 
   SDValue WidenVecRes_Binary(SDNode *N);
   SDValue WidenVecRes_Convert(SDNode *N);
+  SDValue WidenVecRes_POWI(SDNode *N);
   SDValue WidenVecRes_Shift(SDNode *N);
   SDValue WidenVecRes_Unary(SDNode *N);
   SDValue WidenVecRes_InregOp(SDNode *N);

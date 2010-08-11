@@ -84,7 +84,8 @@ else # !SunOS
 ifeq ($(HOST_OS),AuroraUX)
 ULIMIT=ulimit -t 600 ; ulimit -d 512000 ; ulimit -v 512000 ;
 else # !AuroraUX
-ULIMIT=ulimit -t 600 ; ulimit -d 512000 ; ulimit -m 512000 ; ulimit -v 512000 ;
+# Fedora 13 x86-64 python fails with -v 51200
+ULIMIT=ulimit -t 600 ; ulimit -d 512000 ; ulimit -m 512000 ; ulimit -v 768000 ;
 endif # AuroraUX
 endif # SunOS
 
@@ -201,3 +202,4 @@ Unit/lit.site.cfg: $(PROJ_OBJ_DIR)/Unit/.dir FORCE
 	     -e "s#@ENABLE_SHARED@#$(ENABLE_SHARED)#g" \
 	     -e "s#@SHLIBPATH_VAR@#$(SHLIBPATH_VAR)#g" \
 	     $(PROJ_SRC_DIR)/Unit/lit.site.cfg.in > $@
+

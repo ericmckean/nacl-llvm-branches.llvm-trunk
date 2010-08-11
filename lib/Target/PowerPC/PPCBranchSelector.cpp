@@ -53,7 +53,8 @@ FunctionPass *llvm::createPPCBranchSelectionPass() {
 }
 
 bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
-  const TargetInstrInfo *TII = Fn.getTarget().getInstrInfo();
+  const PPCInstrInfo *TII =
+                static_cast<const PPCInstrInfo*>(Fn.getTarget().getInstrInfo());
   // Give the blocks of the function a dense, in-order, numbering.
   Fn.RenumberBlocks();
   BlockSizes.resize(Fn.getNumBlockIDs());
@@ -130,7 +131,7 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
         }
 
         // If this branch is in range, ignore it.
-        if (isInt16(BranchSize)) {
+        if (isInt<16>(BranchSize)) {
           MBBStartOffset += 4;
           continue;
         }
