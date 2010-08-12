@@ -8413,6 +8413,7 @@ X86TargetLowering::EmitPCMP(MachineInstr *MI, MachineBasicBlock *BB,
   return BB;
 }
 
+// @LOCALMOD-START
 MachineBasicBlock *
 X86TargetLowering::EmitVAARG64WithCustomInserter(
                    MachineInstr *MI,
@@ -8549,7 +8550,7 @@ X86TargetLowering::EmitVAARG64WithCustomInserter(
       .addOperand(Base)
       .addOperand(Scale)
       .addOperand(Index)
-      .addImm(Disp.getImm() + (UsingFPOffset ? 4 : 0))
+      .addDisp(Disp, UsingFPOffset ? 4 : 0)
       .addOperand(Segment);
 
     // Compare it against the maximum offset
@@ -8573,7 +8574,7 @@ X86TargetLowering::EmitVAARG64WithCustomInserter(
       .addOperand(Base)
       .addOperand(Scale)
       .addOperand(Index)
-      .addImm(Disp.getImm() + 16)
+      .addDisp(Disp, 16)
       .addOperand(Segment);
 
     // Add the offset to the reg_save_area to get the final address.
@@ -8600,7 +8601,7 @@ X86TargetLowering::EmitVAARG64WithCustomInserter(
       .addOperand(Base)
       .addOperand(Scale)
       .addOperand(Index)
-      .addImm(Disp.getImm() + (UsingFPOffset ? 4 : 0))
+      .addDisp(Disp, UsingFPOffset ? 4 : 0)
       .addOperand(Segment)
       .addReg(NewOffsetReg);
 
@@ -8625,7 +8626,7 @@ X86TargetLowering::EmitVAARG64WithCustomInserter(
     .addOperand(Base)
     .addOperand(Scale)
     .addOperand(Index)
-    .addImm(Disp.getImm() + 8)
+    .addDisp(Disp, 8)
     .addOperand(Segment);
 
   // Align the overflow address
@@ -8657,7 +8658,7 @@ X86TargetLowering::EmitVAARG64WithCustomInserter(
     .addOperand(Base)
     .addOperand(Scale)
     .addOperand(Index)
-    .addImm(Disp.getImm() + 8)
+    .addDisp(Disp, 8)
     .addOperand(Segment)
     .addReg(NewAddrReg);
 
@@ -8666,6 +8667,7 @@ X86TargetLowering::EmitVAARG64WithCustomInserter(
 
   return endMBB;
 }
+// @LOCALMOD-END
 
 MachineBasicBlock *
 X86TargetLowering::EmitVAStartSaveXMMRegsWithCustomInserter(
