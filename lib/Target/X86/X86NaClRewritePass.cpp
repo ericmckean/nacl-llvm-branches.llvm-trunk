@@ -275,6 +275,9 @@ static bool IsIndirectControlFlowChange(MachineInstr &MI) {
    default:
     return false;
 
+   case X86::TRAP:
+     return true;
+
    // Returns
    case X86::RET:
     return true;
@@ -705,7 +708,10 @@ bool X86NaClRewritePass::PassSandboxingControlFlow(
       Modified = true;
 #endif
       break;
-
+     case X86::TRAP:
+       MI.setDesc(TII->get(X86::NACL_TRAP));
+       Modified = true;
+       break;
      case X86::JMP32r:
        MI.setDesc(TII->get(X86::NACL_JMP32r));
        Modified = true;
