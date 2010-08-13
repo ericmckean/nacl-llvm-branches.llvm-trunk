@@ -19,6 +19,11 @@
 //
 //===----------------------------------------------------------------------===//
 
+let isTerminator = 1, isBarrier = 1, hasCtrlDep = 1 in {
+def NACL_TRAP    : I<0, Pseudo, (outs), (ins), "mov{l}\t$$0, 0", []>;
+}
+
+
 // TODO: indicate that we clobber rcx
 let isTerminator = 1, isReturn = 1, isBarrier = 1,
     hasCtrlDep = 1, FPForm = SpecialFP in {
