@@ -81,6 +81,8 @@ static bool IsIndirectJump(const MachineInstr &MI) {
    default: return false;
 
    case ARM::BRIND:
+   case ARM::TAILJMPr:
+   case ARM::TAILJMPrND:
     return true;
   }
 }
