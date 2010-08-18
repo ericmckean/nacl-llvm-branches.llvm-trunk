@@ -72,10 +72,10 @@ ValueEnumerator::ValueEnumerator(const Module *M) {
   // Enumerate types used by the type symbol table.
   EnumerateTypeSymbolTable(M->getTypeSymbolTable());
 
-  // Insert constants and metadata  that are named at module level into the slot 
+  // Insert constants and metadata that are named at module level into the slot 
   // pool so that the module symbol table can refer to them...
   EnumerateValueSymbolTable(M->getValueSymbolTable());
-  EnumerateMDSymbolTable(M->getMDSymbolTable());
+  EnumerateNamedMetadata(M);
 
   SmallVector<std::pair<unsigned, MDNode*>, 8> MDs;
 
@@ -104,9 +104,16 @@ ValueEnumerator::ValueEnumerator(const Module *M) {
 
         // Enumerate metadata attached with this instruction.
         MDs.clear();
-        I->getAllMetadata(MDs);
+        I->getAllMetadataOtherThanDebugLoc(MDs);
         for (unsigned i = 0, e = MDs.size(); i != e; ++i)
           EnumerateMetadata(MDs[i].second);
+        
+        if (!I->getDebugLoc().isUnknown()) {
+          MDNode *Scope, *IA;
+          I->getDebugLoc().getScopeAndInlinedAt(Scope, IA, I->getContext());
+          if (Scope) EnumerateMetadata(Scope);
+          if (IA) EnumerateMetadata(IA);
+        }
       }
   }
 
@@ -200,31 +207,18 @@ void ValueEnumerator::EnumerateValueSymbolTable(const ValueSymbolTable &VST) {
     EnumerateValue(VI->getValue());
 }
 
-/// EnumerateMDSymbolTable - Insert all of the values in the specified metadata
-/// table.
-void ValueEnumerator::EnumerateMDSymbolTable(const MDSymbolTable &MST) {
-  for (MDSymbolTable::const_iterator MI = MST.begin(), ME = MST.end();
-       MI != ME; ++MI)
-    EnumerateValue(MI->getValue());
+/// EnumerateNamedMetadata - Insert all of the values referenced by
+/// named metadata in the specified module.
+void ValueEnumerator::EnumerateNamedMetadata(const Module *M) {
+  for (Module::const_named_metadata_iterator I = M->named_metadata_begin(),
+       E = M->named_metadata_end(); I != E; ++I)
+    EnumerateNamedMDNode(I);
 }
 
 void ValueEnumerator::EnumerateNamedMDNode(const NamedMDNode *MD) {
-  // Check to see if it's already in!
-  unsigned &MDValueID = MDValueMap[MD];
-  if (MDValueID) {
-    // Increment use count.
-    MDValues[MDValueID-1].second++;
-    return;
-  }
-
-  // Enumerate the type of this value.
-  EnumerateType(MD->getType());
-
   for (unsigned i = 0, e = MD->getNumOperands(); i != e; ++i)
     if (MDNode *E = MD->getOperand(i))
       EnumerateValue(E);
-  MDValues.push_back(std::make_pair(MD, 1U));
-  MDValueMap[MD] = Values.size();
 }
 
 void ValueEnumerator::EnumerateMetadata(const Value *MD) {
@@ -250,6 +244,8 @@ void ValueEnumerator::EnumerateMetadata(const Value *MD) {
       else
         EnumerateType(Type::getVoidTy(MD->getContext()));
     }
+    if (N->isFunctionLocal() && N->getFunction())
+      FunctionLocalMDs.push_back(N);
     return;
   }
   
@@ -263,8 +259,6 @@ void ValueEnumerator::EnumerateValue(const Value *V) {
   assert(!V->getType()->isVoidTy() && "Can't insert void values!");
   if (isa<MDNode>(V) || isa<MDString>(V))
     return EnumerateMetadata(V);
-  else if (const NamedMDNode *NMD = dyn_cast<NamedMDNode>(V))
-    return EnumerateNamedMDNode(NMD);
 
   // Check to see if it's already in!
   unsigned &ValueID = ValueMap[V];
@@ -379,8 +373,8 @@ void ValueEnumerator::incorporateFunction(const Function &F) {
   NumModuleValues = Values.size();
 
   // Adding function arguments to the value table.
-  for(Function::const_arg_iterator I = F.arg_begin(), E = F.arg_end();
-      I != E; ++I)
+  for (Function::const_arg_iterator I = F.arg_begin(), E = F.arg_end();
+       I != E; ++I)
     EnumerateValue(I);
 
   FirstFuncConstantID = Values.size();
@@ -407,7 +401,8 @@ void ValueEnumerator::incorporateFunction(const Function &F) {
 
   FirstInstID = Values.size();
 
-  SmallVector<MDNode *, 8> FunctionLocalMDs;
+  FunctionLocalMDs.clear();
+  SmallVector<MDNode *, 8> FnLocalMDVector;
   // Add all of the instructions.
   for (Function::const_iterator BB = F.begin(), E = F.end(); BB != E; ++BB) {
     for (BasicBlock::const_iterator I = BB->begin(), E = BB->end(); I!=E; ++I) {
@@ -416,7 +411,7 @@ void ValueEnumerator::incorporateFunction(const Function &F) {
         if (MDNode *MD = dyn_cast<MDNode>(*OI))
           if (MD->isFunctionLocal() && MD->getFunction())
             // Enumerate metadata after the instructions they might refer to.
-            FunctionLocalMDs.push_back(MD);
+            FnLocalMDVector.push_back(MD);
       }
       if (!I->getType()->isVoidTy())
         EnumerateValue(I);
@@ -424,8 +419,8 @@ void ValueEnumerator::incorporateFunction(const Function &F) {
   }
 
   // Add all of the function-local metadata.
-  for (unsigned i = 0, e = FunctionLocalMDs.size(); i != e; ++i)
-    EnumerateOperandType(FunctionLocalMDs[i]);
+  for (unsigned i = 0, e = FnLocalMDVector.size(); i != e; ++i)
+    EnumerateOperandType(FnLocalMDVector[i]);
 }
 
 void ValueEnumerator::purgeFunction() {

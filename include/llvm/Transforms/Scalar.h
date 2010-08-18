@@ -149,7 +149,6 @@ Pass *createLoopIndexSplitPass();
 //   ret i32 %Y
 //
 FunctionPass *createPromoteMemoryToRegisterPass();
-extern const PassInfo *const PromoteMemoryToRegisterID;
 
 //===----------------------------------------------------------------------===//
 //
@@ -158,7 +157,7 @@ extern const PassInfo *const PromoteMemoryToRegisterID;
 // hacking easier.
 //
 FunctionPass *createDemoteRegisterToMemoryPass();
-extern const PassInfo *const DemoteRegisterToMemoryID;
+extern char &DemoteRegisterToMemoryID;
 
 //===----------------------------------------------------------------------===//
 //
@@ -202,7 +201,7 @@ FunctionPass *createCFGSimplificationPass();
 // (set, immediate dominators, tree, and frontier) information.
 //
 FunctionPass *createBreakCriticalEdgesPass();
-extern const PassInfo *const BreakCriticalEdgesID;
+extern char &BreakCriticalEdgesID;
 
 //===----------------------------------------------------------------------===//
 //
@@ -213,7 +212,7 @@ extern const PassInfo *const BreakCriticalEdgesID;
 //   AU.addRequiredID(LoopSimplifyID);
 //
 Pass *createLoopSimplifyPass();
-extern const PassInfo *const LoopSimplifyID;
+extern char &LoopSimplifyID;
 
 //===----------------------------------------------------------------------===//
 //
@@ -228,7 +227,7 @@ FunctionPass *createTailCallEliminationPass();
 // chained binary branch instructions.
 //
 FunctionPass *createLowerSwitchPass();
-extern const PassInfo *const LowerSwitchID;
+extern char &LowerSwitchID;
 
 //===----------------------------------------------------------------------===//
 //
@@ -241,7 +240,9 @@ extern const PassInfo *const LowerSwitchID;
 // lowering pass.
 //
 FunctionPass *createLowerInvokePass(const TargetLowering *TLI = 0);
-extern const PassInfo *const LowerInvokePassID;
+FunctionPass *createLowerInvokePass(const TargetLowering *TLI,
+                                    bool useExpensiveEHSupport);
+extern char &LowerInvokePassID;
 
 //===----------------------------------------------------------------------===//
 //
@@ -256,7 +257,7 @@ FunctionPass *createBlockPlacementPass();
 // optimizations.
 //
 Pass *createLCSSAPass();
-extern const PassInfo *const LCSSAID;
+extern char &LCSSAID;
 
 //===----------------------------------------------------------------------===//
 //
@@ -302,7 +303,7 @@ FunctionPass *createCodeGenPreparePass(const TargetLowering *TLI = 0);
 // InstructionNamer - Give any unnamed non-void instructions "tmp" names.
 //
 FunctionPass *createInstructionNamerPass();
-extern const PassInfo *const InstructionNamerID;
+extern char &InstructionNamerID;
   
 //===----------------------------------------------------------------------===//
 //
@@ -326,15 +327,21 @@ FunctionPass *createGEPSplitterPass();
 
 //===----------------------------------------------------------------------===//
 //
-// SCCVN - Aggressively eliminate redundant scalar values
-//
-FunctionPass *createSCCVNPass();
-
-//===----------------------------------------------------------------------===//
-//
 // ABCD - Elimination of Array Bounds Checks on Demand
 //
 FunctionPass *createABCDPass();
+
+//===----------------------------------------------------------------------===//
+//
+// Sink - Code Sinking
+//
+FunctionPass *createSinkingPass();
+
+//===----------------------------------------------------------------------===//
+//
+// LowerAtomic - Lower atomic intrinsics to non-atomic form
+//
+Pass *createLowerAtomicPass();
 
 } // End llvm namespace
 

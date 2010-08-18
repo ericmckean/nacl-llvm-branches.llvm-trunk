@@ -23,7 +23,6 @@ using namespace llvm;
 AsmLexer::AsmLexer(const MCAsmInfo &_MAI) : MAI(_MAI)  {
   CurBuf = NULL;
   CurPtr = NULL;
-  TokStart = 0;
 }
 
 AsmLexer::~AsmLexer() {
@@ -38,10 +37,6 @@ void AsmLexer::setBuffer(const MemoryBuffer *buf, const char *ptr) {
     CurPtr = CurBuf->getBufferStart();
   
   TokStart = 0;
-}
-
-SMLoc AsmLexer::getLoc() const {
-  return SMLoc::getFromPointer(TokStart);
 }
 
 /// ReturnError - Set the error to the specified string at the specified
@@ -74,6 +69,11 @@ AsmToken AsmLexer::LexIdentifier() {
   while (isalnum(*CurPtr) || *CurPtr == '_' || *CurPtr == '$' ||
          *CurPtr == '.' || *CurPtr == '@')
     ++CurPtr;
+  
+  // Handle . as a special case.
+  if (CurPtr == TokStart+1 && TokStart[0] == '.')
+    return AsmToken(AsmToken::Dot, StringRef(TokStart, 1));
+  
   return AsmToken(AsmToken::Identifier, StringRef(TokStart, CurPtr - TokStart));
 }
 
@@ -127,11 +127,6 @@ AsmToken AsmLexer::LexLineComment() {
 ///   Decimal integer: [1-9][0-9]*
 /// TODO: FP literal.
 AsmToken AsmLexer::LexDigit() {
-  if (*CurPtr == ':')
-    return ReturnError(TokStart, "FIXME: local label not implemented");
-  if (*CurPtr == 'f' || *CurPtr == 'b')
-    return ReturnError(TokStart, "FIXME: directional label not implemented");
-  
   // Decimal integer: [1-9][0-9]*
   if (CurPtr[-1] != '0') {
     while (isdigit(*CurPtr))
@@ -153,6 +148,12 @@ AsmToken AsmLexer::LexDigit() {
   
   if (*CurPtr == 'b') {
     ++CurPtr;
+    // See if we actually have "0b" as part of something like "jmp 0b\n"
+    if (!isdigit(CurPtr[0])) {
+      --CurPtr;
+      StringRef Result(TokStart, CurPtr - TokStart);
+      return AsmToken(AsmToken::Integer, Result, 0);
+    }
     const char *NumStart = CurPtr;
     while (CurPtr[0] == '0' || CurPtr[0] == '1')
       ++CurPtr;
@@ -223,7 +224,7 @@ StringRef AsmLexer::LexUntilEndOfStatement() {
   TokStart = CurPtr;
 
   while (!isAtStartOfComment(*CurPtr) && // Start of line comment.
-	  *CurPtr != ';' &&  // End of statement marker.
+          *CurPtr != ';' &&  // End of statement marker.
          *CurPtr != '\n' &&
          *CurPtr != '\r' &&
          (*CurPtr != 0 || CurPtr != CurBuf->getBufferEnd())) {
@@ -275,6 +276,7 @@ AsmToken AsmLexer::LexToken() {
   case '*': return AsmToken(AsmToken::Star, StringRef(TokStart, 1));
   case ',': return AsmToken(AsmToken::Comma, StringRef(TokStart, 1));
   case '$': return AsmToken(AsmToken::Dollar, StringRef(TokStart, 1));
+  case '@': return AsmToken(AsmToken::At, StringRef(TokStart, 1));
   case '=': 
     if (*CurPtr == '=')
       return ++CurPtr, AsmToken(AsmToken::EqualEqual, StringRef(TokStart, 2));

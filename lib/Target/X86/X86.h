@@ -35,16 +35,19 @@ class formatted_raw_ostream;
 FunctionPass *createX86ISelDag(X86TargetMachine &TM,
                                CodeGenOpt::Level OptLevel);
 
+/// createGlobalBaseRegPass - This pass initializes a global base
+/// register for PIC on x86-32.
+FunctionPass* createGlobalBaseRegPass();
+
 /// createX86FloatingPointStackifierPass - This function returns a pass which
 /// converts floating point register references and pseudo instructions into
 /// floating point stack references and physical instructions.
 ///
 FunctionPass *createX86FloatingPointStackifierPass();
 
-/// createX87FPRegKillInserterPass - This function returns a pass which
-/// inserts FP_REG_KILL instructions where needed.
-///
-FunctionPass *createX87FPRegKillInserterPass();
+/// createSSEDomainFixPass - This pass twiddles SSE opcodes to prevent domain
+/// crossings.
+FunctionPass *createSSEDomainFixPass();
 
 /// createX86CodeEmitterPass - Return a pass that emits the collected X86 code
 /// to the specified MCE object.
@@ -64,6 +67,12 @@ TargetAsmBackend *createX86_64AsmBackend(const Target &, const std::string &);
 /// allocated chunk of memory.
 ///
 FunctionPass *createEmitX86CodeToMemory();
+
+/// createX86MaxStackAlignmentHeuristicPass - This function returns a pass
+/// which determines whether the frame pointer register should be
+/// reserved in case dynamic stack alignment is later required.
+///
+FunctionPass *createX86MaxStackAlignmentHeuristicPass();
 
 extern Target TheX86_32Target, TheX86_64Target;
 

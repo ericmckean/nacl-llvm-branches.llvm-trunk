@@ -47,22 +47,6 @@ SystemZRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
   return CalleeSavedRegs;
 }
 
-const TargetRegisterClass* const*
-SystemZRegisterInfo::getCalleeSavedRegClasses(const MachineFunction *MF) const {
-  static const TargetRegisterClass * const CalleeSavedRegClasses[] = {
-    &SystemZ::GR64RegClass, &SystemZ::GR64RegClass,
-    &SystemZ::GR64RegClass, &SystemZ::GR64RegClass,
-    &SystemZ::GR64RegClass, &SystemZ::GR64RegClass,
-    &SystemZ::GR64RegClass, &SystemZ::GR64RegClass,
-    &SystemZ::GR64RegClass, &SystemZ::GR64RegClass,
-    &SystemZ::FP64RegClass, &SystemZ::FP64RegClass,
-    &SystemZ::FP64RegClass, &SystemZ::FP64RegClass,
-    &SystemZ::FP64RegClass, &SystemZ::FP64RegClass,
-    &SystemZ::FP64RegClass, &SystemZ::FP64RegClass, 0
-  };
-  return CalleeSavedRegClasses;
-}
-
 BitVector SystemZRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   BitVector Reserved(getNumRegs());
   if (hasFP(MF))
@@ -77,7 +61,7 @@ BitVector SystemZRegisterInfo::getReservedRegs(const MachineFunction &MF) const 
 /// allocas or if frame pointer elimination is disabled.
 bool SystemZRegisterInfo::hasFP(const MachineFunction &MF) const {
   const MachineFrameInfo *MFI = MF.getFrameInfo();
-  return NoFramePointerElim || MFI->hasVarSizedObjects();
+  return DisableFramePointerElim(MF) || MFI->hasVarSizedObjects();
 }
 
 void SystemZRegisterInfo::
@@ -194,14 +178,13 @@ void emitSPUpdate(MachineBasicBlock &MBB, MachineBasicBlock::iterator &MBBI,
     Chunk = (1LL << 15) - 1;
   }
 
-  DebugLoc DL = (MBBI != MBB.end() ? MBBI->getDebugLoc() :
-                 DebugLoc::getUnknownLoc());
+  DebugLoc DL = MBBI != MBB.end() ? MBBI->getDebugLoc() : DebugLoc();
 
   while (Offset) {
     uint64_t ThisVal = (Offset > Chunk) ? Chunk : Offset;
     MachineInstr *MI =
       BuildMI(MBB, MBBI, DL, TII.get(Opc), SystemZ::R15D)
-      .addReg(SystemZ::R15D).addImm((isSub ? -(int64_t)ThisVal : ThisVal));
+      .addReg(SystemZ::R15D).addImm(isSub ? -ThisVal : ThisVal);
     // The PSW implicit def is dead.
     MI->getOperand(3).setIsDead();
     Offset -= ThisVal;
@@ -215,8 +198,7 @@ void SystemZRegisterInfo::emitPrologue(MachineFunction &MF) const {
   SystemZMachineFunctionInfo *SystemZMFI =
     MF.getInfo<SystemZMachineFunctionInfo>();
   MachineBasicBlock::iterator MBBI = MBB.begin();
-  DebugLoc DL = (MBBI != MBB.end() ? MBBI->getDebugLoc() :
-                 DebugLoc::getUnknownLoc());
+  DebugLoc DL = MBBI != MBB.end() ? MBBI->getDebugLoc() : DebugLoc();
 
   // Get the number of bytes to allocate from the FrameInfo.
   // Note that area for callee-saved stuff is already allocated, thus we need to

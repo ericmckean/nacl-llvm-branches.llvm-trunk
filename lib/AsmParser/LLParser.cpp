@@ -39,6 +39,27 @@ bool LLParser::Run() {
 /// ValidateEndOfModule - Do final validity and sanity checks at the end of the
 /// module.
 bool LLParser::ValidateEndOfModule() {
+  // Handle any instruction metadata forward references.
+  if (!ForwardRefInstMetadata.empty()) {
+    for (DenseMap<Instruction*, std::vector<MDRef> >::iterator
+         I = ForwardRefInstMetadata.begin(), E = ForwardRefInstMetadata.end();
+         I != E; ++I) {
+      Instruction *Inst = I->first;
+      const std::vector<MDRef> &MDList = I->second;
+      
+      for (unsigned i = 0, e = MDList.size(); i != e; ++i) {
+        unsigned SlotNo = MDList[i].MDSlot;
+        
+        if (SlotNo >= NumberedMetadata.size() || NumberedMetadata[SlotNo] == 0)
+          return Error(MDList[i].Loc, "use of undefined metadata '!" +
+                       utostr(SlotNo) + "'");
+        Inst->setMetadata(MDList[i].MDKind, NumberedMetadata[SlotNo]);
+      }
+    }
+    ForwardRefInstMetadata.clear();
+  }
+  
+  
   // Update auto-upgraded malloc calls to "malloc".
   // FIXME: Remove in LLVM 3.0.
   if (MallocF) {
@@ -175,19 +196,20 @@ bool LLParser::ParseTopLevelEntities() {
     // optional leading prefixes, the production is:
     // GlobalVar ::= OptionalLinkage OptionalVisibility OptionalThreadLocal
     //               OptionalAddrSpace ('constant'|'global') ...
-    case lltok::kw_private :       // OptionalLinkage
-    case lltok::kw_linker_private: // OptionalLinkage
-    case lltok::kw_internal:       // OptionalLinkage
-    case lltok::kw_weak:           // OptionalLinkage
-    case lltok::kw_weak_odr:       // OptionalLinkage
-    case lltok::kw_linkonce:       // OptionalLinkage
-    case lltok::kw_linkonce_odr:   // OptionalLinkage
-    case lltok::kw_appending:      // OptionalLinkage
-    case lltok::kw_dllexport:      // OptionalLinkage
-    case lltok::kw_common:         // OptionalLinkage
-    case lltok::kw_dllimport:      // OptionalLinkage
-    case lltok::kw_extern_weak:    // OptionalLinkage
-    case lltok::kw_external: {     // OptionalLinkage
+    case lltok::kw_private:             // OptionalLinkage
+    case lltok::kw_linker_private:      // OptionalLinkage
+    case lltok::kw_linker_private_weak: // OptionalLinkage
+    case lltok::kw_internal:            // OptionalLinkage
+    case lltok::kw_weak:                // OptionalLinkage
+    case lltok::kw_weak_odr:            // OptionalLinkage
+    case lltok::kw_linkonce:            // OptionalLinkage
+    case lltok::kw_linkonce_odr:        // OptionalLinkage
+    case lltok::kw_appending:           // OptionalLinkage
+    case lltok::kw_dllexport:           // OptionalLinkage
+    case lltok::kw_common:              // OptionalLinkage
+    case lltok::kw_dllimport:           // OptionalLinkage
+    case lltok::kw_extern_weak:         // OptionalLinkage
+    case lltok::kw_external: {          // OptionalLinkage
       unsigned Linkage, Visibility;
       if (ParseOptionalLinkage(Linkage) ||
           ParseOptionalVisibility(Visibility) ||
@@ -301,9 +323,8 @@ bool LLParser::ParseUnnamedType() {
       return true;
   }
 
-  assert(Lex.getKind() == lltok::kw_type);
   LocTy TypeLoc = Lex.getLoc();
-  Lex.Lex(); // eat kw_type
+  if (ParseToken(lltok::kw_type, "expected 'type' after '='")) return true;
 
   PATypeHolder Ty(Type::getVoidTy(Context));
   if (ParseType(Ty)) return true;
@@ -472,18 +493,30 @@ bool LLParser::ParseMDString(MDString *&Result) {
 
 // MDNode:
 //   ::= '!' MDNodeNumber
+//
+/// This version of ParseMDNodeID returns the slot number and null in the case
+/// of a forward reference.
+bool LLParser::ParseMDNodeID(MDNode *&Result, unsigned &SlotNo) {
+  // !{ ..., !42, ... }
+  if (ParseUInt32(SlotNo)) return true;
+
+  // Check existing MDNode.
+  if (SlotNo < NumberedMetadata.size() && NumberedMetadata[SlotNo] != 0)
+    Result = NumberedMetadata[SlotNo];
+  else
+    Result = 0;
+  return false;
+}
+
 bool LLParser::ParseMDNodeID(MDNode *&Result) {
   // !{ ..., !42, ... }
   unsigned MID = 0;
-  if (ParseUInt32(MID)) return true;
+  if (ParseMDNodeID(Result, MID)) return true;
 
-  // Check existing MDNode.
-  if (MID < NumberedMetadata.size() && NumberedMetadata[MID] != 0) {
-    Result = NumberedMetadata[MID];
-    return false;
-  }
+  // If not a forward reference, just return it now.
+  if (Result) return false;
 
-  // Create MDNode forward reference.
+  // Otherwise, create MDNode forward reference.
 
   // FIXME: This is not unique enough!
   std::string FwdRefName = "llvm.mdnode.fwdref." + utostr(MID);
@@ -510,26 +543,20 @@ bool LLParser::ParseNamedMetadata() {
       ParseToken(lltok::lbrace, "Expected '{' here"))
     return true;
 
-  SmallVector<MDNode *, 8> Elts;
-  do {
-    // Null is a special case since it is typeless.
-    if (EatIfPresent(lltok::kw_null)) {
-      Elts.push_back(0);
-      continue;
-    }
-
-    if (ParseToken(lltok::exclaim, "Expected '!' here"))
-      return true;
+  NamedMDNode *NMD = M->getOrInsertNamedMetadata(Name);
+  if (Lex.getKind() != lltok::rbrace)
+    do {
+      if (ParseToken(lltok::exclaim, "Expected '!' here"))
+        return true;
     
-    MDNode *N = 0;
-    if (ParseMDNodeID(N)) return true;
-    Elts.push_back(N);
-  } while (EatIfPresent(lltok::comma));
+      MDNode *N = 0;
+      if (ParseMDNodeID(N)) return true;
+      NMD->addOperand(N);
+    } while (EatIfPresent(lltok::comma));
 
   if (ParseToken(lltok::rbrace, "expected end of metadata node"))
     return true;
 
-  NamedMDNode::Create(Context, Name, Elts.data(), Elts.size(), M);
   return false;
 }
 
@@ -597,7 +624,8 @@ bool LLParser::ParseAlias(const std::string &Name, LocTy NameLoc,
       Linkage != GlobalValue::WeakODRLinkage &&
       Linkage != GlobalValue::InternalLinkage &&
       Linkage != GlobalValue::PrivateLinkage &&
-      Linkage != GlobalValue::LinkerPrivateLinkage)
+      Linkage != GlobalValue::LinkerPrivateLinkage &&
+      Linkage != GlobalValue::LinkerPrivateWeakLinkage)
     return Error(LinkageLoc, "invalid linkage type for alias");
 
   Constant *Aliasee;
@@ -981,11 +1009,13 @@ bool LLParser::ParseOptionalAttrs(unsigned &Attrs, unsigned AttrKind) {
 ///   ::= /*empty*/
 ///   ::= 'private'
 ///   ::= 'linker_private'
+///   ::= 'linker_private_weak'
 ///   ::= 'internal'
 ///   ::= 'weak'
 ///   ::= 'weak_odr'
 ///   ::= 'linkonce'
 ///   ::= 'linkonce_odr'
+///   ::= 'available_externally'
 ///   ::= 'appending'
 ///   ::= 'dllexport'
 ///   ::= 'common'
@@ -998,6 +1028,9 @@ bool LLParser::ParseOptionalLinkage(unsigned &Res, bool &HasLinkage) {
   default:                       Res=GlobalValue::ExternalLinkage; return false;
   case lltok::kw_private:        Res = GlobalValue::PrivateLinkage;       break;
   case lltok::kw_linker_private: Res = GlobalValue::LinkerPrivateLinkage; break;
+  case lltok::kw_linker_private_weak:
+    Res = GlobalValue::LinkerPrivateWeakLinkage;
+    break;
   case lltok::kw_internal:       Res = GlobalValue::InternalLinkage;      break;
   case lltok::kw_weak:           Res = GlobalValue::WeakAnyLinkage;       break;
   case lltok::kw_weak_odr:       Res = GlobalValue::WeakODRLinkage;       break;
@@ -1042,6 +1075,7 @@ bool LLParser::ParseOptionalVisibility(unsigned &Res) {
 ///   ::= 'coldcc'
 ///   ::= 'x86_stdcallcc'
 ///   ::= 'x86_fastcallcc'
+///   ::= 'x86_thiscallcc'
 ///   ::= 'arm_apcscc'
 ///   ::= 'arm_aapcscc'
 ///   ::= 'arm_aapcs_vfpcc'
@@ -1056,6 +1090,7 @@ bool LLParser::ParseOptionalCallingConv(CallingConv::ID &CC) {
   case lltok::kw_coldcc:         CC = CallingConv::Cold; break;
   case lltok::kw_x86_stdcallcc:  CC = CallingConv::X86_StdCall; break;
   case lltok::kw_x86_fastcallcc: CC = CallingConv::X86_FastCall; break;
+  case lltok::kw_x86_thiscallcc: CC = CallingConv::X86_ThisCall; break;
   case lltok::kw_arm_apcscc:     CC = CallingConv::ARM_APCS; break;
   case lltok::kw_arm_aapcscc:    CC = CallingConv::ARM_AAPCS; break;
   case lltok::kw_arm_aapcs_vfpcc:CC = CallingConv::ARM_AAPCS_VFP; break;
@@ -1078,9 +1113,7 @@ bool LLParser::ParseOptionalCallingConv(CallingConv::ID &CC) {
 
 /// ParseInstructionMetadata
 ///   ::= !dbg !42 (',' !dbg !57)*
-bool LLParser::
-ParseInstructionMetadata(SmallVectorImpl<std::pair<unsigned,
-                                                 MDNode *> > &Result){
+bool LLParser::ParseInstructionMetadata(Instruction *Inst) {
   do {
     if (Lex.getKind() != lltok::MetadataVar)
       return TokError("expected metadata after comma");
@@ -1089,12 +1122,21 @@ ParseInstructionMetadata(SmallVectorImpl<std::pair<unsigned,
     Lex.Lex();
 
     MDNode *Node;
+    unsigned NodeID;
+    SMLoc Loc = Lex.getLoc();
     if (ParseToken(lltok::exclaim, "expected '!' here") ||
-        ParseMDNodeID(Node))
+        ParseMDNodeID(Node, NodeID))
       return true;
 
     unsigned MDK = M->getMDKindID(Name.c_str());
-    Result.push_back(std::make_pair(MDK, Node));
+    if (Node) {
+      // If we got the node, add it to the instruction.
+      Inst->setMetadata(MDK, Node);
+    } else {
+      MDRef R = { Loc, MDK, NodeID };
+      // Otherwise, remember that this should be resolved later.
+      ForwardRefInstMetadata[Inst].push_back(R);
+    }
 
     // If this is the end of the list, we're done.
   } while (EatIfPresent(lltok::comma));
@@ -1112,6 +1154,8 @@ bool LLParser::ParseOptionalAlignment(unsigned &Alignment) {
   if (ParseUInt32(Alignment)) return true;
   if (!isPowerOf2_32(Alignment))
     return Error(AlignLoc, "alignment is not a power of two");
+  if (Alignment > Value::MaximumAlignment)
+    return Error(AlignLoc, "huge alignments are not supported yet");
   return false;
 }
 
@@ -1131,10 +1175,11 @@ bool LLParser::ParseOptionalCommaAlign(unsigned &Alignment,
       return false;
     }
     
-    if (Lex.getKind() == lltok::kw_align) {
-      if (ParseOptionalAlignment(Alignment)) return true;
-    } else
-      return true;
+    if (Lex.getKind() != lltok::kw_align)
+      return Error(Lex.getLoc(), "expected metadata or 'align'");
+    
+    LocTy AlignLoc = Lex.getLoc();
+    if (ParseOptionalAlignment(Alignment)) return true;
   }
 
   return false;
@@ -1973,33 +2018,8 @@ bool LLParser::ParseValID(ValID &ID, PerFunctionState *PFS) {
     ID.StrVal = Lex.getStrVal();
     ID.Kind = ValID::t_LocalName;
     break;
-  case lltok::exclaim:   // !{...} MDNode, !"foo" MDString
-    Lex.Lex();
-    
-    if (EatIfPresent(lltok::lbrace)) {
-      SmallVector<Value*, 16> Elts;
-      if (ParseMDNodeVector(Elts, PFS) ||
-          ParseToken(lltok::rbrace, "expected end of metadata node"))
-        return true;
-
-      ID.MDNodeVal = MDNode::get(Context, Elts.data(), Elts.size());
-      ID.Kind = ValID::t_MDNode;
-      return false;
-    }
-
-    // Standalone metadata reference
-    // !{ ..., !42, ... }
-    if (Lex.getKind() == lltok::APSInt) {
-      if (ParseMDNodeID(ID.MDNodeVal)) return true;
-      ID.Kind = ValID::t_MDNode;
-      return false;
-    }
-    
-    // MDString:
-    //   ::= '!' STRINGCONSTANT
-    if (ParseMDString(ID.MDStringVal)) return true;
-    ID.Kind = ValID::t_MDString;
-    return false;
+  case lltok::exclaim:   // !42, !{...}, or !"foo"
+    return ParseMetadataValue(ID, PFS);
   case lltok::APSInt:
     ID.APSIntVal = Lex.getAPSIntVal();
     ID.Kind = ValID::t_APSInt;
@@ -2312,11 +2332,28 @@ bool LLParser::ParseValID(ValID &ID, PerFunctionState *PFS) {
       if (NSW)
         return Error(ModifierLoc, "nsw only applies to integer operations");
     }
-    // API compatibility: Accept either integer or floating-point types with
-    // add, sub, and mul.
-    if (!Val0->getType()->isIntOrIntVectorTy() &&
-        !Val0->getType()->isFPOrFPVectorTy())
-      return Error(ID.Loc,"constexpr requires integer, fp, or vector operands");
+    // Check that the type is valid for the operator.
+    switch (Opc) {
+    case Instruction::Add:
+    case Instruction::Sub:
+    case Instruction::Mul:
+    case Instruction::UDiv:
+    case Instruction::SDiv:
+    case Instruction::URem:
+    case Instruction::SRem:
+      if (!Val0->getType()->isIntOrIntVectorTy())
+        return Error(ID.Loc, "constexpr requires integer operands");
+      break;
+    case Instruction::FAdd:
+    case Instruction::FSub:
+    case Instruction::FMul:
+    case Instruction::FDiv:
+    case Instruction::FRem:
+      if (!Val0->getType()->isFPOrFPVectorTy())
+        return Error(ID.Loc, "constexpr requires fp operands");
+      break;
+    default: llvm_unreachable("Unknown binary operator!");
+    }
     unsigned Flags = 0;
     if (NUW)   Flags |= OverflowingBinaryOperator::NoUnsignedWrap;
     if (NSW)   Flags |= OverflowingBinaryOperator::NoSignedWrap;
@@ -2460,6 +2497,42 @@ bool LLParser::ParseGlobalValueVector(SmallVectorImpl<Constant*> &Elts) {
     Elts.push_back(C);
   }
 
+  return false;
+}
+
+/// ParseMetadataValue
+///  ::= !42
+///  ::= !{...}
+///  ::= !"string"
+bool LLParser::ParseMetadataValue(ValID &ID, PerFunctionState *PFS) {
+  assert(Lex.getKind() == lltok::exclaim);
+  Lex.Lex();
+
+  // MDNode:
+  // !{ ... }
+  if (EatIfPresent(lltok::lbrace)) {
+    SmallVector<Value*, 16> Elts;
+    if (ParseMDNodeVector(Elts, PFS) ||
+        ParseToken(lltok::rbrace, "expected end of metadata node"))
+      return true;
+
+    ID.MDNodeVal = MDNode::get(Context, Elts.data(), Elts.size());
+    ID.Kind = ValID::t_MDNode;
+    return false;
+  }
+
+  // Standalone metadata reference
+  // !42
+  if (Lex.getKind() == lltok::APSInt) {
+    if (ParseMDNodeID(ID.MDNodeVal)) return true;
+    ID.Kind = ValID::t_MDNode;
+    return false;
+  }
+
+  // MDString:
+  //   ::= '!' STRINGCONSTANT
+  if (ParseMDString(ID.MDStringVal)) return true;
+  ID.Kind = ValID::t_MDString;
   return false;
 }
 
@@ -2646,6 +2719,7 @@ bool LLParser::ParseFunctionHeader(Function *&Fn, bool isDefine) {
     break;
   case GlobalValue::PrivateLinkage:
   case GlobalValue::LinkerPrivateLinkage:
+  case GlobalValue::LinkerPrivateWeakLinkage:
   case GlobalValue::InternalLinkage:
   case GlobalValue::AvailableExternallyLinkage:
   case GlobalValue::LinkOnceAnyLinkage:
@@ -2748,6 +2822,10 @@ bool LLParser::ParseFunctionHeader(Function *&Fn, bool isDefine) {
       ForwardRefVals.find(FunctionName);
     if (FRVI != ForwardRefVals.end()) {
       Fn = M->getFunction(FunctionName);
+      if (Fn->getType() != PFT)
+        return Error(FRVI->second.second, "invalid forward reference to "
+                     "function '" + FunctionName + "' with wrong type!");
+      
       ForwardRefVals.erase(FRVI);
     } else if ((Fn = M->getFunction(FunctionName))) {
       // If this function already exists in the symbol table, then it is
@@ -2893,26 +2971,23 @@ bool LLParser::ParseBasicBlock(PerFunctionState &PFS) {
     default: assert(0 && "Unknown ParseInstruction result!");
     case InstError: return true;
     case InstNormal:
+      BB->getInstList().push_back(Inst);
+
       // With a normal result, we check to see if the instruction is followed by
       // a comma and metadata.
       if (EatIfPresent(lltok::comma))
-        if (ParseInstructionMetadata(MetadataOnInst))
+        if (ParseInstructionMetadata(Inst))
           return true;
       break;
     case InstExtraComma:
+      BB->getInstList().push_back(Inst);
+
       // If the instruction parser ate an extra comma at the end of it, it
       // *must* be followed by metadata.
-      if (ParseInstructionMetadata(MetadataOnInst))
+      if (ParseInstructionMetadata(Inst))
         return true;
       break;        
     }
-
-    // Set metadata attached with this instruction.
-    for (unsigned i = 0, e = MetadataOnInst.size(); i != e; ++i)
-      Inst->setMetadata(MetadataOnInst[i].first, MetadataOnInst[i].second);
-    MetadataOnInst.clear();
-
-    BB->getInstList().push_back(Inst);
 
     // Set the name on the instruction.
     if (PFS.SetInstName(NameID, NameStr, NameLoc, Inst)) return true;
@@ -2960,8 +3035,7 @@ int LLParser::ParseInstruction(Instruction *&Inst, BasicBlock *BB,
       if (EatIfPresent(lltok::kw_nuw))
         NUW = true;
     }
-    // API compatibility: Accept either integer or floating-point types.
-    bool Result = ParseArithmetic(Inst, PFS, KeywordVal, 0);
+    bool Result = ParseArithmetic(Inst, PFS, KeywordVal, 1);
     if (!Result) {
       if (!Inst->getType()->isIntOrIntVectorTy()) {
         if (NUW)
@@ -3733,8 +3807,8 @@ int LLParser::ParseAlloc(Instruction *&Inst, PerFunctionState &PFS,
     }
   }
 
-  if (Size && !Size->getType()->isIntegerTy(32))
-    return Error(SizeLoc, "element count must be i32");
+  if (Size && !Size->getType()->isIntegerTy())
+    return Error(SizeLoc, "element count must have integer type");
 
   if (isAlloca) {
     Inst = new AllocaInst(Ty, Size, Alignment);
@@ -3743,6 +3817,8 @@ int LLParser::ParseAlloc(Instruction *&Inst, PerFunctionState &PFS,
 
   // Autoupgrade old malloc instruction to malloc call.
   // FIXME: Remove in LLVM 3.0.
+  if (Size && !Size->getType()->isIntegerTy(32))
+    return Error(SizeLoc, "element count must be i32");
   const Type *IntPtrTy = Type::getInt32Ty(Context);
   Constant *AllocSize = ConstantExpr::getSizeOf(Ty);
   AllocSize = ConstantExpr::getTruncOrBitCast(AllocSize, IntPtrTy);
@@ -3915,6 +3991,10 @@ int LLParser::ParseInsertValue(Instruction *&Inst, PerFunctionState &PFS) {
 ///   ::= 'null' | TypeAndValue
 bool LLParser::ParseMDNodeVector(SmallVectorImpl<Value*> &Elts,
                                  PerFunctionState *PFS) {
+  // Check for an empty list.
+  if (Lex.getKind() == lltok::rbrace)
+    return false;
+
   do {
     // Null is a special case since it is typeless.
     if (EatIfPresent(lltok::kw_null)) {

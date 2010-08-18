@@ -102,7 +102,7 @@ lto_module_is_object_file_in_memory(const void* mem, size_t length);
  */
 extern bool
 lto_module_is_object_file_in_memory_for_target(const void* mem, size_t length, 
-                                               const char* target_triple_prefix);
+                                              const char* target_triple_prefix);
 
 
 /**
@@ -203,6 +203,13 @@ lto_codegen_set_debug_model(lto_code_gen_t cg, lto_debug_model);
  */
 extern bool
 lto_codegen_set_pic_model(lto_code_gen_t cg, lto_codegen_model);
+
+
+/**
+ * Sets the cpu to generate code for.
+ */
+extern void
+lto_codegen_set_cpu(lto_code_gen_t cg, const char *cpu);
 
 
 /**

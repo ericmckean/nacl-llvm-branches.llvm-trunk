@@ -26,12 +26,18 @@
 // Collection of symbol name/value pairs to be searched prior to any libraries.
 static std::map<std::string, void*> *ExplicitSymbols = 0;
 
-static struct ExplicitSymbolsDeleter {
+namespace {
+
+struct ExplicitSymbolsDeleter {
   ~ExplicitSymbolsDeleter() {
     if (ExplicitSymbols)
       delete ExplicitSymbols;
   }
-} Dummy;
+};
+
+}
+
+static ExplicitSymbolsDeleter Dummy;
 
 void llvm::sys::DynamicLibrary::AddSymbol(const char* symbolName,
                                           void *symbolValue) {
@@ -46,6 +52,7 @@ void llvm::sys::DynamicLibrary::AddSymbol(const char* symbolName,
 
 #else
 
+#if HAVE_DLFCN_H
 #include <dlfcn.h>
 using namespace llvm;
 using namespace llvm::sys;
@@ -65,11 +72,28 @@ bool DynamicLibrary::LoadLibraryPermanently(const char *Filename,
     if (ErrMsg) *ErrMsg = dlerror();
     return true;
   }
+#ifdef __CYGWIN__
+  // Cygwin searches symbols only in the main
+  // with the handle of dlopen(NULL, RTLD_GLOBAL).
+  if (Filename == NULL)
+    H = RTLD_DEFAULT;
+#endif
   if (OpenedHandles == 0)
     OpenedHandles = new std::vector<void *>();
   OpenedHandles->push_back(H);
   return false;
 }
+#else
+
+using namespace llvm;
+using namespace llvm::sys;
+
+bool DynamicLibrary::LoadLibraryPermanently(const char *Filename,
+                                            std::string *ErrMsg) {
+  if (ErrMsg) *ErrMsg = "dlopen() not supported on this platform";
+  return true;
+}
+#endif
 
 namespace llvm {
 void *SearchForAddressOfSpecialSymbol(const char* symbolName);
@@ -86,6 +110,7 @@ void* DynamicLibrary::SearchForAddressOfSymbol(const char* symbolName) {
       return I->second;
   }
 
+#if HAVE_DLFCN_H
   // Now search the libraries.
   if (OpenedHandles) {
     for (std::vector<void *>::iterator I = OpenedHandles->begin(),
@@ -97,6 +122,7 @@ void* DynamicLibrary::SearchForAddressOfSymbol(const char* symbolName) {
       }
     }
   }
+#endif
 
   if (void *Result = llvm::SearchForAddressOfSpecialSymbol(symbolName))
     return Result;

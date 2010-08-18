@@ -23,7 +23,7 @@ namespace {
   class ARMSFIBranch : public MachineFunctionPass {
   public:
     static char ID;
-    ARMSFIBranch() : MachineFunctionPass(&ID) {}
+    ARMSFIBranch() : MachineFunctionPass(ID) {}
 
     const TargetInstrInfo *TII;
 
@@ -81,6 +81,8 @@ static bool IsIndirectJump(const MachineInstr &MI) {
    default: return false;
 
    case ARM::BRIND:
+   case ARM::TAILJMPr:
+   case ARM::TAILJMPrND:
     return true;
   }
 }

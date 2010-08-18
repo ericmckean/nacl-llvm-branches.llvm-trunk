@@ -74,20 +74,6 @@ const unsigned* AlphaRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF)
   return CalleeSavedRegs;
 }
 
-const TargetRegisterClass* const*
-AlphaRegisterInfo::getCalleeSavedRegClasses(const MachineFunction *MF) const {
-  static const TargetRegisterClass * const CalleeSavedRegClasses[] = {
-    &Alpha::GPRCRegClass, &Alpha::GPRCRegClass,
-    &Alpha::GPRCRegClass, &Alpha::GPRCRegClass,
-    &Alpha::GPRCRegClass, &Alpha::GPRCRegClass,
-    &Alpha::F8RCRegClass, &Alpha::F8RCRegClass,
-    &Alpha::F8RCRegClass, &Alpha::F8RCRegClass,
-    &Alpha::F8RCRegClass, &Alpha::F8RCRegClass,
-    &Alpha::F8RCRegClass, &Alpha::F8RCRegClass,  0
-  };
-  return CalleeSavedRegClasses;
-}
-
 BitVector AlphaRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   BitVector Reserved(getNumRegs());
   Reserved.set(Alpha::R15);
@@ -207,21 +193,19 @@ void AlphaRegisterInfo::emitPrologue(MachineFunction &MF) const {
   MachineBasicBlock &MBB = MF.front();   // Prolog goes in entry BB
   MachineBasicBlock::iterator MBBI = MBB.begin();
   MachineFrameInfo *MFI = MF.getFrameInfo();
-  DebugLoc dl = (MBBI != MBB.end() ?
-                 MBBI->getDebugLoc() : DebugLoc::getUnknownLoc());
+  DebugLoc dl = (MBBI != MBB.end() ? MBBI->getDebugLoc() : DebugLoc());
   bool FP = hasFP(MF);
 
   //handle GOP offset
   BuildMI(MBB, MBBI, dl, TII.get(Alpha::LDAHg), Alpha::R29)
-    .addGlobalAddress(const_cast<Function*>(MF.getFunction()))
+    .addGlobalAddress(MF.getFunction())
     .addReg(Alpha::R27).addImm(++curgpdist);
   BuildMI(MBB, MBBI, dl, TII.get(Alpha::LDAg), Alpha::R29)
-    .addGlobalAddress(const_cast<Function*>(MF.getFunction()))
+    .addGlobalAddress(MF.getFunction())
     .addReg(Alpha::R29).addImm(curgpdist);
 
-  //evil const_cast until MO stuff setup to handle const
   BuildMI(MBB, MBBI, dl, TII.get(Alpha::ALTENT))
-    .addGlobalAddress(const_cast<Function*>(MF.getFunction()));
+    .addGlobalAddress(MF.getFunction());
 
   // Get the number of bytes to allocate from the FrameInfo
   long NumBytes = MFI->getStackSize();
@@ -249,10 +233,7 @@ void AlphaRegisterInfo::emitPrologue(MachineFunction &MF) const {
     BuildMI(MBB, MBBI, dl, TII.get(Alpha::LDA), Alpha::R30)
       .addImm(getLower16(NumBytes)).addReg(Alpha::R30);
   } else {
-    std::string msg;
-    raw_string_ostream Msg(msg); 
-    Msg << "Too big a stack frame at " << NumBytes;
-    llvm_report_error(Msg.str());
+    report_fatal_error("Too big a stack frame at " + Twine(NumBytes));
   }
 
   //now if we need to, save the old FP and set the new
@@ -301,10 +282,7 @@ void AlphaRegisterInfo::emitEpilogue(MachineFunction &MF,
       BuildMI(MBB, MBBI, dl, TII.get(Alpha::LDA), Alpha::R30)
         .addImm(getLower16(NumBytes)).addReg(Alpha::R30);
     } else {
-      std::string msg;
-      raw_string_ostream Msg(msg); 
-      Msg << "Too big a stack frame at " << NumBytes;
-      llvm_report_error(Msg.str());
+      report_fatal_error("Too big a stack frame at " + Twine(NumBytes));
     }
   }
 }

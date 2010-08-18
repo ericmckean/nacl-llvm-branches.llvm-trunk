@@ -12,12 +12,19 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/MC/MCParser/AsmLexer.h"
 #include "llvm/MC/MCParser/MCAsmLexer.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCCodeEmitter.h"
 #include "llvm/MC/MCInstPrinter.h"
 #include "llvm/MC/MCSectionMachO.h"
 #include "llvm/MC/MCStreamer.h"
+#include "llvm/Target/TargetAsmBackend.h"
+#include "llvm/Target/TargetAsmParser.h"
+#include "llvm/Target/TargetData.h"
+#include "llvm/Target/TargetRegistry.h"
+#include "llvm/Target/TargetMachine.h"  // FIXME.
+#include "llvm/Target/TargetSelect.h"
 #include "llvm/ADT/OwningPtr.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FormattedStream.h"
@@ -28,13 +35,6 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/System/Host.h"
 #include "llvm/System/Signals.h"
-#include "llvm/Target/TargetAsmBackend.h"
-#include "llvm/Target/TargetAsmParser.h"
-#include "llvm/Target/TargetData.h"
-#include "llvm/Target/TargetRegistry.h"
-#include "llvm/Target/TargetMachine.h"  // FIXME.
-#include "llvm/Target/TargetSelect.h"
-#include "llvm/MC/MCParser/AsmParser.h"
 #include "Disassembler.h"
 using namespace llvm;
 
@@ -51,11 +51,22 @@ ShowEncoding("show-encoding", cl::desc("Show instruction encodings"));
 static cl::opt<bool>
 ShowInst("show-inst", cl::desc("Show internal instruction representation"));
 
+static cl::opt<bool>
+ShowInstOperands("show-inst-operands",
+                 cl::desc("Show instructions operands as parsed"));
+
 static cl::opt<unsigned>
 OutputAsmVariant("output-asm-variant",
                  cl::desc("Syntax variant to use for output printing"));
 
+static cl::opt<bool>
+RelaxAll("mc-relax-all", cl::desc("Relax all fixups"));
+
+static cl::opt<bool>
+EnableLogging("enable-api-logging", cl::desc("Enable MC API logging"));
+
 enum OutputFileType {
+  OFT_Null,
   OFT_AssemblyFile,
   OFT_ObjectFile
 };
@@ -65,12 +76,11 @@ FileType("filetype", cl::init(OFT_AssemblyFile),
   cl::values(
        clEnumValN(OFT_AssemblyFile, "asm",
                   "Emit an assembly ('.s') file"),
+       clEnumValN(OFT_Null, "null",
+                  "Don't emit anything (for timing purposes)"),
        clEnumValN(OFT_ObjectFile, "obj",
                   "Emit a native object ('.o') file"),
        clEnumValEnd));
-
-static cl::opt<bool>
-Force("f", cl::desc("Enable binary output on terminals"));
 
 static cl::list<std::string>
 IncludeDirs("I", cl::desc("Directory of include files"),
@@ -91,7 +101,8 @@ NoInitialTextSection("n", cl::desc(
 enum ActionType {
   AC_AsLex,
   AC_Assemble,
-  AC_Disassemble
+  AC_Disassemble,
+  AC_EDisassemble
 };
 
 static cl::opt<ActionType>
@@ -103,6 +114,8 @@ Action(cl::desc("Action to perform:"),
                              "Assemble a .s file (default)"),
                   clEnumValN(AC_Disassemble, "disassemble",
                              "Disassemble strings of hex bytes"),
+                  clEnumValN(AC_EDisassemble, "edis",
+                             "Enhanced disassembly of strings of hex bytes"),
                   clEnumValEnd));
 
 static const Target *GetTarget(const char *ProgName) {
@@ -152,13 +165,13 @@ static int AsLexInput(const char *ProgName) {
   if (!TheTarget)
     return 1;
 
-  const MCAsmInfo *MAI = TheTarget->createAsmInfo(TripleName);
+  llvm::OwningPtr<MCAsmInfo> MAI(TheTarget->createAsmInfo(TripleName));
   assert(MAI && "Unable to create target asm info!");
 
   AsmLexer Lexer(*MAI);
-  
+  Lexer.setBuffer(SrcMgr.getMemoryBuffer(0));
+
   bool Error = false;
-  
   while (Lexer.Lex().isNot(AsmToken::Eof)) {
     switch (Lexer.getKind()) {
     default:
@@ -260,7 +273,7 @@ static int AssembleInput(const char *ProgName) {
   SrcMgr.setIncludeDirs(IncludeDirs);
   
   
-  const MCAsmInfo *MAI = TheTarget->createAsmInfo(TripleName);
+  llvm::OwningPtr<MCAsmInfo> MAI(TheTarget->createAsmInfo(TripleName));
   assert(MAI && "Unable to create target asm info!");
   
   MCContext Ctx(*MAI);
@@ -278,38 +291,44 @@ static int AssembleInput(const char *ProgName) {
     return 1;
   }
 
-  OwningPtr<MCInstPrinter> IP;
-  OwningPtr<MCCodeEmitter> CE;
   OwningPtr<MCStreamer> Str;
-  OwningPtr<TargetAsmBackend> TAB;
 
   if (FileType == OFT_AssemblyFile) {
-    IP.reset(TheTarget->createMCInstPrinter(OutputAsmVariant, *MAI, *Out));
+    MCInstPrinter *IP =
+      TheTarget->createMCInstPrinter(OutputAsmVariant, *MAI);
+    MCCodeEmitter *CE = 0;
     if (ShowEncoding)
-      CE.reset(TheTarget->createCodeEmitter(*TM, Ctx));
+      CE = TheTarget->createCodeEmitter(*TM, Ctx);
     Str.reset(createAsmStreamer(Ctx, *Out,TM->getTargetData()->isLittleEndian(),
-                                /*asmverbose*/true, IP.get(), CE.get(),
-                                ShowInst));
+                                /*asmverbose*/true, IP, CE, ShowInst));
+  } else if (FileType == OFT_Null) {
+    Str.reset(createNullStreamer(Ctx));
   } else {
     assert(FileType == OFT_ObjectFile && "Invalid file type!");
-    CE.reset(TheTarget->createCodeEmitter(*TM, Ctx));
-    TAB.reset(TheTarget->createAsmBackend(TripleName));
-    Str.reset(createMachOStreamer(Ctx, *TAB, *Out, CE.get()));
+    MCCodeEmitter *CE = TheTarget->createCodeEmitter(*TM, Ctx);
+    TargetAsmBackend *TAB = TheTarget->createAsmBackend(TripleName);
+    Str.reset(TheTarget->createObjectStreamer(TripleName, Ctx, *TAB,
+                                              *Out, CE, RelaxAll));
   }
 
-  AsmParser Parser(SrcMgr, Ctx, *Str.get(), *MAI);
-  OwningPtr<TargetAsmParser> TAP(TheTarget->createAsmParser(Parser));
+  if (EnableLogging) {
+    Str.reset(createLoggingStreamer(Str.take(), errs()));
+  }
+
+  OwningPtr<MCAsmParser> Parser(createMCAsmParser(*TheTarget, SrcMgr, Ctx,
+                                                   *Str.get(), *MAI));
+  OwningPtr<TargetAsmParser> TAP(TheTarget->createAsmParser(*Parser, *TM));
   if (!TAP) {
     errs() << ProgName 
            << ": error: this target does not support assembly parsing.\n";
     return 1;
   }
 
-  Parser.setTargetParser(*TAP.get());
+  Parser->setShowParsedOperands(ShowInstOperands);
+  Parser->setTargetParser(*TAP.get());
 
-  int Res = Parser.Run(NoInitialTextSection);
-  if (Out != &fouts())
-    delete Out;
+  int Res = Parser->Run(NoInitialTextSection);
+  delete Out;
 
   // Delete output on errors.
   if (Res && OutputFilename != "-")
@@ -318,14 +337,10 @@ static int AssembleInput(const char *ProgName) {
   return Res;
 }
 
-static int DisassembleInput(const char *ProgName) {
-  std::string Error;
-  const Target *TheTarget = TargetRegistry::lookupTarget(TripleName, Error);
-  if (TheTarget == 0) {
-    errs() << ProgName << ": error: unable to get target for '" << TripleName
-    << "', see --version and --triple.\n";
+static int DisassembleInput(const char *ProgName, bool Enhanced) {
+  const Target *TheTarget = GetTarget(ProgName);
+  if (!TheTarget)
     return 0;
-  }
   
   std::string ErrorMessage;
   
@@ -341,7 +356,10 @@ static int DisassembleInput(const char *ProgName) {
     return 1;
   }
   
-  return Disassembler::disassemble(*TheTarget, TripleName, *Buffer);
+  if (Enhanced)
+    return Disassembler::disassembleEnhanced(TripleName, *Buffer);
+  else
+    return Disassembler::disassemble(*TheTarget, TripleName, *Buffer);
 }
 
 
@@ -368,7 +386,9 @@ int main(int argc, char **argv) {
   case AC_Assemble:
     return AssembleInput(argv[0]);
   case AC_Disassemble:
-    return DisassembleInput(argv[0]);
+    return DisassembleInput(argv[0], false);
+  case AC_EDisassemble:
+    return DisassembleInput(argv[0], true);
   }
   
   return 0;
