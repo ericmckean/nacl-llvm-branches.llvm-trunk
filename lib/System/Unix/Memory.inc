@@ -46,6 +46,10 @@ llvm::sys::Memory::AllocateRWX(size_t NumBytes, const MemoryBlock* NearBlock,
   fd = zero_fd;
 #endif
 
+#if defined(__native_client__)
+#define MAP_ANON MAP_ANONYMOUS
+#endif // (__native_client__)
+
   int flags = MAP_PRIVATE |
 #ifdef HAVE_MMAP_ANONYMOUS
   MAP_ANONYMOUS
