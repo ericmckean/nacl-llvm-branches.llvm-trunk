@@ -709,7 +709,11 @@ bool X86NaClRewritePass::PassSandboxingControlFlow(
 #endif
       break;
      case X86::TRAP:
-       MI.setDesc(TII->get(X86::NACL_TRAP));
+       if (is64Bit) {
+         MI.setDesc(TII->get(X86::NACL_TRAP64));
+       } else {
+         MI.setDesc(TII->get(X86::NACL_TRAP32));
+       }
        Modified = true;
        break;
      case X86::JMP32r:
