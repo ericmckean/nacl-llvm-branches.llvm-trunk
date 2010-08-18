@@ -364,14 +364,14 @@ def NoCMov       : Predicate<"!Subtarget->hasCMov()">;
 // FIXME: temporary hack to let codegen assert or generate poor code in case
 // no AVX version of the desired intructions is present, this is better for
 // incremental dev (without fallbacks it's easier to spot what's missing)
-def HasMMX       : Predicate<"Subtarget->hasMMX() & !Subtarget->hasAVX()">;
-def HasSSE1      : Predicate<"Subtarget->hasSSE1() & !Subtarget->hasAVX()">;
-def HasSSE2      : Predicate<"Subtarget->hasSSE2() & !Subtarget->hasAVX()">;
-def HasSSE3      : Predicate<"Subtarget->hasSSE3() & !Subtarget->hasAVX()">;
-def HasSSSE3     : Predicate<"Subtarget->hasSSSE3() & !Subtarget->hasAVX()">;
-def HasSSE41     : Predicate<"Subtarget->hasSSE41() & !Subtarget->hasAVX()">;
-def HasSSE42     : Predicate<"Subtarget->hasSSE42() & !Subtarget->hasAVX()">;
-def HasSSE4A     : Predicate<"Subtarget->hasSSE4A() & !Subtarget->hasAVX()">;
+def HasMMX       : Predicate<"Subtarget->hasMMX() && !Subtarget->hasAVX()">;
+def HasSSE1      : Predicate<"Subtarget->hasSSE1() && !Subtarget->hasAVX()">;
+def HasSSE2      : Predicate<"Subtarget->hasSSE2() && !Subtarget->hasAVX()">;
+def HasSSE3      : Predicate<"Subtarget->hasSSE3() && !Subtarget->hasAVX()">;
+def HasSSSE3     : Predicate<"Subtarget->hasSSSE3() && !Subtarget->hasAVX()">;
+def HasSSE41     : Predicate<"Subtarget->hasSSE41() && !Subtarget->hasAVX()">;
+def HasSSE42     : Predicate<"Subtarget->hasSSE42() && !Subtarget->hasAVX()">;
+def HasSSE4A     : Predicate<"Subtarget->hasSSE4A() && !Subtarget->hasAVX()">;
 
 def HasAVX       : Predicate<"Subtarget->hasAVX()">;
 def HasCLMUL     : Predicate<"Subtarget->hasCLMUL()">;
@@ -1208,7 +1208,7 @@ def MOV32cr : I<0x22, MRMSrcReg, (outs CONTROL_REG:$dst), (ins GR32:$src),
 
 // Extra precision multiplication
 
-// AL is really implied by AX, by the registers in Defs must match the
+// AL is really implied by AX, but the registers in Defs must match the
 // SDNode results (i8, i32).
 let Defs = [AL,EFLAGS,AX], Uses = [AL] in
 def MUL8r  : I<0xF6, MRM4r, (outs),  (ins GR8:$src), "mul{b}\t$src",
@@ -3969,17 +3969,17 @@ def EH_RETURN   : I<0xC3, RawFrm, (outs), (ins GR32:$addr),
 //
 
 // Memory barriers
+
+// TODO: Get this to fold the constant into the instruction.           
+def OR32mrLocked  : I<0x09, MRMDestMem, (outs), (ins i32mem:$dst, GR32:$zero),
+                      "lock\n\t"
+                      "or{l}\t{$zero, $dst|$dst, $zero}",
+                      []>, Requires<[In32BitMode]>, LOCK;
+
 let hasSideEffects = 1 in {
 def Int_MemBarrier : I<0, Pseudo, (outs), (ins),
                      "#MEMBARRIER",
                      [(X86MemBarrier)]>, Requires<[HasSSE2]>;
-
-// TODO: Get this to fold the constant into the instruction.           
-let Uses = [ESP] in
-def Int_MemBarrierNoSSE  : I<0x0B, Pseudo, (outs), (ins GR32:$zero),
-                           "lock\n\t"
-                           "or{l}\t{$zero, (%esp)|(%esp), $zero}",
-                           [(X86MemBarrierNoSSE GR32:$zero)]>, LOCK;
 }
 
 // Atomic swap. These are just normal xchg instructions. But since a memory

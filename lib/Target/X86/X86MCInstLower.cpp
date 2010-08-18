@@ -252,7 +252,13 @@ static void SimplifyShortImmForm(MCInst &Inst, unsigned Opcode) {
 }
 
 /// \brief Simplify things like MOV32rm to MOV32o32a.
-static void SimplifyShortMoveForm(MCInst &Inst, unsigned Opcode) {
+static void SimplifyShortMoveForm(X86AsmPrinter &Printer, MCInst &Inst,
+                                  unsigned Opcode) {
+  // Don't make these simplifications in 64-bit mode; other assemblers don't
+  // perform them because they make the code larger.
+  if (Printer.getSubtarget().is64Bit())
+    return;
+
   bool IsStore = Inst.getOperand(0).isReg() && Inst.getOperand(1).isReg();
   unsigned AddrBase = IsStore;
   unsigned RegOp = IsStore ? 0 : 5;
@@ -374,12 +380,17 @@ void X86MCInstLower::Lower(const MachineInstr *MI, MCInst &OutMI) const {
   case X86::MMX_V_SET0:   LowerUnaryToTwoAddr(OutMI, X86::MMX_PXORrr); break;
   case X86::MMX_V_SETALLONES:
     LowerUnaryToTwoAddr(OutMI, X86::MMX_PCMPEQDrr); break;
-  case X86::FsFLD0SS:     LowerUnaryToTwoAddr(OutMI, X86::PXORrr); break;
-  case X86::FsFLD0SD:     LowerUnaryToTwoAddr(OutMI, X86::PXORrr); break;
-  case X86::V_SET0PS:     LowerUnaryToTwoAddr(OutMI, X86::XORPSrr); break;
-  case X86::V_SET0PD:     LowerUnaryToTwoAddr(OutMI, X86::XORPDrr); break;
-  case X86::V_SET0PI:     LowerUnaryToTwoAddr(OutMI, X86::PXORrr); break;
-  case X86::V_SETALLONES: LowerUnaryToTwoAddr(OutMI, X86::PCMPEQDrr); break;
+  case X86::FsFLD0SS:      LowerUnaryToTwoAddr(OutMI, X86::PXORrr); break;
+  case X86::FsFLD0SD:      LowerUnaryToTwoAddr(OutMI, X86::PXORrr); break;
+  case X86::V_SET0PS:      LowerUnaryToTwoAddr(OutMI, X86::XORPSrr); break;
+  case X86::V_SET0PD:      LowerUnaryToTwoAddr(OutMI, X86::XORPDrr); break;
+  case X86::V_SET0PI:      LowerUnaryToTwoAddr(OutMI, X86::PXORrr); break;
+  case X86::V_SETALLONES:  LowerUnaryToTwoAddr(OutMI, X86::PCMPEQDrr); break;
+  case X86::AVX_SET0PS:    LowerUnaryToTwoAddr(OutMI, X86::VXORPSrr); break;
+  case X86::AVX_SET0PSY:   LowerUnaryToTwoAddr(OutMI, X86::VXORPSYrr); break;
+  case X86::AVX_SET0PD:    LowerUnaryToTwoAddr(OutMI, X86::VXORPDrr); break;
+  case X86::AVX_SET0PDY:   LowerUnaryToTwoAddr(OutMI, X86::VXORPDYrr); break;
+  case X86::AVX_SET0PI:    LowerUnaryToTwoAddr(OutMI, X86::VPXORrr); break;
 
   case X86::MOV16r0:
     LowerSubReg32_Op0(OutMI, X86::MOV32r0);   // MOV16r0 -> MOV32r0
@@ -390,12 +401,14 @@ void X86MCInstLower::Lower(const MachineInstr *MI, MCInst &OutMI) const {
     LowerUnaryToTwoAddr(OutMI, X86::XOR32rr); // MOV32r0 -> XOR32rr
     break;
 
-  // TAILJMPr64, CALL64r, CALL64pcrel32 - These instructions have
+  // TAILJMPr64, [WIN]CALL64r, [WIN]CALL64pcrel32 - These instructions have
   // register inputs modeled as normal uses instead of implicit uses.  As such,
   // truncate off all but the first operand (the callee).  FIXME: Change isel.
   case X86::TAILJMPr64:
   case X86::CALL64r:
-  case X86::CALL64pcrel32: {
+  case X86::CALL64pcrel32:
+  case X86::WINCALL64r:
+  case X86::WINCALL64pcrel32: {
     unsigned Opcode = OutMI.getOpcode();
     MCOperand Saved = OutMI.getOperand(0);
     OutMI = MCInst();
@@ -453,15 +466,13 @@ void X86MCInstLower::Lower(const MachineInstr *MI, MCInst &OutMI) const {
   // MOV64ao8, MOV64o8a
   // XCHG16ar, XCHG32ar, XCHG64ar
   case X86::MOV8mr_NOREX:
-  case X86::MOV8mr:     SimplifyShortMoveForm(OutMI, X86::MOV8ao8); break;
+  case X86::MOV8mr:     SimplifyShortMoveForm(AsmPrinter, OutMI, X86::MOV8ao8); break;
   case X86::MOV8rm_NOREX:
-  case X86::MOV8rm:     SimplifyShortMoveForm(OutMI, X86::MOV8o8a); break;
-  case X86::MOV16mr:    SimplifyShortMoveForm(OutMI, X86::MOV16ao16); break;
-  case X86::MOV16rm:    SimplifyShortMoveForm(OutMI, X86::MOV16o16a); break;
-  case X86::MOV32mr:    SimplifyShortMoveForm(OutMI, X86::MOV32ao32); break;
-  case X86::MOV32rm:    SimplifyShortMoveForm(OutMI, X86::MOV32o32a); break;
-  case X86::MOV64mr:    SimplifyShortMoveForm(OutMI, X86::MOV64ao64); break;
-  case X86::MOV64rm:    SimplifyShortMoveForm(OutMI, X86::MOV64o64a); break;
+  case X86::MOV8rm:     SimplifyShortMoveForm(AsmPrinter, OutMI, X86::MOV8o8a); break;
+  case X86::MOV16mr:    SimplifyShortMoveForm(AsmPrinter, OutMI, X86::MOV16ao16); break;
+  case X86::MOV16rm:    SimplifyShortMoveForm(AsmPrinter, OutMI, X86::MOV16o16a); break;
+  case X86::MOV32mr:    SimplifyShortMoveForm(AsmPrinter, OutMI, X86::MOV32ao32); break;
+  case X86::MOV32rm:    SimplifyShortMoveForm(AsmPrinter, OutMI, X86::MOV32o32a); break;
 
   case X86::ADC8ri:     SimplifyShortImmForm(OutMI, X86::ADC8i8);    break;
   case X86::ADC16ri:    SimplifyShortImmForm(OutMI, X86::ADC16i16);  break;
@@ -515,6 +526,12 @@ void X86AsmPrinter::EmitInstruction(const MachineInstr *MI) {
     }
     return;
 
+  // Emit nothing here but a comment if we can.
+  case X86::Int_MemBarrier:
+    if (OutStreamer.hasRawTextSupport())
+      OutStreamer.EmitRawText(StringRef("\t#MEMBARRIER"));
+    return;
+        
   case X86::TAILJMPr:
   case X86::TAILJMPd:
   case X86::TAILJMPd64:

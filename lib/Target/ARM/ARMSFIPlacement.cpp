@@ -38,7 +38,7 @@ namespace {
   class ARMSFIPlacement : public MachineFunctionPass {
   public:
     static char ID;
-    ARMSFIPlacement() : MachineFunctionPass(&ID) {}
+    ARMSFIPlacement() : MachineFunctionPass(ID) {}
 
     const TargetInstrInfo *TII;
     const TargetRegisterInfo *TRI;

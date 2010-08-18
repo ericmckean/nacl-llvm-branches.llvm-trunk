@@ -29,9 +29,9 @@ using namespace llvm;
 
 // Always verify if expensive checking is enabled.
 #ifdef XDEBUG
-bool VerifyRegionInfo = true;
+static bool VerifyRegionInfo = true;
 #else
-bool VerifyRegionInfo = false;
+static bool VerifyRegionInfo = false;
 #endif
 
 static cl::opt<bool,true>
@@ -136,14 +136,16 @@ bool Region::isSimple() const {
     return false;
 
   for (pred_iterator PI = pred_begin(entry), PE = pred_end(entry); PI != PE;
-       ++PI)
-    if (!contains(*PI)) {
+       ++PI) {
+    BasicBlock *Pred = *PI;
+    if (DT->getNode(Pred) && !contains(Pred)) {
       if (found) {
         isSimple = false;
         break;
       }
       found = true;
     }
+  }
 
   found = false;
 
@@ -589,7 +591,7 @@ void RegionInfo::releaseMemory() {
   TopLevelRegion = 0;
 }
 
-RegionInfo::RegionInfo() : FunctionPass(&ID) {
+RegionInfo::RegionInfo() : FunctionPass(ID) {
   TopLevelRegion = 0;
 }
 

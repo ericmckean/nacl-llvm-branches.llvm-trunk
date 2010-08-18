@@ -703,8 +703,6 @@ ENABLE_BUILT_CLANG
 OPTIMIZE_OPTION
 EXTRA_OPTIONS
 BINUTILS_INCDIR
-ENABLE_LLVMC_DYNAMIC
-ENABLE_LLVMC_DYNAMIC_PLUGINS
 CXX
 CXXFLAGS
 ac_ct_CXX
@@ -1423,10 +1421,6 @@ Optional Features:
   --enable-bindings       Build specific language bindings:
                           all,auto,none,{binding-name} (default=auto)
   --enable-libffi         Check for the presence of libffi (default is NO)
-  --enable-llvmc-dynamic  Link LLVMC dynamically (default is NO, unless on
-                          Win32)
-  --enable-llvmc-dynamic-plugins
-                          Enable dynamic LLVMC plugins (default is YES)
   --enable-ltdl-install   install libltdl
 
 Optional Packages:
@@ -1988,7 +1982,6 @@ for i in `ls ${srcdir}/projects`
 do
   if test -d ${srcdir}/projects/${i} ; then
     case ${i} in
-      CVS) ;;
       sample)       subdirs="$subdirs projects/sample"
     ;;
       privbracket)  subdirs="$subdirs projects/privbracket"
@@ -4696,7 +4689,7 @@ else
 
 fi
 
-if test -d "CVS" -o -d "${srcdir}/CVS" -o -d ".svn" -o -d "${srcdir}/.svn" -o -d ".git" -o -d "${srcdir}/.git"; then
+if test -d ".svn" -o -d "${srcdir}/.svn" -o -d ".git" -o -d "${srcdir}/.git"; then
   cvsbuild="yes"
   optimize="no"
   CVSBUILD=CVSBUILD=1
@@ -5021,6 +5014,11 @@ TARGETS_TO_BUILD=$TARGETS_TO_BUILD
 for a_target in $TARGETS_TO_BUILD; do
   if test "$a_target" = "$LLVM_NATIVE_ARCH"; then
     LLVM_NATIVE_ARCHTARGET="${LLVM_NATIVE_ARCH}Target"
+
+cat >>confdefs.h <<_ACEOF
+#define LLVM_NATIVE_ARCHNAME $LLVM_NATIVE_ARCH
+_ACEOF
+
 
 cat >>confdefs.h <<_ACEOF
 #define LLVM_NATIVE_ARCH $LLVM_NATIVE_ARCHTARGET
@@ -5378,42 +5376,6 @@ else
   llvm_cv_enable_libffi=no
 fi
 
-
-if test "$llvm_cv_os_type" = "Win32" ; then
-   llvmc_dynamic="yes"
-else
-   llvmc_dynamic="no"
-fi
-
-# Check whether --enable-llvmc-dynamic was given.
-if test "${enable_llvmc_dynamic+set}" = set; then
-  enableval=$enable_llvmc_dynamic;
-else
-  enableval=$llvmc_dynamic
-fi
-
-if test ${enableval} = "yes" && test "$ENABLE_PIC" -eq 1 ; then
-   ENABLE_LLVMC_DYNAMIC=ENABLE_LLVMC_DYNAMIC=1
-
-else
-   ENABLE_LLVMC_DYNAMIC=
-
-fi
-
-# Check whether --enable-llvmc-dynamic-plugins was given.
-if test "${enable_llvmc_dynamic_plugins+set}" = set; then
-  enableval=$enable_llvmc_dynamic_plugins;
-else
-  enableval=yes
-fi
-
-if test ${enableval} = "yes" ; then
-   ENABLE_LLVMC_DYNAMIC_PLUGINS=ENABLE_LLVMC_DYNAMIC_PLUGINS=1
-
-else
-   ENABLE_LLVMC_DYNAMIC_PLUGINS=
-
-fi
 
 
 ac_ext=c
@@ -8730,6 +8692,31 @@ fi
 done
 
 
+{ echo "$as_me:$LINENO: checking for linker version" >&5
+echo $ECHO_N "checking for linker version... $ECHO_C" >&6; }
+if test "${llvm_cv_link_version+set}" = set; then
+  echo $ECHO_N "(cached) $ECHO_C" >&6
+else
+
+   version_string="$(ld -v 2>&1 | head -1)"
+
+   # Check for ld64.
+   if (echo "$version_string" | grep -q "ld64"); then
+     llvm_cv_link_version=$(echo "$version_string" | sed -e "s#.*ld64-\([^ ]*\)#\1#")
+   else
+     llvm_cv_link_version=$(echo "$version_string" | sed -e "s#[^0-9]*\([0-9.]*\).*#\1#")
+   fi
+
+fi
+{ echo "$as_me:$LINENO: result: $llvm_cv_link_version" >&5
+echo "${ECHO_T}$llvm_cv_link_version" >&6; }
+
+cat >>confdefs.h <<_ACEOF
+#define HOST_LINK_VERSION "$llvm_cv_link_version"
+_ACEOF
+
+
+
 { echo "$as_me:$LINENO: checking for compiler -Wl,-R<path> option" >&5
 echo $ECHO_N "checking for compiler -Wl,-R<path> option... $ECHO_C" >&6; }
 if test "${llvm_cv_link_use_r+set}" = set; then
@@ -11396,7 +11383,7 @@ else
   lt_dlunknown=0; lt_dlno_uscore=1; lt_dlneed_uscore=2
   lt_status=$lt_dlunknown
   cat > conftest.$ac_ext <<EOF
-#line 11394 "configure"
+#line 11381 "configure"
 #include "confdefs.h"
 
 #if HAVE_DLFCN_H
@@ -20826,7 +20813,12 @@ fi
 
 
 
-ac_config_headers="$ac_config_headers include/llvm/Config/config.h"
+ac_config_headers="$ac_config_headers include/llvm/Config/config.h include/llvm/Config/llvm-config.h"
+
+
+
+
+
 
 ac_config_files="$ac_config_files include/llvm/Config/Targets.def"
 
@@ -20845,7 +20837,7 @@ ac_config_files="$ac_config_files Makefile.config"
 ac_config_files="$ac_config_files llvm.spec"
 
 
-ac_config_files="$ac_config_files tools/llvmc/plugins/Base/Base.td"
+ac_config_files="$ac_config_files tools/llvmc/src/Base.td"
 
 
 ac_config_files="$ac_config_files tools/llvm-config/llvm-config.in"
@@ -21457,6 +21449,7 @@ for ac_config_target in $ac_config_targets
 do
   case $ac_config_target in
     "include/llvm/Config/config.h") CONFIG_HEADERS="$CONFIG_HEADERS include/llvm/Config/config.h" ;;
+    "include/llvm/Config/llvm-config.h") CONFIG_HEADERS="$CONFIG_HEADERS include/llvm/Config/llvm-config.h" ;;
     "include/llvm/Config/Targets.def") CONFIG_FILES="$CONFIG_FILES include/llvm/Config/Targets.def" ;;
     "include/llvm/Config/AsmPrinters.def") CONFIG_FILES="$CONFIG_FILES include/llvm/Config/AsmPrinters.def" ;;
     "include/llvm/Config/AsmParsers.def") CONFIG_FILES="$CONFIG_FILES include/llvm/Config/AsmParsers.def" ;;
@@ -21464,7 +21457,7 @@ do
     "include/llvm/System/DataTypes.h") CONFIG_HEADERS="$CONFIG_HEADERS include/llvm/System/DataTypes.h" ;;
     "Makefile.config") CONFIG_FILES="$CONFIG_FILES Makefile.config" ;;
     "llvm.spec") CONFIG_FILES="$CONFIG_FILES llvm.spec" ;;
-    "tools/llvmc/plugins/Base/Base.td") CONFIG_FILES="$CONFIG_FILES tools/llvmc/plugins/Base/Base.td" ;;
+    "tools/llvmc/src/Base.td") CONFIG_FILES="$CONFIG_FILES tools/llvmc/src/Base.td" ;;
     "tools/llvm-config/llvm-config.in") CONFIG_FILES="$CONFIG_FILES tools/llvm-config/llvm-config.in" ;;
     "setup") CONFIG_COMMANDS="$CONFIG_COMMANDS setup" ;;
     "Makefile") CONFIG_COMMANDS="$CONFIG_COMMANDS Makefile" ;;
@@ -21684,8 +21677,6 @@ ENABLE_BUILT_CLANG!$ENABLE_BUILT_CLANG$ac_delim
 OPTIMIZE_OPTION!$OPTIMIZE_OPTION$ac_delim
 EXTRA_OPTIONS!$EXTRA_OPTIONS$ac_delim
 BINUTILS_INCDIR!$BINUTILS_INCDIR$ac_delim
-ENABLE_LLVMC_DYNAMIC!$ENABLE_LLVMC_DYNAMIC$ac_delim
-ENABLE_LLVMC_DYNAMIC_PLUGINS!$ENABLE_LLVMC_DYNAMIC_PLUGINS$ac_delim
 CXX!$CXX$ac_delim
 CXXFLAGS!$CXXFLAGS$ac_delim
 ac_ct_CXX!$ac_ct_CXX$ac_delim
@@ -21777,7 +21768,7 @@ LIBOBJS!$LIBOBJS$ac_delim
 LTLIBOBJS!$LTLIBOBJS$ac_delim
 _ACEOF
 
-  if test `sed -n "s/.*$ac_delim\$/X/p" conf$$subs.sed | grep -c X` = 95; then
+  if test `sed -n "s/.*$ac_delim\$/X/p" conf$$subs.sed | grep -c X` = 93; then
     break
   elif $ac_last_try; then
     { { echo "$as_me:$LINENO: error: could not make $CONFIG_STATUS" >&5

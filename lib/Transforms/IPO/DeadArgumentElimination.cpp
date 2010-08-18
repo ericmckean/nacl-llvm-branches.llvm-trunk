@@ -122,11 +122,11 @@ namespace {
 
   protected:
     // DAH uses this to specify a different ID.
-    explicit DAE(void *ID) : ModulePass(ID) {}
+    explicit DAE(char &ID) : ModulePass(ID) {}
 
   public:
     static char ID; // Pass identification, replacement for typeid
-    DAE() : ModulePass(&ID) {}
+    DAE() : ModulePass(ID) {}
 
     bool runOnModule(Module &M);
 
@@ -159,7 +159,7 @@ namespace {
   /// by bugpoint.
   struct DAH : public DAE {
     static char ID;
-    DAH() : DAE(&ID) {}
+    DAH() : DAE(ID) {}
 
     virtual bool ShouldHackArguments() const { return true; }
   };
@@ -220,11 +220,11 @@ bool DAE::DeleteDeadVarargs(Function &Fn) {
   //
   std::vector<Value*> Args;
   while (!Fn.use_empty()) {
-    CallSite CS = CallSite::get(Fn.use_back());
+    CallSite CS(Fn.use_back());
     Instruction *Call = CS.getInstruction();
 
     // Pass all the same arguments.
-    Args.assign(CS.arg_begin(), CS.arg_begin()+NumArgs);
+    Args.assign(CS.arg_begin(), CS.arg_begin() + NumArgs);
 
     // Drop any attributes that were on the vararg arguments.
     AttrListPtr PAL = CS.getAttributes();
@@ -724,7 +724,7 @@ bool DAE::RemoveDeadStuffFromFunction(Function *F) {
   //
   std::vector<Value*> Args;
   while (!F->use_empty()) {
-    CallSite CS = CallSite::get(F->use_back());
+    CallSite CS(F->use_back());
     Instruction *Call = CS.getInstruction();
 
     AttributesVec.clear();

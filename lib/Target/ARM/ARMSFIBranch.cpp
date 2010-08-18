@@ -23,7 +23,7 @@ namespace {
   class ARMSFIBranch : public MachineFunctionPass {
   public:
     static char ID;
-    ARMSFIBranch() : MachineFunctionPass(&ID) {}
+    ARMSFIBranch() : MachineFunctionPass(ID) {}
 
     const TargetInstrInfo *TII;
 

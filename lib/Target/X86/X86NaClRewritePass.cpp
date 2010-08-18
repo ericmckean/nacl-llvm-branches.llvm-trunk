@@ -32,7 +32,7 @@ namespace {
   class X86NaClRewritePass : public MachineFunctionPass {
   public:
     static char ID;
-    X86NaClRewritePass() : MachineFunctionPass(&ID) {}
+    X86NaClRewritePass() : MachineFunctionPass(ID) {}
 
     virtual bool runOnMachineFunction(MachineFunction &Fn);
 

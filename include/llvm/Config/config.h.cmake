@@ -3,6 +3,9 @@
 ** Created by Kevin from config.h.in **
 ***************************************/
 
+#ifndef CONFIG_H
+#define CONFIG_H
+
 /* Define if dlopen(0) will open the symbols of the program */
 #undef CAN_DLOPEN_SELF
 
@@ -525,7 +528,7 @@
 #cmakedefine LLVM_PATH_TWOPI "${LLVM_PATH_TWOPI}"
 
 /* Installation prefix directory */
-#undef LLVM_PREFIX
+#cmakedefine LLVM_PREFIX "${LLVM_PREFIX}"
 
 /* Define if the OS needs help to load dependent libraries for dlopen(). */
 #cmakedefine LTDL_DLOPEN_DEPLIBS ${LTDL_DLOPEN_DEPLIBS}
@@ -625,3 +628,8 @@
 
 /* Native LLVM architecture */
 #cmakedefine LLVM_NATIVE_ARCH ${LLVM_NATIVE_ARCH}Target
+
+/* Native LLVM architecture, short name */
+#cmakedefine LLVM_NATIVE_ARCHNAME ${LLVM_NATIVE_ARCH}
+
+#endif

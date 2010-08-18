@@ -19,6 +19,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#define DEBUG_TYPE "pei"
 #include "PrologEpilogInserter.h"
 #include "llvm/CodeGen/MachineDominators.h"
 #include "llvm/CodeGen/MachineLoopInfo.h"
@@ -32,12 +33,17 @@
 #include "llvm/Target/TargetInstrInfo.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Compiler.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/ADT/IndexedMap.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include <climits>
 
 using namespace llvm;
+
+// FIXME: For testing purposes only. Remove once the pre-allocation pass
+// is done.
+extern cl::opt<bool> EnableLocalStackAlloc;
 
 char PEI::ID = 0;
 
@@ -73,10 +79,10 @@ bool PEI::runOnMachineFunction(MachineFunction &Fn) {
   calculateCalleeSavedRegisters(Fn);
 
   // Determine placement of CSR spill/restore code:
-  //  - with shrink wrapping, place spills and restores to tightly
+  //  - With shrink wrapping, place spills and restores to tightly
   //    enclose regions in the Machine CFG of the function where
-  //    they are used. Without shrink wrapping
-  //  - default (no shrink wrapping), place all spills in the
+  //    they are used.
+  //  - Without shink wrapping (default), place all spills in the
   //    entry block, all restores in return blocks.
   placeCSRSpillsAndRestores(Fn);
 
@@ -462,8 +468,10 @@ AdjustStackOffset(MachineFrameInfo *MFI, int FrameIdx,
   Offset = (Offset + Align - 1) / Align * Align;
 
   if (StackGrowsDown) {
+    DEBUG(dbgs() << "alloc FI(" << FrameIdx << ") at SP[" << -Offset << "]\n");
     MFI->setObjectOffset(FrameIdx, -Offset); // Set the computed offset
   } else {
+    DEBUG(dbgs() << "alloc FI(" << FrameIdx << ") at SP[" << Offset << "]\n");
     MFI->setObjectOffset(FrameIdx, Offset);
     Offset += MFI->getObjectSize(FrameIdx);
   }
@@ -548,6 +556,34 @@ void PEI::calculateFrameObjectOffsets(MachineFunction &Fn) {
       AdjustStackOffset(MFI, SFI, StackGrowsDown, Offset, MaxAlign);
   }
 
+  // FIXME: Once this is working, then enable flag will change to a target
+  // check for whether the frame is large enough to want to use virtual
+  // frame index registers. Functions which don't want/need this optimization
+  // will continue to use the existing code path.
+  if (EnableLocalStackAlloc && MFI->getLocalFrameSize()) {
+    unsigned Align = MFI->getLocalFrameMaxAlign();
+
+    // Adjust to alignment boundary.
+    Offset = (Offset + Align - 1) / Align * Align;
+
+    // Store the offset of the start of the local allocation block. This
+    // will be used later when resolving frame base virtual register pseudos.
+    MFI->setLocalFrameBaseOffset(Offset);
+
+    DEBUG(dbgs() << "Local frame base offset: " << Offset << "\n");
+
+    // Allocate the local block
+    Offset += MFI->getLocalFrameSize();
+
+    // Resolve offsets for objects in the local block.
+    for (unsigned i = 0, e = MFI->getLocalFrameObjectCount(); i != e; ++i) {
+      std::pair<int, int64_t> Entry = MFI->getLocalFrameObjectMap(i);
+      int64_t FIOffset = MFI->getLocalFrameBaseOffset() + Entry.second;
+
+      AdjustStackOffset(MFI, Entry.first, StackGrowsDown, FIOffset, MaxAlign);
+    }
+  }
+
   // Make sure that the stack protector comes before the local variables on the
   // stack.
   SmallSet<int, 16> LargeStackObjs;
@@ -557,6 +593,8 @@ void PEI::calculateFrameObjectOffsets(MachineFunction &Fn) {
 
     // Assign large stack objects first.
     for (unsigned i = 0, e = MFI->getObjectIndexEnd(); i != e; ++i) {
+      if (MFI->isObjectPreAllocated(i))
+        continue;
       if (i >= MinCSFrameIndex && i <= MaxCSFrameIndex)
         continue;
       if (RS && (int)i == RS->getScavengingFrameIndex())
@@ -576,6 +614,8 @@ void PEI::calculateFrameObjectOffsets(MachineFunction &Fn) {
   // Then assign frame offsets to stack objects that are not used to spill
   // callee saved registers.
   for (unsigned i = 0, e = MFI->getObjectIndexEnd(); i != e; ++i) {
+    if (MFI->isObjectPreAllocated(i))
+      continue;
     if (i >= MinCSFrameIndex && i <= MaxCSFrameIndex)
       continue;
     if (RS && (int)i == RS->getScavengingFrameIndex())

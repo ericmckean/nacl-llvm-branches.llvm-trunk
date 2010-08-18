@@ -30,6 +30,7 @@ using namespace llvm;
 
 namespace {
 class InlineSpiller : public Spiller {
+  MachineFunctionPass &pass_;
   MachineFunction &mf_;
   LiveIntervals &lis_;
   MachineLoopInfo &loops_;
@@ -44,7 +45,7 @@ class InlineSpiller : public Spiller {
 
   // Variables that are valid during spill(), but used by multiple methods.
   LiveInterval *li_;
-  std::vector<LiveInterval*> *newIntervals_;
+  SmallVectorImpl<LiveInterval*> *newIntervals_;
   const TargetRegisterClass *rc_;
   int stackSlot_;
   const SmallVectorImpl<LiveInterval*> *spillIs_;
@@ -61,7 +62,8 @@ public:
   InlineSpiller(MachineFunctionPass &pass,
                 MachineFunction &mf,
                 VirtRegMap &vrm)
-    : mf_(mf),
+    : pass_(pass),
+      mf_(mf),
       lis_(pass.getAnalysis<LiveIntervals>()),
       loops_(pass.getAnalysis<MachineLoopInfo>()),
       vrm_(vrm),
@@ -73,9 +75,8 @@ public:
       splitAnalysis_(mf, lis_, loops_) {}
 
   void spill(LiveInterval *li,
-             std::vector<LiveInterval*> &newIntervals,
-             SmallVectorImpl<LiveInterval*> &spillIs,
-             SlotIndex *earliestIndex);
+             SmallVectorImpl<LiveInterval*> &newIntervals,
+             SmallVectorImpl<LiveInterval*> &spillIs);
 
 private:
   bool split();
@@ -85,6 +86,7 @@ private:
   bool reMaterializeFor(MachineBasicBlock::iterator MI);
   void reMaterializeAll();
 
+  bool coalesceStackAccess(MachineInstr *MI);
   bool foldMemoryOperand(MachineBasicBlock::iterator MI,
                          const SmallVectorImpl<unsigned> &Ops);
   void insertReload(LiveInterval &NewLI, MachineBasicBlock::iterator MI);
@@ -103,16 +105,32 @@ Spiller *createInlineSpiller(MachineFunctionPass &pass,
 /// split - try splitting the current interval into pieces that may allocate
 /// separately. Return true if successful.
 bool InlineSpiller::split() {
-  // FIXME: Add intra-MBB splitting.
-  if (lis_.intervalIsInOneMBB(*li_))
-    return false;
-
   splitAnalysis_.analyze(li_);
 
   if (const MachineLoop *loop = splitAnalysis_.getBestSplitLoop()) {
-    SplitEditor(splitAnalysis_, lis_, vrm_).splitAroundLoop(loop);
-    return true;
+    // We can split, but li_ may be left intact with fewer uses.
+    if (SplitEditor(splitAnalysis_, lis_, vrm_, *newIntervals_)
+          .splitAroundLoop(loop))
+      return true;
   }
+
+  // Try splitting into single block intervals.
+  SplitAnalysis::BlockPtrSet blocks;
+  if (splitAnalysis_.getMultiUseBlocks(blocks)) {
+    if (SplitEditor(splitAnalysis_, lis_, vrm_, *newIntervals_)
+          .splitSingleBlocks(blocks))
+      return true;
+  }
+
+  // Try splitting inside a basic block.
+  if (const MachineBasicBlock *MBB = splitAnalysis_.getBlockForInsideSplit()) {
+    if (SplitEditor(splitAnalysis_, lis_, vrm_, *newIntervals_)
+          .splitInsideBlock(MBB))
+      return true;
+  }
+
+  // We may have been able to split out some uses, but the original interval is
+  // intact, and it should still be spilled.
   return false;
 }
 
@@ -265,7 +283,7 @@ void InlineSpiller::reMaterializeAll() {
     lis_.RemoveMachineInstrFromMaps(DefMI);
     vrm_.RemoveMachineInstrFromMaps(DefMI);
     DefMI->eraseFromParent();
-    li_->removeValNo(VNI);
+    VNI->setIsDefAccurate(false);
     anyRemoved = true;
   }
 
@@ -281,13 +299,31 @@ void InlineSpiller::reMaterializeAll() {
     MachineBasicBlock::iterator NextMI = MI;
     ++NextMI;
     if (NextMI != MI->getParent()->end() && !lis_.isNotInMIMap(NextMI)) {
-      SlotIndex NearIdx = lis_.getInstructionIndex(NextMI);
-      if (li_->liveAt(NearIdx))
+      VNInfo *VNI = li_->getVNInfoAt(lis_.getInstructionIndex(NextMI));
+      if (VNI && (VNI->hasPHIKill() || usedValues_.count(VNI)))
         continue;
     }
     DEBUG(dbgs() << "Removing debug info due to remat:" << "\t" << *MI);
     MI->eraseFromParent();
   }
+}
+
+/// If MI is a load or store of stackSlot_, it can be removed.
+bool InlineSpiller::coalesceStackAccess(MachineInstr *MI) {
+  int FI = 0;
+  unsigned reg;
+  if (!(reg = tii_.isLoadFromStackSlot(MI, FI)) &&
+      !(reg = tii_.isStoreToStackSlot(MI, FI)))
+    return false;
+
+  // We have a stack access. Is it the right register and slot?
+  if (reg != li_->reg || FI != stackSlot_)
+    return false;
+
+  DEBUG(dbgs() << "Coalescing stack access: " << *MI);
+  lis_.RemoveMachineInstrFromMaps(MI);
+  MI->eraseFromParent();
+  return true;
 }
 
 /// foldMemoryOperand - Try folding stack slot references in Ops into MI.
@@ -351,9 +387,8 @@ void InlineSpiller::insertSpill(LiveInterval &NewLI,
 }
 
 void InlineSpiller::spill(LiveInterval *li,
-                          std::vector<LiveInterval*> &newIntervals,
-                          SmallVectorImpl<LiveInterval*> &spillIs,
-                          SlotIndex *earliestIndex) {
+                          SmallVectorImpl<LiveInterval*> &newIntervals,
+                          SmallVectorImpl<LiveInterval*> &spillIs) {
   DEBUG(dbgs() << "Inline spilling " << *li << "\n");
   assert(li->isSpillable() && "Attempting to spill already spilled value.");
   assert(!li->isStackSlot() && "Trying to spill a stack slot.");
@@ -372,7 +407,9 @@ void InlineSpiller::spill(LiveInterval *li,
   if (li_->empty())
     return;
 
-  stackSlot_ = vrm_.assignVirt2StackSlot(li->reg);
+  stackSlot_ = vrm_.getStackSlot(li->reg);
+  if (stackSlot_ == VirtRegMap::NO_STACK_SLOT)
+    stackSlot_ = vrm_.assignVirt2StackSlot(li->reg);
 
   // Iterate over instructions using register.
   for (MachineRegisterInfo::reg_iterator RI = mri_.reg_begin(li->reg);
@@ -395,6 +432,10 @@ void InlineSpiller::spill(LiveInterval *li,
       }
       continue;
     }
+
+    // Stack slot accesses may coalesce away.
+    if (coalesceStackAccess(MI))
+      continue;
 
     // Analyze instruction.
     bool Reads, Writes;

@@ -31,6 +31,8 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 
+#include "llvm/System/TimeValue.h"
+
 #include <cstdio>
 
 using namespace llvm;
@@ -131,6 +133,7 @@ public:
   symbol_map  SymbolMap;
 
   WinCOFFObjectWriter(raw_ostream &OS);
+  ~WinCOFFObjectWriter();
 
   COFFSymbol *createSymbol(llvm::StringRef Name);
   COFFSection *createSection(llvm::StringRef Name);
@@ -273,6 +276,13 @@ WinCOFFObjectWriter::WinCOFFObjectWriter(raw_ostream &OS)
   memset(&Header, 0, sizeof(Header));
   // TODO: Move magic constant out to COFF.h
   Header.Machine = 0x14C; // x86
+}
+
+WinCOFFObjectWriter::~WinCOFFObjectWriter() {
+  for (symbols::iterator I = Symbols.begin(), E = Symbols.end(); I != E; ++I)
+    delete *I;
+  for (sections::iterator I = Sections.begin(), E = Sections.end(); I != E; ++I)
+    delete *I;
 }
 
 COFFSymbol *WinCOFFObjectWriter::createSymbol(llvm::StringRef Name) {
@@ -571,6 +581,7 @@ void WinCOFFObjectWriter::RecordRelocation(const MCAssembler &Asm,
 
   COFFRelocation Reloc;
 
+  Reloc.Data.SymbolTableIndex = 0;
   Reloc.Data.VirtualAddress = Layout.getFragmentOffset(Fragment);
   Reloc.Symb = coff_symbol;
 
@@ -608,7 +619,8 @@ void WinCOFFObjectWriter::WriteObject(const MCAssembler &Asm,
       COFFSection *coff_section = SectionMap[SymbolData->Fragment->getParent()];
 
       coff_symbol->Data.SectionNumber = coff_section->Number;
-      coff_symbol->Data.Value = Layout.getFragmentOffset(SymbolData->Fragment);
+      coff_symbol->Data.Value = Layout.getFragmentOffset(SymbolData->Fragment)
+                              + SymbolData->Offset;
     }
 
     // Update auxiliary symbol info.
@@ -676,6 +688,8 @@ void WinCOFFObjectWriter::WriteObject(const MCAssembler &Asm,
   }
 
   Header.PointerToSymbolTable = offset;
+
+  Header.TimeDateStamp = sys::TimeValue::now().toEpochTime();
 
   // Write it all to disk...
   WriteFileHeader(Header);
