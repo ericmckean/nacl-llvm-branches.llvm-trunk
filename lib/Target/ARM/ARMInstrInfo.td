@@ -648,6 +648,42 @@ multiclass AI1_adde_sube_s_irs<bits<4> opcod, string opc, PatFrag opnode,
 // Instructions
 //===----------------------------------------------------------------------===//
 
+// @LOCALMOD-START
+def SFI_GUARD_STORE :
+PseudoInst<(outs GPR:$dst), (ins GPR:$a, pred:$p), NoItinerary,
+           "sfi_store_preamble $dst, $p",
+           []>;
+
+let Defs = [CPSR] in
+def SFI_GUARD_STORE_TST :
+PseudoInst<(outs GPR:$dst), (ins GPR:$a), NoItinerary,
+           "sfi_cstore_preamble $dst",
+           []>;
+
+def SFI_GUARD_INDIRECT_CALL :
+PseudoInst<(outs GPR:$dst), (ins GPR:$a, pred:$p), NoItinerary,
+           "sfi_indirect_call_preamble $dst, $p",
+           []>;
+
+def SFI_GUARD_INDIRECT_JMP :
+PseudoInst<(outs GPR:$dst), (ins GPR:$a, pred:$p), NoItinerary,
+           "sfi_indirect_jump_preamble $dst, $p",
+           []>;
+
+def SFI_GUARD_CALL :
+PseudoInst<(outs), (ins pred:$p), NoItinerary,
+           "sfi_call_preamble $p",
+           []>;
+
+// NOTE: the BX_RET instruction hardcodes lr as well
+def SFI_GUARD_RETURN :
+PseudoInst<(outs), (ins pred:$p), NoItinerary,
+           "sfi_return_preamble lr, $p",
+           []>;
+
+// @LOCALMOD-END
+
+
 //===----------------------------------------------------------------------===//
 //  Miscellaneous Instructions.
 //
@@ -1453,11 +1489,21 @@ let mayStore = 1, neverHasSideEffects = 1, hasExtraSrcRegAllocReq = 1 in {
 def STM : AXI4st<(outs), (ins addrmode4:$addr, pred:$p,
                           reglist:$srcs, variable_ops),
                  IndexModeNone, LdStMulFrm, IIC_iStorem,
+//@LOCALMOD-START
+// TODO: move those into a post pass
+// c.f. ARMAsmPrinter::printAddrMode4Operand()
+                 "sfi_store_preamble ${addr:base}, ${p}\n\t"
+//@LOCALMOD-END
                  "stm${addr:submode}${p}\t$addr, $srcs", "", []>;
 
 def STM_UPD : AXI4st<(outs GPR:$wb), (ins addrmode4:$addr, pred:$p,
                                       reglist:$srcs, variable_ops),
                      IndexModeUpd, LdStMulFrm, IIC_iStorem,
+//@LOCALMOD-START
+// TODO: move those into a post pass
+// c.f. ARMAsmPrinter::printAddrMode4Operand()
+                     "sfi_store_preamble ${addr:base}, ${p}\n\t"
+//@LOCALMOD-END
                      "stm${addr:submode}${p}\t$addr!, $srcs",
                      "$addr.addr = $wb", []>;
 } // mayStore, neverHasSideEffects, hasExtraSrcRegAllocReq
@@ -1609,10 +1655,24 @@ def UBFX  : I<(outs GPR:$dst),
 //  Arithmetic Instructions.
 //
 
+
+
 defm ADD  : AsI1_bin_irs<0b0100, "add",
                          BinOpFrag<(add  node:$LHS, node:$RHS)>, 1>;
 defm SUB  : AsI1_bin_irs<0b0010, "sub",
                          BinOpFrag<(sub  node:$LHS, node:$RHS)>>;
+
+// @LOCALMOD-START
+// These instructions must match ADD and SUB, respectively,
+// but without the dag pattern.
+def STACK_ADDri  : AsI1<0, (outs GPR:$dst), (ins GPR:$a, so_imm:$b), DPFrm,
+                         IIC_iALUi, "sfi_add", "\t$dst, $a, $b", []>;
+def STACK_SUBri : AsI1<0, (outs GPR:$dst), (ins GPR:$a, so_imm:$b), DPFrm,
+                         IIC_iALUi, "sfi_sub", "\t$dst, $a, $b", []>;
+let neverHasSideEffects = 1 in
+def STACK_MOVr : AsI1<0b1101, (outs GPR:$dst), (ins GPR:$src), DPFrm, IIC_iMOVr,
+                 "sfi_mov", " $dst, $src", []>, UnaryDP;
+// @LOCALMOD-END
 
 // ADD and SUB with 's' bit set.
 defm ADDS : AI1_bin_s_irs<0b0100, "adds",

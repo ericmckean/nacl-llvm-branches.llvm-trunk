@@ -1373,7 +1373,12 @@ bool BitcodeReader::ParseModule() {
       std::string S;
       if (ConvertToString(Record, 0, S))
         return Error("Invalid MODULE_CODE_DATALAYOUT record");
-      TheModule->setDataLayout(S);
+
+      // @LOCALMOD-BEGIN
+      // Figure out how to properly prevent
+      // NaCl data layout from being overriden
+      //TheModule->setDataLayout(S);
+      // @LOCALMOD-END
       break;
     }
     case bitc::MODULE_CODE_ASM: {  // ASM: [strchr x N]

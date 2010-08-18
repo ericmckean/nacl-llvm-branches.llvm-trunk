@@ -33,6 +33,8 @@
 #  include <termios.h>
 #endif
 
+#include <sys/unistd.h>
+
 //===----------------------------------------------------------------------===//
 //=== WARNING: Implementation here must contain only generic UNIX code that
 //===          is guaranteed to work on *all* UNIX variants.
@@ -44,7 +46,9 @@ using namespace sys;
 unsigned 
 Process::GetPageSize() 
 {
-#if defined(__CYGWIN__)
+#if defined(__native_client__)
+  size_t page_size = ::getpagesize(); 
+#elif defined(__CYGWIN__)
   // On Cygwin, getpagesize() returns 64k but the page size for the purposes of
   // memory protection and mmap() is 4k.
   // See http://www.cygwin.com/ml/cygwin/2009-01/threads.html#00492
@@ -129,11 +133,23 @@ Process::GetTimeUsage(TimeValue& elapsed, TimeValue& user_time,
 }
 
 int Process::GetCurrentUserId() {
+#if !defined(__native_client__)
   return getuid();
+#else // (__native_client__)
+// TODO(abetul): What the proper return value should be for this function?
+// What about having a reserved user_id or the user "nobody" for PNACL?
+  return -1;
+#endif // (__native_client__)
 }
 
 int Process::GetCurrentGroupId() {
+#if !defined(__native_client__)
   return getgid();
+#else // (__native_client__)
+// TODO(abetul): What the proper return value should be for this function?
+// What about having a reserved/unused group_id?  
+  return -1;
+#endif // (__native_client__)
 }
 
 #ifdef HAVE_MACH_MACH_H

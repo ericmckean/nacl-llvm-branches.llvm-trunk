@@ -921,6 +921,7 @@ void AsmPrinter::EmitConstantPool() {
 /// by the current function to the current output stream.  
 ///
 void AsmPrinter::EmitJumpTableInfo() {
+  OutStreamer.EmitRawText(Twine("# @LOCALMOD: JUMPTABLE\n")); // @LOCALMOD
   const MachineJumpTableInfo *MJTI = MF->getJumpTableInfo();
   if (MJTI == 0) return;
   if (MJTI->getEntryKind() == MachineJumpTableInfo::EK_Inline) return;
@@ -1859,4 +1860,3 @@ GCMetadataPrinter *AsmPrinter::GetOrCreateGCPrinter(GCStrategy *S) {
   report_fatal_error("no GCMetadataPrinter registered for GC: " + Twine(Name));
   return 0;
 }
-

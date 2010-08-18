@@ -186,6 +186,13 @@ X86SelectionDAGInfo::EmitTargetCodeForMemcpy(SelectionDAG &DAG, DebugLoc dl,
   if (!AlwaysInline && SizeVal > Subtarget->getMaxInlineSizeThreshold())
     return SDValue();
 
+  // @LOCALMOD-BEGIN
+  // We can't emit REP MOVSQ on Native Client
+  if (Subtarget->isTargetNaCl()) {
+    return SDValue();
+  }
+  // @LOCALMOD-END
+
   /// If not DWORD aligned, call the library.
   if ((Align & 3) != 0)
     return SDValue();

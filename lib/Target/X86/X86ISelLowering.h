@@ -255,6 +255,7 @@ namespace llvm {
       // according to %al. An operator is needed so that this can be expanded
       // with control flow.
       VASTART_SAVE_XMM_REGS,
+      VAARG_64,
 
       // MINGW_ALLOCA - MingW's __alloca call to do stack probing.
       MINGW_ALLOCA,
@@ -387,6 +388,18 @@ namespace llvm {
   //===--------------------------------------------------------------------===//
   //  X86TargetLowering - X86 Implementation of the TargetLowering interface
   class X86TargetLowering : public TargetLowering {
+
+    // @LOCALMOD-BEGIN
+    struct VarArgInfo {               // va_arg calling convention info
+      unsigned TotalNumIntRegs;
+      unsigned TotalNumXMMRegs;
+      const unsigned *GPR64ArgRegs;
+      const unsigned *XMMArgRegs;
+      bool NoImplicitFloatOps;
+    };
+   // @LOCALMOD-END
+
+
   public:
     explicit X86TargetLowering(X86TargetMachine &TM);
 
@@ -615,7 +628,9 @@ namespace llvm {
 
     /// X86StackPtr - X86 physical register used as stack ptr.
     unsigned X86StackPtr;
-   
+    // LOCALMOD
+    MVT X86StackPtrTy;
+
     /// X86ScalarSSEf32, X86ScalarSSEf64 - Select between SSE or x87 
     /// floating point ops.
     /// When SSE is available, use it for f32 operations.
@@ -734,6 +749,9 @@ namespace llvm {
     SDValue LowerREADCYCLECOUNTER(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerMEMBARRIER(SDValue Op, SelectionDAG &DAG) const;
 
+    // @LOCALMOD
+    void GetVarArgInfo(const Function *Fn, VarArgInfo *VAInfo) const;
+
     virtual SDValue
       LowerFormalArguments(SDValue Chain,
                            CallingConv::ID CallConv, bool isVarArg,
@@ -802,6 +820,13 @@ namespace llvm {
     MachineBasicBlock *EmitAtomicMinMaxWithCustomInserter(MachineInstr *BInstr,
                                                           MachineBasicBlock *BB,
                                                         unsigned cmovOpc) const;
+
+    // @LOCALMOD-BEGIN
+    // Emit the instructions needed to get the next va_arg
+    MachineBasicBlock *EmitVAARG64WithCustomInserter(
+                       MachineInstr *MI,
+                       MachineBasicBlock *MBB) const;
+    // @LOCALMOD-END
 
     /// Utility function to emit the xmm reg save portion of va_start.
     MachineBasicBlock *EmitVAStartSaveXMMRegsWithCustomInserter(

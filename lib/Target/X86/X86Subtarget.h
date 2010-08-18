@@ -136,6 +136,10 @@ public:
 
   bool is64Bit() const { return Is64Bit; }
 
+  // LOCALMOD-BEGIN
+  bool isPTR64Bit() const { return Is64Bit && !isTargetNaCl(); }
+  // LOCALMOD-END
+
   PICStyles::Style getPICStyle() const { return PICStyle; }
   void setPICStyle(PICStyles::Style Style)  { PICStyle = Style; }
 
@@ -168,6 +172,12 @@ public:
   }
   bool isTargetLinux() const { return TargetTriple.getOS() == Triple::Linux; }
 
+  bool isTargetNaCl() const { return TargetTriple.getOS() == Triple::NativeClient; }
+  bool isTargetNaCl32() const { return isTargetNaCl() && !is64Bit(); }
+  bool isTargetNaCl64() const { return isTargetNaCl() && is64Bit(); }
+  
+  bool has64BitPointers() const { return is64Bit() && !isTargetNaCl(); }
+
   bool isTargetWindows() const { return TargetTriple.getOS() == Triple::Win32; }
   bool isTargetMingw() const { 
     return TargetTriple.getOS() == Triple::MinGW32 ||
@@ -188,7 +198,11 @@ public:
 
   std::string getDataLayout() const {
     const char *p;
-    if (is64Bit())
+    if (isTargetNaCl64())  // @LOCALMOD
+      p = "e-p:32:32-s:64-f64:64:64-f32:32:32-f80:128:128-i64:64:64-n8:16:32:64";
+    else if (isTargetNaCl32())
+      p = "e-p:32:32-s:32-f64:64:64-f32:32:32-f80:128:128-i64:64:64-n8:16:32";
+    else if (is64Bit())
       p = "e-p:64:64-s:64-f64:64:64-i64:64:64-f80:128:128-n8:16:32:64";
     else if (isTargetDarwin())
       p = "e-p:32:32-f64:32:64-i64:32:64-f80:128:128-n8:16:32";

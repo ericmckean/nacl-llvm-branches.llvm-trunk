@@ -136,6 +136,21 @@ public:
     MI->addOperand(MachineOperand::CreateMCSymbol(Sym));
     return *this;
   }
+
+  // @LOCALMOD-START
+  // copy displacement from a machine operand to this new machine instruction
+  const MachineInstrBuilder &addDisp(const MachineOperand &Disp,
+                                     int64_t off) const {
+    switch (Disp.getType()) {
+      default:
+        assert (false && "addDisp not yet handling a displacement case");
+      case MachineOperand::MO_Immediate:
+        return this->addImm(Disp.getImm() + off);
+      case MachineOperand::MO_GlobalAddress:
+        return this->addGlobalAddress(Disp.getGlobal(), off);
+    }
+  }
+  // @LOCALMOD-END
 };
 
 /// BuildMI - Builder interface.  Specify how to create the initial instruction

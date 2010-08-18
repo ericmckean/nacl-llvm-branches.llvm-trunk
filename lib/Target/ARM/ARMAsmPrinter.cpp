@@ -66,6 +66,17 @@ namespace llvm {
   }
 }
 
+// @LOCALMOD
+cl::opt<bool> FlagSfiZeroMask("sfi-zero-mask");
+
+extern cl::opt<bool> FlagSfiStore;
+extern cl::opt<bool> FlagSfiStack;
+extern cl::opt<bool> FlagSfiBranch;
+cl::opt<bool> FlagSfiData("sfi-data",
+                          cl::desc("use illegal at data bundle beginning"));
+
+// @LOCALMOD-END
+
 namespace {
   class ARMAsmPrinter : public AsmPrinter {
 
@@ -256,6 +267,12 @@ namespace {
 
       if (ACPV->isLSDA()) {
         O << MAI->getPrivateGlobalPrefix() << "_LSDA_" << getFunctionNumber();
+// @LOCALMOD-START
+      } else if (ACPV->isJumpTable()) {
+        O << std::string(MAI->getPrivateGlobalPrefix()) + "JTI" +
+               utostr(getFunctionNumber()) + '_' +
+               utostr(*ACPV->getJumpTableIndex());
+// @LOCALMOD-END
       } else if (ACPV->isBlockAddress()) {
         O << *GetBlockAddressSymbol(ACPV->getBlockAddress());
       } else if (ACPV->isGlobalValue()) {
@@ -298,6 +315,48 @@ namespace {
 
 #include "ARMGenAsmWriter.inc"
 
+// @LOCALMOD-START
+// Make sure all jump targets are aligned and also all constant pools
+void NaclAlignAllJumpTargetsAndConstantPools(MachineFunction &MF) {
+  // JUMP TABLE TARGETS  
+  MachineJumpTableInfo *jt_info = MF.getJumpTableInfo();
+  if (jt_info) {
+    const std::vector<MachineJumpTableEntry> &JT = jt_info->getJumpTables();
+    for (unsigned i=0; i < JT.size(); ++i) {
+      std::vector<MachineBasicBlock*> MBBs = JT[i].MBBs;
+      
+      for (unsigned j=0; j < MBBs.size(); ++j) {
+        if (MBBs[j]->begin()->getOpcode() == ARM::CONSTPOOL_ENTRY) {
+          continue;
+        }
+        MBBs[j]->setAlignment(16);
+      }
+    }
+  }
+  
+  // FIRST ENTRY IN A ConstanPool
+  bool last_bb_was_constant_pool = false;
+  for (MachineFunction::iterator I = MF.begin(), E = MF.end();
+       I != E; ++I) {
+    if (I->isLandingPad()) {
+        I->setAlignment(16);
+    }
+    
+    if (I->empty()) continue;
+    
+    bool is_constant_pool = I->begin()->getOpcode() == ARM::CONSTPOOL_ENTRY;
+
+    if (last_bb_was_constant_pool != is_constant_pool) {
+      I->setAlignment(16);
+    }
+    
+    last_bb_was_constant_pool = is_constant_pool;
+  }
+}
+// @LOCALMOD-END
+
+
+
 void ARMAsmPrinter::EmitFunctionEntryLabel() {
   if (AFI->isThumbFunction()) {
     OutStreamer.EmitRawText(StringRef("\t.code\t16"));
@@ -312,7 +371,16 @@ void ARMAsmPrinter::EmitFunctionEntryLabel() {
       OutStreamer.EmitRawText(OS.str());
     }
   }
-  
+
+  // @LOCALMOD-START
+  // make sure function entry is aligned. We use  XmagicX as our basis
+  // for alignment decisions (c.f. assembler sfi macros)
+  int alignment = MF->getAlignment();
+  if (alignment < 4) alignment = 4;
+  EmitAlignment(alignment);
+  OutStreamer.EmitRawText(StringRef("\t.set XmagicX, .\n"));
+  // @LOCALMOD-END
+ 
   OutStreamer.EmitLabel(CurrentFnSym);
 }
 
@@ -323,6 +391,11 @@ bool ARMAsmPrinter::runOnMachineFunction(MachineFunction &MF) {
   AFI = MF.getInfo<ARMFunctionInfo>();
   MCP = MF.getConstantPool();
 
+  // @LOCALMOD-START
+  if (FlagSfiBranch) {
+    NaclAlignAllJumpTargetsAndConstantPools(MF);
+  }
+  // @LOCALMOD-END
   return AsmPrinter::runOnMachineFunction(MF);
 }
 
@@ -933,6 +1006,27 @@ void ARMAsmPrinter::printCPInstOperand(const MachineInstr *MI, int OpNum,
   // There are two aspects to a CONSTANTPOOL_ENTRY operand, the label and the
   // data itself.
   if (!strcmp(Modifier, "label")) {
+
+    // @LOCALMOD-START
+    // NOTE: we also should make sure that the first data item
+    // is not in a code bundle
+    // NOTE: there may be issues with alignment constraints
+    const unsigned size = MI->getOperand(2).getImm();
+    //assert(size == 4 || size == 8 && "Unsupported data item size");
+    if (size == 8) {
+      // we cannot generate a size 8 constant at offset 12 (mod 16)
+      OutStreamer.EmitRawText(StringRef("sfi_nop_if_at_bundle_end\n"));
+    }
+
+    if (FlagSfiData) {
+      SmallString<128> Str;
+      raw_svector_ostream OS(Str);
+      OS << "sfi_illegal_if_at_bundle_begining  @ ========== SFI (" << 
+            size << ")\n";
+      OutStreamer.EmitRawText(OS.str());
+    }
+    // @LOCALMOD-END
+
     unsigned ID = MI->getOperand(OpNum).getImm();
     OutStreamer.EmitLabel(GetCPISymbol(ID));
   } else {
@@ -942,6 +1036,10 @@ void ARMAsmPrinter::printCPInstOperand(const MachineInstr *MI, int OpNum,
     const MachineConstantPoolEntry &MCPE = MCP->getConstants()[CPI];
 
     if (MCPE.isMachineConstantPoolEntry()) {
+      // @LOCALMOD-START
+      // Handy for debugging
+      // O << "@ Const pool\n";
+      // @LOCALMOD-END
       EmitMachineConstantPoolValue(MCPE.Val.MachineCPVal);
     } else {
       EmitGlobalConstant(MCPE.Val.ConstVal);
@@ -1176,6 +1274,8 @@ void ARMAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     EmitAlignment(1);
 }
 
+void EmitSFIHeaders(raw_ostream &O);
+
 void ARMAsmPrinter::EmitStartOfAsmFile(Module &M) {
   if (Subtarget->isTargetDarwin()) {
     Reloc::Model RelocM = TM.getRelocationModel();
@@ -1259,8 +1359,16 @@ void ARMAsmPrinter::EmitStartOfAsmFile(Module &M) {
     }
     // FIXME: Should we signal R9 usage?
   }
-}
 
+  // @LOCALMOD-BEGIN
+  if (/*IsNaCl?*/ true) {
+    std::string str;
+    raw_string_ostream OS(str);
+    EmitSFIHeaders(OS);
+    OutStreamer.EmitRawText(StringRef(OS.str()));
+  }
+  // @LOCALMOD-END
+}
 
 void ARMAsmPrinter::EmitEndOfAsmFile(Module &M) {
   if (Subtarget->isTargetDarwin()) {

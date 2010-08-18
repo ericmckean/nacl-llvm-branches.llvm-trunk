@@ -35,6 +35,13 @@ def i64i8imm   : Operand<i64> {
   let ParserMatchClass = ImmSExti64i8AsmOperand;
 }
 
+// @LOCALMOD
+def lea64mem : Operand<i64> {
+  let PrintMethod = "printi64mem";
+  let MIOperandInfo = (ops GR64, i8imm, GR64_NOSP, i32imm, i8imm);
+  let ParserMatchClass = X86MemAsmOperand;
+}
+
 def lea64_32mem : Operand<i32> {
   let PrintMethod = "printi32mem";
   let AsmOperandLowerMethod = "lower_lea64_32mem";
@@ -144,16 +151,17 @@ let isCall = 1 in
     def CALL64pcrel32 : Ii32PCRel<0xE8, RawFrm,
                           (outs), (ins i64i32imm_pcrel:$dst, variable_ops),
                           "call{q}\t$dst", []>,
-                        Requires<[In64BitMode, NotWin64]>;
-    def CALL64r       : I<0xFF, MRM2r, (outs), (ins GR64:$dst, variable_ops),
+                        Requires<[In64BitMode, NotWin64, NotNaCl]>; // @LOCALMOD
+    def CALL64r     : I<0xFF, MRM2r, (outs), (ins GR64:$dst, variable_ops),
                           "call{q}\t{*}$dst", [(X86call GR64:$dst)]>,
                         Requires<[NotWin64]>;
     def CALL64m       : I<0xFF, MRM2m, (outs), (ins i64mem:$dst, variable_ops),
                           "call{q}\t{*}$dst", [(X86call (loadi64 addr:$dst))]>,
-                        Requires<[NotWin64]>;
+                        Requires<[NotWin64, NotNaCl]>;   // @LOCALMOD
                         
     def FARCALL64   : RI<0xFF, MRM3m, (outs), (ins opaque80mem:$dst),
-                         "lcall{q}\t{*}$dst", []>;
+                         "lcall{q}\t{*}$dst", []>,
+                        Requires<[NotNaCl]>; // @LOCALMOD
   }
 
   // FIXME: We need to teach codegen about single list of call-clobbered 
@@ -209,7 +217,11 @@ let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1,
 
   let mayLoad = 1 in
   def TAILJMPm64 : I<0xFF, MRM4m, (outs), (ins i64mem_TC:$dst, variable_ops),
-                     "jmp{q}\t{*}$dst  # TAILCALL", []>;
+                     "jmp{q}\t{*}$dst  # TAILCALL", []>,
+                   Requires<[NotNaCl]>; // @LOCALMOD;
+                   // Disable to force usage of register-based versions.
+                   // Mainly, need to disable Pat match for TCRETURNmi64,
+                   // but disable this too, just in case.
 }
 
 // Branches
@@ -219,9 +231,11 @@ let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
   def JMP64r     : I<0xFF, MRM4r, (outs), (ins GR64:$dst), "jmp{q}\t{*}$dst",
                      [(brind GR64:$dst)]>, Requires<[In64BitMode]>;
   def JMP64m     : I<0xFF, MRM4m, (outs), (ins i64mem:$dst), "jmp{q}\t{*}$dst",
-                     [(brind (loadi64 addr:$dst))]>, Requires<[In64BitMode]>;
+                     [(brind (loadi64 addr:$dst))]>,
+                     Requires<[In64BitMode, NotNaCl]>; // @LOCALMOD
   def FARJMP64   : RI<0xFF, MRM5m, (outs), (ins opaque80mem:$dst),
-                      "ljmp{q}\t{*}$dst", []>;
+                     "ljmp{q}\t{*}$dst", []>,
+                   Requires<[NotNaCl]>;  // @LOCALMOD
 }
 
 //===----------------------------------------------------------------------===//
@@ -285,7 +299,7 @@ def LEA64_32r : I<0x8D, MRMSrcMem,
                   [(set GR32:$dst, lea32addr:$src)]>, Requires<[In64BitMode]>;
 
 let isReMaterializable = 1 in
-def LEA64r   : RI<0x8D, MRMSrcMem, (outs GR64:$dst), (ins i64mem:$src),
+def LEA64r   : RI<0x8D, MRMSrcMem, (outs GR64:$dst), (ins lea64mem:$src),
                   "lea{q}\t{$src|$dst}, {$dst|$src}",
                   [(set GR64:$dst, lea64addr:$src)]>;
 
@@ -1614,12 +1628,14 @@ def TLSCall_64 : I<0, Pseudo, (outs), (ins i64mem:$sym),
 let AddedComplexity = 5, isCodeGenOnly = 1 in
 def MOV64GSrm : RI<0x8B, MRMSrcMem, (outs GR64:$dst), (ins i64mem:$src),
                  "movq\t%gs:$src, $dst",
-                 [(set GR64:$dst, (gsload addr:$src))]>, SegGS;
+                 [(set GR64:$dst, (gsload addr:$src))]>, SegGS,
+                 Requires<[NotNaCl]>; // @LOCALMOD
 
 let AddedComplexity = 5, isCodeGenOnly = 1 in
 def MOV64FSrm : RI<0x8B, MRMSrcMem, (outs GR64:$dst), (ins i64mem:$src),
                  "movq\t%fs:$src, $dst",
-                 [(set GR64:$dst, (fsload addr:$src))]>, SegFS;
+                 [(set GR64:$dst, (fsload addr:$src))]>, SegFS,
+                 Requires<[NotNaCl]>; // @LOCALMOD
 
 //===----------------------------------------------------------------------===//
 // Atomic Instructions
@@ -1848,9 +1864,9 @@ def : Pat<(store (i64 (X86Wrapper tblockaddress:$src)), addr:$dst),
 // Direct PC relative function call for small code model. 32-bit displacement
 // sign extended to 64-bit.
 def : Pat<(X86call (i64 tglobaladdr:$dst)),
-          (CALL64pcrel32 tglobaladdr:$dst)>, Requires<[NotWin64]>;
+          (CALL64pcrel32 tglobaladdr:$dst)>, Requires<[NotWin64,NotNaCl]>;
 def : Pat<(X86call (i64 texternalsym:$dst)),
-          (CALL64pcrel32 texternalsym:$dst)>, Requires<[NotWin64]>;
+          (CALL64pcrel32 texternalsym:$dst)>, Requires<[NotWin64,NotNaCl]>;
 
 def : Pat<(X86call (i64 tglobaladdr:$dst)),
           (WINCALL64pcrel32 tglobaladdr:$dst)>, Requires<[IsWin64]>;
@@ -1860,19 +1876,23 @@ def : Pat<(X86call (i64 texternalsym:$dst)),
 // tailcall stuff
 def : Pat<(X86tcret GR64_TC:$dst, imm:$off),
           (TCRETURNri64 GR64_TC:$dst, imm:$off)>,
-	  Requires<[In64BitMode]>;
+      // @LOCALMOD-START
+      // These are marked NotNaCl as more of a precaution. Since NaCl 
+      // uses 32-bit pointers we should not expect this to fire for NaCl. 
+	  Requires<[In64BitMode, NotNaCl]>;
+      // @LOCALMOD-END
 
 def : Pat<(X86tcret (load addr:$dst), imm:$off),
           (TCRETURNmi64 addr:$dst, imm:$off)>,
-	  Requires<[In64BitMode]>;
+	  Requires<[In64BitMode, NotNaCl]>; // @LOCALMOD
 
 def : Pat<(X86tcret (i64 tglobaladdr:$dst), imm:$off),
           (TCRETURNdi64 tglobaladdr:$dst, imm:$off)>,
-	  Requires<[In64BitMode]>;
+	  Requires<[In64BitMode, NotNaCl]>; // @LOCALMOD
 
 def : Pat<(X86tcret (i64 texternalsym:$dst), imm:$off),
           (TCRETURNdi64 texternalsym:$dst, imm:$off)>,
-	  Requires<[In64BitMode]>;
+	  Requires<[In64BitMode, NotNaCl]>; // @LOCALMOD
 
 // tls has some funny stuff here...
 // This corresponds to movabs $foo@tpoff, %rax
@@ -2086,19 +2106,21 @@ def : Pat<(store (i8 (trunc_su (srl_su GR64:$src, (i8 8)))), addr:$dst),
           (MOV8mr_NOREX
             addr:$dst,
             (EXTRACT_SUBREG (i64 (COPY_TO_REGCLASS GR64:$src, GR64_ABCD)),
-                            sub_8bit_hi))>;
+                            sub_8bit_hi))>,
+      Requires<[NotNaCl]>;
+      // @LOCALMOD: NaCl will slip in R15, which breaks the no-REX req.
 def : Pat<(store (i8 (trunc_su (srl_su GR32:$src, (i8 8)))), addr:$dst),
           (MOV8mr_NOREX
             addr:$dst,
             (EXTRACT_SUBREG (i32 (COPY_TO_REGCLASS GR32:$src, GR32_ABCD)),
                             sub_8bit_hi))>,
-      Requires<[In64BitMode]>;
+      Requires<[In64BitMode, NotNaCl]>; // @LOCALMOD
 def : Pat<(store (i8 (trunc_su (srl_su GR16:$src, (i8 8)))), addr:$dst),
           (MOV8mr_NOREX
             addr:$dst,
             (EXTRACT_SUBREG (i16 (COPY_TO_REGCLASS GR16:$src, GR16_ABCD)),
                             sub_8bit_hi))>,
-      Requires<[In64BitMode]>;
+      Requires<[In64BitMode, NotNaCl]>; // @LOCALMOD
 
 // (shl x, 1) ==> (add x, x)
 def : Pat<(shl GR64:$src1, (i8 1)), (ADD64rr GR64:$src1, GR64:$src1)>;

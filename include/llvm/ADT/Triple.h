@@ -86,6 +86,7 @@ public:
     Lv2,        // PS3
     MinGW32,
     MinGW64,
+    NativeClient,
     NetBSD,
     OpenBSD,
     Psp,

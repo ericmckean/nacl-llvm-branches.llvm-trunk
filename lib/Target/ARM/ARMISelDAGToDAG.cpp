@@ -36,6 +36,11 @@
 
 using namespace llvm;
 
+// @LOCALMOD-START
+#include "llvm/Support/CommandLine.h"
+extern cl::opt<bool> FlagSfiStore;
+// @LOCALMOD-END
+
 static cl::opt<bool>
 DisableShifterOp("disable-shifter-op", cl::Hidden,
   cl::desc("Disable isel of shifter-op"),
@@ -257,9 +262,21 @@ bool ARMDAGToDAGISel::SelectShifterOperandReg(SDNode *Op,
   return true;
 }
 
+// @LOCALMOD-START
+// Note: In the code below we do not want "Offfset" to be real register to
+// not violate ARM sandboxing.
+// @LOCALMOD-END
+
+
 bool ARMDAGToDAGISel::SelectAddrMode2(SDNode *Op, SDValue N,
                                       SDValue &Base, SDValue &Offset,
                                       SDValue &Opc) {
+  // @LOCALMOD-START
+  // avoid two reg addressing mode for stores
+  const bool is_store = (Op->getOpcode() == ISD::STORE);
+  if (!FlagSfiStore || !is_store ) {
+  // @LOCALMOD-END
+
   if (N.getOpcode() == ISD::MUL) {
     if (ConstantSDNode *RHS = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
       // X * [3,5,9] -> X + X * [2,4,8] etc.
@@ -282,6 +299,7 @@ bool ARMDAGToDAGISel::SelectAddrMode2(SDNode *Op, SDValue N,
       }
     }
   }
+  } // @LOCALMOD
 
   if (N.getOpcode() != ISD::ADD && N.getOpcode() != ISD::SUB) {
     Base = N;
@@ -324,6 +342,24 @@ bool ARMDAGToDAGISel::SelectAddrMode2(SDNode *Op, SDValue N,
         return true;
       }
     }
+
+  // @LOCALMOD-START
+  // keep store addressing modes simple
+  if (FlagSfiStore && is_store) {
+    Base = N;
+    if (N.getOpcode() == ISD::FrameIndex) {
+      int FI = cast<FrameIndexSDNode>(N)->getIndex();
+      Base = CurDAG->getTargetFrameIndex(FI, TLI.getPointerTy());
+    } else if (N.getOpcode() == ARMISD::Wrapper) {
+      Base = N.getOperand(0);
+    }
+    Offset = CurDAG->getRegister(0, MVT::i32);
+    Opc = CurDAG->getTargetConstant(ARM_AM::getAM2Opc(ARM_AM::add, 0,
+                                                      ARM_AM::no_shift),
+                                    MVT::i32);
+    return true;
+  }
+  // @LOCALMOD-END
 
   // Otherwise this is R +/- [possibly shifted] R.
   ARM_AM::AddrOpc AddSub = N.getOpcode() == ISD::ADD ? ARM_AM::add:ARM_AM::sub;
@@ -386,13 +422,19 @@ bool ARMDAGToDAGISel::SelectAddrMode2Offset(SDNode *Op, SDValue N,
     }
   }
 
+  const bool is_store = (Opcode == ISD::STORE); // @LOCALMOD
+
+
   Offset = N;
   ARM_AM::ShiftOpc ShOpcVal = ARM_AM::getShiftOpcForNode(N);
   unsigned ShAmt = 0;
   if (ShOpcVal != ARM_AM::no_shift) {
     // Check to see if the RHS of the shift is a constant, if not, we can't fold
     // it.
-    if (ConstantSDNode *Sh = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
+
+    //if (ConstantSDNode *Sh = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
+    ConstantSDNode *Sh = dyn_cast<ConstantSDNode>(N.getOperand(1));
+    if ((!FlagSfiStore || !is_store) && Sh ) { // @LOCALMOD
       ShAmt = Sh->getZExtValue();
       Offset = N.getOperand(0);
     } else {
@@ -409,13 +451,21 @@ bool ARMDAGToDAGISel::SelectAddrMode2Offset(SDNode *Op, SDValue N,
 bool ARMDAGToDAGISel::SelectAddrMode3(SDNode *Op, SDValue N,
                                       SDValue &Base, SDValue &Offset,
                                       SDValue &Opc) {
+  // @LOCAMOD-START
+  // TODO: ADD COMMENT
+  // if (N.getOpcode() == ISD::SUB) {
+  const bool is_store = (Op->getOpcode() == ISD::STORE);
+  if (!FlagSfiStore ||!is_store) { // @LOCAMOD-START
   if (N.getOpcode() == ISD::SUB) {
+  // @LOCALMOD-END
+
     // X - C  is canonicalize to X + -C, no need to handle it here.
     Base = N.getOperand(0);
     Offset = N.getOperand(1);
     Opc = CurDAG->getTargetConstant(ARM_AM::getAM3Opc(ARM_AM::sub, 0),MVT::i32);
     return true;
   }
+  } // @LOCAMOD-END
 
   if (N.getOpcode() != ISD::ADD) {
     Base = N;
@@ -449,6 +499,15 @@ bool ARMDAGToDAGISel::SelectAddrMode3(SDNode *Op, SDValue N,
       return true;
     }
   }
+
+  // @LOCALMOD-START
+  if (FlagSfiStore && is_store) {
+    Base = N;
+    Offset = CurDAG->getRegister(0, MVT::i32);
+    Opc = CurDAG->getTargetConstant(ARM_AM::getAM3Opc(ARM_AM::add, 0),MVT::i32);
+    return true;
+  }
+  // @LOCALMOD-END
 
   Base = N.getOperand(0);
   Offset = N.getOperand(1);

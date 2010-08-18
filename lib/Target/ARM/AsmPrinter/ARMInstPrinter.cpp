@@ -18,9 +18,16 @@
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCExpr.h"
+#include "llvm/Support/CommandLine.h"  // @LOCALMOD
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/raw_ostream.h"
+
 using namespace llvm;
+
+// @LOCALMOD
+extern cl::opt<bool> FlagSfiStore;
+// @LOCALMOD
+
 
 // Include the auto-generated portion of the assembly writer.
 #define MachineInstr MCInst
