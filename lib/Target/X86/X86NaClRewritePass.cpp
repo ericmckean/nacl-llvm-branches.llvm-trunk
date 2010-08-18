@@ -399,16 +399,16 @@ void X86NaClRewritePass::PassLightWeightValidator(MachineBasicBlock &MBB,
       if ((IsStore(MI) || IsLoad(MI)) && !IsPushPop(MI) ) {
         bool found;
         unsigned memOperand = FindMemoryOperand(MI, found);
-	assert (found && "Load / Store without memory operand?");
+        assert (found && "Load / Store without mem operand?");
         MachineOperand &BaseReg  = MI.getOperand(memOperand + 0);
         const unsigned breg = BaseReg.getReg();
-	// Base should be a safe reg.
+        // Base should be a safe reg.
         if ((breg != X86::RSP && breg != X86::RBP &&
              breg != X86::R15 && breg != X86::RIP)) {
           // TODO(robertm): add proper test
           dbgs() << "@VALIDATOR: MEM OP WITH BAD BASE\n\n";
           DumpInstructionVerbose(MI);
-//	  assert (false);
+          // assert (false);
         }
       }
     }
