@@ -116,13 +116,13 @@ public:
 
   ValTy *getArgument(unsigned ArgNo) const {
     assert(arg_begin() + ArgNo < arg_end() && "Argument # out of range!");
-    return *(arg_begin()+ArgNo);
+    return *(arg_begin() + ArgNo);
   }
 
   void setArgument(unsigned ArgNo, Value* newVal) {
     assert(getInstruction() && "Not a call or invoke instruction!");
     assert(arg_begin() + ArgNo < arg_end() && "Argument # out of range!");
-    getInstruction()->setOperand(getArgumentOffset() + ArgNo, newVal);
+    getInstruction()->setOperand(ArgNo, newVal);
   }
 
   /// Given a value use iterator, returns the argument that corresponds to it.
@@ -143,7 +143,7 @@ public:
   IterTy arg_begin() const {
     assert(getInstruction() && "Not a call or invoke instruction!");
     // Skip non-arguments
-    return (*this)->op_begin() + getArgumentOffset();
+    return (*this)->op_begin();
   }
 
   IterTy arg_end() const { return (*this)->op_end() - getArgumentEndOffset(); }
@@ -253,12 +253,6 @@ public:
   }
 
 private:
-  /// Returns the operand number of the first argument
-  /// FIXME: remove this func!
-  unsigned getArgumentOffset() const {
-    return 0; // Args are at the front
-  }
-
   unsigned getArgumentEndOffset() const {
     if (isCall())
       return 1; // Skip Callee
@@ -267,24 +261,11 @@ private:
   }
 
   IterTy getCallee() const {
-      // FIXME: this is slow, since we do not have the fast versions
-      // of the op_*() functions here. See CallSite::getCallee.
-      //
-    if (isCall())
-      return getInstruction()->op_end() - 1; // Skip Callee
-    else
-      return getInstruction()->op_end() - 3; // Skip BB, BB, Callee
+    if (isCall()) // Skip Callee
+      return cast<CallInst>(getInstruction())->op_end() - 1;
+    else // Skip BB, BB, Callee
+      return cast<InvokeInst>(getInstruction())->op_end() - 3;
   }
-};
-
-/// ImmutableCallSite - establish a view to a call site for examination
-class ImmutableCallSite : public CallSiteBase<> {
-  typedef CallSiteBase<> Base;
-public:
-  ImmutableCallSite(const Value* V) : Base(V) {}
-  ImmutableCallSite(const CallInst *CI) : Base(CI) {}
-  ImmutableCallSite(const InvokeInst *II) : Base(II) {}
-  ImmutableCallSite(const Instruction *II) : Base(II) {}
 };
 
 class CallSite : public CallSiteBase<Function, Value, User, Instruction,
@@ -317,6 +298,17 @@ public:
 
 private:
   User::op_iterator getCallee() const;
+};
+
+/// ImmutableCallSite - establish a view to a call site for examination
+class ImmutableCallSite : public CallSiteBase<> {
+  typedef CallSiteBase<> Base;
+public:
+  ImmutableCallSite(const Value* V) : Base(V) {}
+  ImmutableCallSite(const CallInst *CI) : Base(CI) {}
+  ImmutableCallSite(const InvokeInst *II) : Base(II) {}
+  ImmutableCallSite(const Instruction *II) : Base(II) {}
+  ImmutableCallSite(CallSite CS) : Base(CS.getInstruction()) {}
 };
 
 } // End llvm namespace

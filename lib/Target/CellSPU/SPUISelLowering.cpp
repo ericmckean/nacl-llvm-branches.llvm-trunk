@@ -428,6 +428,7 @@ SPUTargetLowering::SPUTargetLowering(SPUTargetMachine &TM)
 
   // "Odd size" vector classes that we're willing to support:
   addRegisterClass(MVT::v2i32, SPU::VECREGRegisterClass);
+  addRegisterClass(MVT::v2f32, SPU::VECREGRegisterClass);
 
   for (unsigned i = (unsigned)MVT::FIRST_VECTOR_VALUETYPE;
        i <= (unsigned)MVT::LAST_VECTOR_VALUETYPE; ++i) {
@@ -468,6 +469,9 @@ SPUTargetLowering::SPUTargetLowering(SPUTargetMachine &TM)
   setOperationAction(ISD::SCALAR_TO_VECTOR, MVT::v4f32, Custom);
 
   setOperationAction(ISD::FDIV, MVT::v4f32, Legal);
+
+  setOperationAction(ISD::STORE, MVT::v2i32, Custom);
+  setOperationAction(ISD::STORE, MVT::v2f32, Custom);
 
   setShiftAmountType(MVT::i32);
   setBooleanContents(ZeroOrNegativeOneBooleanContent);
@@ -517,6 +521,8 @@ SPUTargetLowering::getTargetNodeName(unsigned Opcode) const
     node_names[(unsigned) SPUISD::ADD64_MARKER] = "SPUISD::ADD64_MARKER";
     node_names[(unsigned) SPUISD::SUB64_MARKER] = "SPUISD::SUB64_MARKER";
     node_names[(unsigned) SPUISD::MUL64_MARKER] = "SPUISD::MUL64_MARKER";
+    node_names[(unsigned) SPUISD::HALF2VEC] = "SPUISD::HALF2VEC";
+    node_names[(unsigned) SPUISD::VEC2HALF] = "SPUISD::VEC2HALF";
   }
 
   std::map<unsigned, const char *>::iterator i = node_names.find(Opcode);
@@ -737,12 +743,14 @@ LowerSTORE(SDValue Op, SelectionDAG &DAG, const SPUSubtarget *ST) {
   EVT PtrVT = DAG.getTargetLoweringInfo().getPointerTy();
   DebugLoc dl = Op.getDebugLoc();
   unsigned alignment = SN->getAlignment();
+  const bool isVec = VT.isVector();
+  EVT eltTy = isVec ? VT.getVectorElementType(): VT;
 
   switch (SN->getAddressingMode()) {
   case ISD::UNINDEXED: {
     // The vector type we really want to load from the 16-byte chunk.
     EVT vecVT = EVT::getVectorVT(*DAG.getContext(),
-                                 VT, (128 / VT.getSizeInBits()));
+                                 eltTy, (128 / eltTy.getSizeInBits()));
 
     SDValue alignLoadVec;
     SDValue basePtr = SN->getBasePtr();
@@ -751,7 +759,6 @@ LowerSTORE(SDValue Op, SelectionDAG &DAG, const SPUSubtarget *ST) {
 
     if (alignment == 16) {
       ConstantSDNode *CN;
-
       // Special cases for a known aligned load to simplify the base pointer
       // and insertion byte:
       if (basePtr.getOpcode() == ISD::ADD
@@ -773,6 +780,9 @@ LowerSTORE(SDValue Op, SelectionDAG &DAG, const SPUSubtarget *ST) {
       } else {
         // Otherwise, assume it's at byte 0 of basePtr
         insertEltOffs = DAG.getNode(SPUISD::IndirectAddr, dl, PtrVT,
+                                    basePtr,
+                                    DAG.getConstant(0, PtrVT));
+        basePtr = DAG.getNode(SPUISD::IndirectAddr, dl, PtrVT,
                                     basePtr,
                                     DAG.getConstant(0, PtrVT));
       }
@@ -811,8 +821,8 @@ LowerSTORE(SDValue Op, SelectionDAG &DAG, const SPUSubtarget *ST) {
                                   DAG.getConstant(0, PtrVT));
     }
 
-    // Re-emit as a v16i8 vector load
-    alignLoadVec = DAG.getLoad(MVT::v16i8, dl, the_chain, basePtr,
+    // Load the memory to which to store.
+    alignLoadVec = DAG.getLoad(vecVT, dl, the_chain, basePtr,
                                SN->getSrcValue(), SN->getSrcValueOffset(),
                                SN->isVolatile(), SN->isNonTemporal(), 16);
 
@@ -843,11 +853,19 @@ LowerSTORE(SDValue Op, SelectionDAG &DAG, const SPUSubtarget *ST) {
       }
 #endif
 
-    SDValue insertEltOp =
-            DAG.getNode(SPUISD::SHUFFLE_MASK, dl, vecVT, insertEltOffs);
-    SDValue vectorizeOp =
-            DAG.getNode(ISD::SCALAR_TO_VECTOR, dl, vecVT, theValue);
-
+    SDValue insertEltOp;
+    SDValue vectorizeOp;
+    if (isVec)
+    {
+      // FIXME: this works only if the vector is 64bit!
+      insertEltOp = DAG.getNode(SPUISD::SHUFFLE_MASK, dl, MVT::v2i64, insertEltOffs);
+      vectorizeOp = DAG.getNode(SPUISD::HALF2VEC, dl, vecVT, theValue);
+    }
+    else
+    {
+      insertEltOp = DAG.getNode(SPUISD::SHUFFLE_MASK, dl, vecVT, insertEltOffs);
+      vectorizeOp = DAG.getNode(ISD::SCALAR_TO_VECTOR, dl, vecVT, theValue);
+    }
     result = DAG.getNode(SPUISD::SHUFB, dl, vecVT,
                          vectorizeOp, alignLoadVec,
                          DAG.getNode(ISD::BIT_CONVERT, dl,
@@ -1067,6 +1085,8 @@ SPUTargetLowering::LowerFormalArguments(SDValue Chain,
       case MVT::v4i32:
       case MVT::v8i16:
       case MVT::v16i8:
+      case MVT::v2i32:
+      case MVT::v2f32:
         ArgRegClass = &SPU::VECREGRegClass;
         break;
       }
@@ -1621,9 +1641,9 @@ LowerBUILD_VECTOR(SDValue Op, SelectionDAG &DAG) {
     SDValue T = DAG.getConstant(unsigned(SplatBits), VT.getVectorElementType());
     return DAG.getNode(ISD::BUILD_VECTOR, dl, VT, T, T, T, T);
   }
+  case MVT::v2f32:
   case MVT::v2i32: {
-    SDValue T = DAG.getConstant(unsigned(SplatBits), VT.getVectorElementType());
-    return DAG.getNode(ISD::BUILD_VECTOR, dl, VT, T, T);
+    return SDValue();
   }
   case MVT::v2i64: {
     return SPU::LowerV2I64Splat(VT, DAG, SplatBits, dl);
@@ -1768,6 +1788,9 @@ static SDValue LowerVECTOR_SHUFFLE(SDValue Op, SelectionDAG &DAG) {
   } else if (EltVT == MVT::i16) {
     V2EltIdx0 = 8;
     maskVT = MVT::v8i16;
+  } else if (VecVT == MVT::v2i32 || VecVT == MVT::v2f32 ) {
+    V2EltIdx0 = 2;
+    maskVT = MVT::v4i32;
   } else if (EltVT == MVT::i32 || EltVT == MVT::f32) {
     V2EltIdx0 = 4;
     maskVT = MVT::v4i32;
@@ -1847,6 +1870,15 @@ static SDValue LowerVECTOR_SHUFFLE(SDValue Op, SelectionDAG &DAG) {
       for (unsigned j = 0; j < BytesPerElement; ++j)
         ResultMask.push_back(DAG.getConstant(SrcElt*BytesPerElement+j,MVT::i8));
     }
+    // For half vectors padd the mask with zeros for the second half.
+    // This is needed because mask is assumed to be full vector elsewhere in 
+    // the SPU backend. 
+    if(VecVT == MVT::v2i32 || VecVT == MVT::v2f32)
+    for( unsigned i = 0; i < 2; ++i )
+    {
+      for (unsigned j = 0; j < BytesPerElement; ++j)
+        ResultMask.push_back(DAG.getConstant(0,MVT::i8));
+    }
 
     SDValue VPermMask = DAG.getNode(ISD::BUILD_VECTOR, dl, MVT::v16i8,
                                     &ResultMask[0], ResultMask.size());
@@ -1877,6 +1909,7 @@ static SDValue LowerSCALAR_TO_VECTOR(SDValue Op, SelectionDAG &DAG) {
     case MVT::v4f32: n_copies = 4; VT = MVT::f32; break;
     case MVT::v2i64: n_copies = 2; VT = MVT::i64; break;
     case MVT::v2f64: n_copies = 2; VT = MVT::f64; break;
+    case MVT::v2i32: n_copies = 2; VT = MVT::i32; break;
     }
 
     SDValue CValue = DAG.getConstant(CN->getZExtValue(), VT);
@@ -1997,7 +2030,7 @@ static SDValue LowerEXTRACT_VECTOR_ELT(SDValue Op, SelectionDAG &DAG) {
     // Variable index: Rotate the requested element into slot 0, then replicate
     // slot 0 across the vector
     EVT VecVT = N.getValueType();
-    if (!VecVT.isSimple() || !VecVT.isVector() || !VecVT.is128BitVector()) {
+    if (!VecVT.isSimple() || !VecVT.isVector()) {
       report_fatal_error("LowerEXTRACT_VECTOR_ELT: Must have a simple, 128-bit"
                         "vector type!");
     }
@@ -2086,7 +2119,10 @@ static SDValue LowerINSERT_VECTOR_ELT(SDValue Op, SelectionDAG &DAG) {
   SDValue Pointer = DAG.getNode(SPUISD::IndirectAddr, dl, PtrVT,
                                 DAG.getRegister(SPU::R1, PtrVT),
                                 DAG.getConstant(Idx, PtrVT));
-  SDValue ShufMask = DAG.getNode(SPUISD::SHUFFLE_MASK, dl, VT, Pointer);
+  // widen the mask when dealing with half vectors
+  EVT maskVT = EVT::getVectorVT(*(DAG.getContext()), VT.getVectorElementType(), 
+                                128/ VT.getVectorElementType().getSizeInBits());
+  SDValue ShufMask = DAG.getNode(SPUISD::SHUFFLE_MASK, dl, maskVT, Pointer);
 
   SDValue result =
     DAG.getNode(SPUISD::SHUFB, dl, VT,

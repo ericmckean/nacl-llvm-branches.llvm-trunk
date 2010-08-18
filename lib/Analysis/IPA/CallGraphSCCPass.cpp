@@ -45,7 +45,7 @@ class CGPassManager : public ModulePass, public PMDataManager {
 public:
   static char ID;
   explicit CGPassManager(int Depth) 
-    : ModulePass(&ID), PMDataManager(Depth) { }
+    : ModulePass(ID), PMDataManager(Depth) { }
 
   /// run - Execute all of the passes scheduled for execution.  Keep track of
   /// whether any of the passes modifies the module, and if so, return true.
@@ -73,7 +73,7 @@ public:
     errs().indent(Offset*2) << "Call Graph SCC Pass Manager\n";
     for (unsigned Index = 0; Index < getNumContainedPasses(); ++Index) {
       Pass *P = getContainedPass(Index);
-      P->dumpPassStructure(Offset + 1);
+      P->dumpPass(Offset + 1);
       dumpLastUses(P, Offset+1);
     }
   }
@@ -582,9 +582,9 @@ namespace {
     
   public:
     static char ID;
-    PrintCallGraphPass() : CallGraphSCCPass(&ID), Out(dbgs()) {}
+    PrintCallGraphPass() : CallGraphSCCPass(ID), Out(dbgs()) {}
     PrintCallGraphPass(const std::string &B, raw_ostream &o)
-      : CallGraphSCCPass(&ID), Banner(B), Out(o) {}
+      : CallGraphSCCPass(ID), Banner(B), Out(o) {}
     
     virtual void getAnalysisUsage(AnalysisUsage &AU) const {
       AU.setPreservesAll();

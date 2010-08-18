@@ -37,9 +37,6 @@ namespace llvm {
 
     /// The MCAsmInfo for this target.
     const MCAsmInfo &MAI;
-    
-    /// Sections - Bindings of names to allocated sections.
-    StringMap<MCSection*> Sections;
 
     /// Symbols - Bindings of names to symbols.
     StringMap<MCSymbol*> Symbols;
@@ -70,7 +67,7 @@ namespace llvm {
 
     /// The dwarf file and directory tables from the dwarf .file directive.
     std::vector<MCDwarfFile *> MCDwarfFiles;
-    std::vector<std::string *> MCDwarfDirs;
+    std::vector<StringRef> MCDwarfDirs;
 
     /// Allocator - Allocator object used for creating machine code objects.
     ///
@@ -132,7 +129,8 @@ namespace llvm {
     
     const MCSection *getELFSection(StringRef Section, unsigned Type,
                                    unsigned Flags, SectionKind Kind,
-                                   bool IsExplicit = false);
+                                   bool IsExplicit = false,
+                                   unsigned EntrySize = 0);
 
     const MCSection *getCOFFSection(StringRef Section, unsigned Characteristics,
                                     int Selection, SectionKind Kind);
@@ -153,6 +151,9 @@ namespace llvm {
 
     const std::vector<MCDwarfFile *> &getMCDwarfFiles() {
       return MCDwarfFiles;
+    }
+    const std::vector<StringRef> &getMCDwarfDirs() {
+      return MCDwarfDirs;
     }
 
     /// @}

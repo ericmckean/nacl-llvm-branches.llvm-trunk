@@ -251,19 +251,6 @@ def tADDspr : TIt<(outs GPR:$dst), (ins GPR:$lhs, GPR:$rhs), IIC_iALUr,
   let Inst{2-0} = 0b101;
 }
 
-// Pseudo instruction that will expand into a tSUBspi + a copy.
-let usesCustomInserter = 1 in { // Expanded after instruction selection.
-def tSUBspi_ : PseudoInst<(outs GPR:$dst), (ins GPR:$lhs, t_imm_s4:$rhs),
-               NoItinerary, "${:comment} sub\t$dst, $rhs", []>;
-
-def tADDspr_ : PseudoInst<(outs GPR:$dst), (ins GPR:$lhs, GPR:$rhs),
-               NoItinerary, "${:comment} add\t$dst, $rhs", []>;
-
-let Defs = [CPSR] in
-def tANDsp : PseudoInst<(outs tGPR:$dst), (ins tGPR:$lhs, tGPR:$rhs),
-             NoItinerary, "${:comment} and\t$dst, $rhs", []>;
-} // usesCustomInserter
-
 //===----------------------------------------------------------------------===//
 //  Control Flow Instructions.
 //
@@ -378,7 +365,7 @@ let isBranch = 1, isTerminator = 1 in {
 
   def tBR_JTr : T1JTI<(outs),
                       (ins tGPR:$target, jtblock_operand:$jt, i32imm:$id),
-                      IIC_Br, "mov\tpc, $target\n\t.align\t2\n$jt",
+                      IIC_Br, "mov\tpc, $target\n\t.align\t2$jt",
                       [(ARMbrjt tGPR:$target, tjumptable:$jt, imm:$id)]>,
                 Encoding16 {
     let Inst{15-7} = 0b010001101;

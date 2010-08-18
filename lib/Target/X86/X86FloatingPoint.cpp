@@ -50,7 +50,7 @@ STATISTIC(NumFP  , "Number of floating point instructions");
 namespace {
   struct FPS : public MachineFunctionPass {
     static char ID;
-    FPS() : MachineFunctionPass(&ID) {
+    FPS() : MachineFunctionPass(ID) {
       // This is really only to keep valgrind quiet.
       // The logic in isLive() is too much for it.
       memset(Stack, 0, sizeof(Stack));
@@ -142,11 +142,6 @@ namespace {
         assert(RegMap[Stack[i]] == i && "Stack[] doesn't match RegMap[]!");
       }
       dbgs() << "\n";
-    }
-
-    /// isStackEmpty - Return true if the FP stack is empty.
-    bool isStackEmpty() const {
-      return StackTop == 0;
     }
 
     /// getSlot - Return the stack slot number a particular register number is

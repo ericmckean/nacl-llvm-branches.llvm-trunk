@@ -53,12 +53,12 @@ namespace {
   public:
     static char ID;
     explicit Emitter(X86TargetMachine &tm, CodeEmitter &mce)
-      : MachineFunctionPass(&ID), II(0), TD(0), TM(tm), 
+      : MachineFunctionPass(ID), II(0), TD(0), TM(tm), 
       MCE(mce), PICBaseOffset(0), Is64BitMode(false),
       IsPIC(TM.getRelocationModel() == Reloc::PIC_) {}
     Emitter(X86TargetMachine &tm, CodeEmitter &mce,
             const X86InstrInfo &ii, const TargetData &td, bool is64)
-      : MachineFunctionPass(&ID), II(&ii), TD(&td), TM(tm), 
+      : MachineFunctionPass(ID), II(&ii), TD(&td), TM(tm), 
       MCE(mce), PICBaseOffset(0), Is64BitMode(is64),
       IsPIC(TM.getRelocationModel() == Reloc::PIC_) {}
 
@@ -705,6 +705,12 @@ void Emitter<CodeEmitter>::emitInstruction(const MachineInstr &MI,
       llvm_unreachable("psuedo instructions should be removed before code"
                        " emission");
       break;
+    // Do nothing for Int_MemBarrier - it's just a comment.  Add a debug
+    // to make it slightly easier to see.
+    case X86::Int_MemBarrier:
+      DEBUG(dbgs() << "#MEMBARRIER\n");
+      break;
+    
     case TargetOpcode::INLINEASM:
       // We allow inline assembler nodes with empty bodies - they can
       // implicitly define registers, which is ok for JIT.
@@ -716,7 +722,7 @@ void Emitter<CodeEmitter>::emitInstruction(const MachineInstr &MI,
     case TargetOpcode::EH_LABEL:
       MCE.emitLabel(MI.getOperand(0).getMCSymbol());
       break;
-        
+    
     case TargetOpcode::IMPLICIT_DEF:
     case TargetOpcode::KILL:
       break;
@@ -770,7 +776,8 @@ void Emitter<CodeEmitter>::emitInstruction(const MachineInstr &MI,
     }
     
     assert(MO.isImm() && "Unknown RawFrm operand!");
-    if (Opcode == X86::CALLpcrel32 || Opcode == X86::CALL64pcrel32) {
+    if (Opcode == X86::CALLpcrel32 || Opcode == X86::CALL64pcrel32 ||
+        Opcode == X86::WINCALL64pcrel32) {
       // Fix up immediate operand for pc relative calls.
       intptr_t Imm = (intptr_t)MO.getImm();
       Imm = Imm - MCE.getCurrentPCValue() - 4;

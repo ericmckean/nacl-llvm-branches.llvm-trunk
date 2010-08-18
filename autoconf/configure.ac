@@ -101,7 +101,6 @@ for i in `ls ${srcdir}/projects`
 do
   if test -d ${srcdir}/projects/${i} ; then
     case ${i} in
-      CVS) ;;
       sample)       AC_CONFIG_SUBDIRS([projects/sample])    ;;
       privbracket)  AC_CONFIG_SUBDIRS([projects/privbracket]) ;;
       llvm-stacker) AC_CONFIG_SUBDIRS([projects/llvm-stacker]) ;;
@@ -299,7 +298,7 @@ dnl Set the LINKALL and NOLINKALL Makefile variables based on the platform
 AC_SUBST(LINKALL,$llvm_cv_link_all_option)
 AC_SUBST(NOLINKALL,$llvm_cv_no_link_all_option)
 
-dnl Set the "LLVM_ON_*" variables based on llvm_cvs_platform_type
+dnl Set the "LLVM_ON_*" variables based on llvm_cv_platform_type
 dnl This is used by lib/System to determine the basic kind of implementation
 dnl to use.
 case $llvm_cv_platform_type in
@@ -369,13 +368,13 @@ else
   AC_SUBST(LLVM_CROSS_COMPILING, [0])
 fi
 
-dnl Check to see if there's a "CVS" (or .svn or .git) directory indicating
-dnl that this build is being done from a checkout. This sets up several
-dnl defaults for the command line switches. When we build with a CVS directory,
+dnl Check to see if there's a .svn or .git directory indicating that this
+dnl build is being done from a checkout. This sets up several defaults for
+dnl the command line switches. When we build with a checkout directory,
 dnl we get a debug with assertions turned on. Without, we assume a source
 dnl release and we get an optimized build without assertions.
 dnl See --enable-optimized and --enable-assertions below
-if test -d "CVS" -o -d "${srcdir}/CVS" -o -d ".svn" -o -d "${srcdir}/.svn" -o -d ".git" -o -d "${srcdir}/.git"; then
+if test -d ".svn" -o -d "${srcdir}/.svn" -o -d ".git" -o -d "${srcdir}/.git"; then
   cvsbuild="yes"
   optimize="no"
   AC_SUBST(CVSBUILD,[[CVSBUILD=1]])
@@ -599,6 +598,8 @@ AC_SUBST(TARGETS_TO_BUILD,$TARGETS_TO_BUILD)
 for a_target in $TARGETS_TO_BUILD; do
   if test "$a_target" = "$LLVM_NATIVE_ARCH"; then
     LLVM_NATIVE_ARCHTARGET="${LLVM_NATIVE_ARCH}Target"
+    AC_DEFINE_UNQUOTED(LLVM_NATIVE_ARCHNAME,$LLVM_NATIVE_ARCH,
+      [Short LLVM architecture name for the native architecture, if available])
     AC_DEFINE_UNQUOTED(LLVM_NATIVE_ARCH,$LLVM_NATIVE_ARCHTARGET,
       [LLVM architecture name for the native architecture, if available])
   fi
@@ -857,35 +858,6 @@ AC_ARG_ENABLE(libffi,AS_HELP_STRING(
   esac],
   llvm_cv_enable_libffi=no)
 
-dnl Only Windows needs dynamic libCompilerDriver to support plugins.
-if test "$llvm_cv_os_type" = "Win32" ; then
-   llvmc_dynamic="yes"
-else
-   llvmc_dynamic="no"
-fi
-
-dnl --enable-llvmc-dynamic : should LLVMC link libCompilerDriver dynamically?
-AC_ARG_ENABLE(llvmc-dynamic,AS_HELP_STRING(
---enable-llvmc-dynamic,
-[Link LLVMC dynamically (default is NO, unless on Win32)]),,
-enableval=$llvmc_dynamic)
-if test ${enableval} = "yes" && test "$ENABLE_PIC" -eq 1 ; then
-   AC_SUBST(ENABLE_LLVMC_DYNAMIC,[[ENABLE_LLVMC_DYNAMIC=1]])
-else
-   AC_SUBST(ENABLE_LLVMC_DYNAMIC,[[]])
-fi
-
-dnl --enable-llvmc-dynamic-plugins : should LLVMC support dynamic plugins?
-AC_ARG_ENABLE(llvmc-dynamic-plugins,AS_HELP_STRING(
---enable-llvmc-dynamic-plugins,
-[Enable dynamic LLVMC plugins (default is YES)]),,
-enableval=yes)
-if test ${enableval} = "yes" ; then
-   AC_SUBST(ENABLE_LLVMC_DYNAMIC_PLUGINS,[[ENABLE_LLVMC_DYNAMIC_PLUGINS=1]])
-else
-   AC_SUBST(ENABLE_LLVMC_DYNAMIC_PLUGINS,[[]])
-fi
-
 dnl===-----------------------------------------------------------------------===
 dnl===
 dnl=== SECTION 4: Check for programs we need and that they are the right version
@@ -1039,6 +1011,9 @@ AC_PATH_PROGS(OCAMLOPT, [ocamlopt])
 AC_PATH_PROGS(OCAMLDEP, [ocamldep])
 AC_PATH_PROGS(OCAMLDOC, [ocamldoc])
 AC_PATH_PROGS(GAS, [gas as])
+
+dnl Get the version of the linker in use.
+AC_LINK_GET_VERSION
 
 dnl Determine whether the linker supports the -R option.
 AC_LINK_USE_R
@@ -1579,7 +1554,11 @@ dnl WARNING: dnl If you add or remove any of the following config headers, then
 dnl you MUST also update Makefile.rules so that the variable FilesToConfig
 dnl contains the same list of files as AC_CONFIG_HEADERS below. This ensures the
 dnl files can be updated automatically when their *.in sources change.
-AC_CONFIG_HEADERS([include/llvm/Config/config.h])
+AC_CONFIG_HEADERS([include/llvm/Config/config.h include/llvm/Config/llvm-config.h])
+AH_TOP([#ifndef CONFIG_H
+#define CONFIG_H])
+AH_BOTTOM([#endif])
+
 AC_CONFIG_FILES([include/llvm/Config/Targets.def])
 AC_CONFIG_FILES([include/llvm/Config/AsmPrinters.def])
 AC_CONFIG_FILES([include/llvm/Config/AsmParsers.def])
@@ -1593,7 +1572,7 @@ dnl Configure the RPM spec file for LLVM
 AC_CONFIG_FILES([llvm.spec])
 
 dnl Configure llvmc's Base plugin
-AC_CONFIG_FILES([tools/llvmc/plugins/Base/Base.td])
+AC_CONFIG_FILES([tools/llvmc/src/Base.td])
 
 dnl Do the first stage of configuration for llvm-config.in.
 AC_CONFIG_FILES([tools/llvm-config/llvm-config.in])

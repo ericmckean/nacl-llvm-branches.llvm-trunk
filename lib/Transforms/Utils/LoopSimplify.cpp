@@ -48,7 +48,6 @@
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/Dominators.h"
 #include "llvm/Analysis/LoopPass.h"
-#include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Support/CFG.h"
@@ -65,7 +64,7 @@ STATISTIC(NumNested  , "Number of nested loops split out");
 namespace {
   struct LoopSimplify : public LoopPass {
     static char ID; // Pass identification, replacement for typeid
-    LoopSimplify() : LoopPass(&ID) {}
+    LoopSimplify() : LoopPass(ID) {}
 
     // AA - If we have an alias analysis object to update, this is it, otherwise
     // this is null.
@@ -84,7 +83,7 @@ namespace {
       AU.addPreserved<LoopInfo>();
 
       AU.addPreserved<AliasAnalysis>();
-      AU.addPreserved<ScalarEvolution>();
+      AU.addPreserved("scalar-evolution");
       AU.addPreservedID(BreakCriticalEdgesID);  // No critical edges added.
       AU.addPreserved<DominanceFrontier>();
       AU.addPreservedID(LCSSAID);
@@ -110,7 +109,7 @@ static RegisterPass<LoopSimplify>
 X("loopsimplify", "Canonicalize natural loops", true);
 
 // Publically exposed interface to pass...
-const PassInfo *const llvm::LoopSimplifyID = &X;
+char &llvm::LoopSimplifyID = LoopSimplify::ID;
 Pass *llvm::createLoopSimplifyPass() { return new LoopSimplify(); }
 
 /// runOnLoop - Run down all loops in the CFG (recursively, but we could do
@@ -622,6 +621,11 @@ LoopSimplify::InsertUniqueBackedgeBlock(Loop *L, BasicBlock *Preheader) {
   std::vector<BasicBlock*> BackedgeBlocks;
   for (pred_iterator I = pred_begin(Header), E = pred_end(Header); I != E; ++I){
     BasicBlock *P = *I;
+
+    // Indirectbr edges cannot be split, so we must fail if we find one.
+    if (isa<IndirectBrInst>(P->getTerminator()))
+      return 0;
+
     if (P != Preheader) BackedgeBlocks.push_back(P);
   }
 

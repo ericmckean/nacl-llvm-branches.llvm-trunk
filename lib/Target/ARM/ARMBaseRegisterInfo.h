@@ -105,6 +105,11 @@ public:
 
   bool canRealignStack(const MachineFunction &MF) const;
   bool needsStackRealignment(const MachineFunction &MF) const;
+  bool needsFrameBaseReg(MachineInstr *MI, unsigned operand) const;
+  void materializeFrameBaseRegister(MachineBasicBlock::iterator I,
+                                    unsigned BaseReg, int FrameIdx) const;
+  void resolveFrameIndex(MachineBasicBlock::iterator I,
+                         unsigned BaseReg, int64_t Offset) const;
 
   bool cannotEliminateFrame(const MachineFunction &MF) const;
 
@@ -116,6 +121,8 @@ public:
   unsigned getFrameRegister(const MachineFunction &MF) const;
   int getFrameIndexReference(const MachineFunction &MF, int FI,
                              unsigned &FrameReg) const;
+  int ResolveFrameIndexReference(const MachineFunction &MF, int FI,
+                                 unsigned &FrameReg, int SPAdj) const;
   int getFrameIndexOffset(const MachineFunction &MF, int FI) const;
 
   // Exception handling queries.

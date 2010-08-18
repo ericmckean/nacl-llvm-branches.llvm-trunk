@@ -68,16 +68,16 @@ namespace {
 
     BitVector AllocatableSet;
 
-    // For each opcode, keep a list of potentail CSE instructions.
+    // For each opcode, keep a list of potential CSE instructions.
     DenseMap<unsigned, std::vector<const MachineInstr*> > CSEMap;
 
   public:
     static char ID; // Pass identification, replacement for typeid
     MachineLICM() :
-      MachineFunctionPass(&ID), PreRegAlloc(true) {}
+      MachineFunctionPass(ID), PreRegAlloc(true) {}
 
     explicit MachineLICM(bool PreRA) :
-      MachineFunctionPass(&ID), PreRegAlloc(PreRA) {}
+      MachineFunctionPass(ID), PreRegAlloc(PreRA) {}
 
     virtual bool runOnMachineFunction(MachineFunction &MF);
 

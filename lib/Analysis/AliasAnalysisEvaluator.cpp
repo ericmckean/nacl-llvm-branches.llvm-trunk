@@ -50,7 +50,7 @@ namespace {
 
   public:
     static char ID; // Pass identification, replacement for typeid
-    AAEval() : FunctionPass(&ID) {}
+    AAEval() : FunctionPass(ID) {}
 
     virtual void getAnalysisUsage(AnalysisUsage &AU) const {
       AU.addRequired<AliasAnalysis>();
@@ -104,6 +104,15 @@ PrintModRefResults(const char *Msg, bool P, Instruction *I, Value *Ptr,
     errs() << "  " << Msg << ":  Ptr: ";
     WriteAsOperand(errs(), Ptr, true, M);
     errs() << "\t<->" << *I << '\n';
+  }
+}
+
+static inline void
+PrintModRefResults(const char *Msg, bool P, CallSite CSA, CallSite CSB,
+                   Module *M) {
+  if (P) {
+    errs() << "  " << Msg << ": " << *CSA.getInstruction()
+           << " <-> " << *CSB.getInstruction() << '\n';
   }
 }
 
@@ -195,16 +204,39 @@ bool AAEval::runOnFunction(Function &F) {
         PrintModRefResults("NoModRef", PrintNoModRef, I, *V, F.getParent());
         ++NoModRef; break;
       case AliasAnalysis::Mod:
-        PrintModRefResults("     Mod", PrintMod, I, *V, F.getParent());
+        PrintModRefResults("Just Mod", PrintMod, I, *V, F.getParent());
         ++Mod; break;
       case AliasAnalysis::Ref:
-        PrintModRefResults("     Ref", PrintRef, I, *V, F.getParent());
+        PrintModRefResults("Just Ref", PrintRef, I, *V, F.getParent());
         ++Ref; break;
       case AliasAnalysis::ModRef:
-        PrintModRefResults("  ModRef", PrintModRef, I, *V, F.getParent());
+        PrintModRefResults("Both ModRef", PrintModRef, I, *V, F.getParent());
         ++ModRef; break;
       default:
         errs() << "Unknown alias query result!\n";
+      }
+    }
+  }
+
+  // Mod/ref alias analysis: compare all pairs of calls
+  for (SetVector<CallSite>::iterator C = CallSites.begin(),
+         Ce = CallSites.end(); C != Ce; ++C) {
+    for (SetVector<CallSite>::iterator D = CallSites.begin(); D != Ce; ++D) {
+      if (D == C)
+        continue;
+      switch (AA.getModRefInfo(*C, *D)) {
+      case AliasAnalysis::NoModRef:
+        PrintModRefResults("NoModRef", PrintNoModRef, *C, *D, F.getParent());
+        ++NoModRef; break;
+      case AliasAnalysis::Mod:
+        PrintModRefResults("Just Mod", PrintMod, *C, *D, F.getParent());
+        ++Mod; break;
+      case AliasAnalysis::Ref:
+        PrintModRefResults("Just Ref", PrintRef, *C, *D, F.getParent());
+        ++Ref; break;
+      case AliasAnalysis::ModRef:
+        PrintModRefResults("Both ModRef", PrintModRef, *C, *D, F.getParent());
+        ++ModRef; break;
       }
     }
   }
