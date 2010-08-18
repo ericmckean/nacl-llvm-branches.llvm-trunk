@@ -20,7 +20,7 @@
 //===----------------------------------------------------------------------===//
 
 let isTerminator = 1, isBarrier = 1, hasCtrlDep = 1 in {
-def NACL_TRAP    : I<0, Pseudo, (outs), (ins), "mov{l}\t$$0, 0", []>;
+def NACL_TRAP32  : I<0, Pseudo, (outs), (ins), "mov{l}\t$$0, 0", []>;
 }
 
 
@@ -132,6 +132,10 @@ def NACL_FS_MOV32rm : I<0x8B, MRMSrcMem, (outs GR32:$dst), (ins i32mem:$src),
 // Native Client 64-bit
 //
 //===----------------------------------------------------------------------===//
+
+let isTerminator = 1, isBarrier = 1, hasCtrlDep = 1 in {
+def NACL_TRAP64  : I<0, Pseudo, (outs), (ins), "mov{l}\t$$0, (%r15)", []>;
+}
 
 let Defs = [RSP, EFLAGS], Uses = [RSP] in {
     def NACL_ADD_SP : I<0, Pseudo, (outs GR64:$dst),
