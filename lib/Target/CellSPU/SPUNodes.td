@@ -21,14 +21,15 @@ def SPUshufmask    : SDNode<"SPUISD::SHUFFLE_MASK", SPU_GenControl, []>;
 def callseq_start : SDNode<"ISD::CALLSEQ_START", SDT_SPUCallSeq,
                            [SDNPHasChain, SDNPOutFlag]>;
 def callseq_end   : SDNode<"ISD::CALLSEQ_END",   SDT_SPUCallSeq,
-                           [SDNPHasChain, SDNPOutFlag]>;
+                           [SDNPHasChain, SDNPInFlag, SDNPOutFlag]>;
 //===----------------------------------------------------------------------===//
 // Operand constraints:
 //===----------------------------------------------------------------------===//
 
 def SDT_SPUCall   : SDTypeProfile<0, -1, [SDTCisPtrTy<0>]>;
 def SPUcall       : SDNode<"SPUISD::CALL", SDT_SPUCall,
-                           [SDNPHasChain, SDNPOptInFlag, SDNPOutFlag]>;
+                           [SDNPHasChain, SDNPOptInFlag, SDNPOutFlag,
+                            SDNPVariadic]>;
 
 // Operand type constraints for vector shuffle/permute operations
 def SDT_SPUshuffle   : SDTypeProfile<1, 3, [
@@ -116,6 +117,12 @@ def SPUprefslot2vec: SDNode<"SPUISD::PREFSLOT2VEC", SDTprefslot2vec, []>;
 def SPU_vec_demote   : SDTypeProfile<1, 1, []>;
 def SPUvec2prefslot: SDNode<"SPUISD::VEC2PREFSLOT", SPU_vec_demote, []>;
 
+def SPU_half_2_vec : SDTypeProfile<1, 1, []>;
+def SPUhalf2vec: SDNode<"SPUISD::HALF2VEC", SPU_half_2_vec, []>;
+
+def SPU_vec_2_half : SDTypeProfile<1, 1, []>;
+def SPUvec2half: SDNode<"SPUISD::VEC2HALF", SPU_vec_2_half, []>;
+ 
 // Address high and low components, used for [r+r] type addressing
 def SPUhi : SDNode<"SPUISD::Hi", SDTIntBinOp, []>;
 def SPUlo : SDNode<"SPUISD::Lo", SDTIntBinOp, []>;

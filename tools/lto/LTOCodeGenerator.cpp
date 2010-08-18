@@ -24,8 +24,6 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/Analysis/Passes.h"
-#include "llvm/Analysis/LoopPass.h"
-#include "llvm/Analysis/Verifier.h"
 #include "llvm/Bitcode/ReaderWriter.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
@@ -36,8 +34,6 @@
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetRegistry.h"
 #include "llvm/Target/TargetSelect.h"
-#include "llvm/Transforms/IPO.h"
-#include "llvm/Transforms/Scalar.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FormattedStream.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -123,6 +119,11 @@ bool LTOCodeGenerator::setCodePICModel(lto_codegen_model model,
     return true;
 }
 
+void LTOCodeGenerator::setCpu(const char* mCpu)
+{
+  _mCpu = mCpu;
+}
+
 void LTOCodeGenerator::setAssemblerPath(const char* path)
 {
     if ( _assemblerPath )
@@ -164,10 +165,12 @@ bool LTOCodeGenerator::writeMergedModules(const char *path,
     
   // write bitcode to it
   WriteBitcodeToFile(_linker.getModule(), Out);
-  
+  Out.close();
+
   if (Out.has_error()) {
     errMsg = "could not write bitcode file: ";
     errMsg += path;
+    Out.clear_error();
     return true;
   }
   
@@ -193,16 +196,14 @@ const void* LTOCodeGenerator::compile(size_t* length, std::string& errMsg)
       genResult = this->generateAssemblyCode(asmFile, errMsg);
     }
     if ( genResult ) {
-        if ( uniqueAsmPath.exists() )
-            uniqueAsmPath.eraseFromDisk();
+        uniqueAsmPath.eraseFromDisk();
         return NULL;
     }
     
     // make unique temp .o file to put generated object file
     sys::PathWithStatus uniqueObjPath("lto-llvm.o");
     if ( uniqueObjPath.createTemporaryFileOnDisk(true, &errMsg) ) {
-        if ( uniqueAsmPath.exists() )
-            uniqueAsmPath.eraseFromDisk();
+        uniqueAsmPath.eraseFromDisk();
         return NULL;
     }
     sys::RemoveFileOnSignal(uniqueObjPath);
@@ -317,8 +318,9 @@ bool LTOCodeGenerator::determineTarget(std::string& errMsg)
         }
 
         // construct LTModule, hand over ownership of module and target
-        const std::string FeatureStr =
-           SubtargetFeatures::getDefaultSubtargetFeatures(llvm::Triple(Triple));
+        SubtargetFeatures Features;
+        Features.getDefaultSubtargetFeatures(_mCpu, llvm::Triple(Triple));
+        std::string FeatureStr = Features.getString();
         _target = march->createTargetMachine(Triple, FeatureStr);
     }
     return false;
@@ -370,24 +372,10 @@ bool LTOCodeGenerator::generateAssemblyCode(formatted_raw_ostream& out,
 
     Module* mergedModule = _linker.getModule();
 
-    // If target supports exception handling then enable it now.
-    switch (_target->getMCAsmInfo()->getExceptionHandlingType()) {
-    case ExceptionHandling::Dwarf:
-      llvm::DwarfExceptionHandling = true;
-      break;
-    case ExceptionHandling::SjLj:
-      llvm::SjLjExceptionHandling = true;
-      break;
-    case ExceptionHandling::None:
-      break;
-    default:
-      assert (0 && "Unknown exception handling model!");
-    }
-
     // if options were requested, set them
     if ( !_codegenOptions.empty() )
         cl::ParseCommandLineOptions(_codegenOptions.size(), 
-                                                (char**)&_codegenOptions[0]);
+                                    const_cast<char **>(&_codegenOptions[0]));
 
     // Instantiate the pass manager to organize the passes.
     PassManager passes;

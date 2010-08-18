@@ -42,6 +42,7 @@ namespace {
   ld_plugin_get_symbols get_symbols = NULL;
   ld_plugin_add_input_file add_input_file = NULL;
   ld_plugin_add_input_library add_input_library = NULL;
+  ld_plugin_set_extra_library_path set_extra_library_path = NULL;
   ld_plugin_message message = discard_message;
 
   int api_version = 0;
@@ -67,7 +68,9 @@ namespace options {
   static std::string as_path;
   static std::vector<std::string> as_args;
   static std::vector<std::string> pass_through;
+  static std::string extra_library_path;
   static std::string triple;
+  static std::string mcpu;
   // Additional options to pass into the code generator.
   // Note: This array will contain all plugin options which are not claimed
   // as plugin exclusive to pass to the code generator.
@@ -83,6 +86,8 @@ namespace options {
 
     if (opt == "generate-api-file") {
       generate_api_file = true;
+    } else if (opt.startswith("mcpu=")) {
+      mcpu = opt.substr(strlen("mcpu="));
     } else if (opt.startswith("as=")) {
       if (!as_path.empty()) {
         (*message)(LDPL_WARNING, "Path to as specified twice. "
@@ -93,6 +98,8 @@ namespace options {
     } else if (opt.startswith("as-arg=")) {
       llvm::StringRef item = opt.substr(strlen("as-arg="));
       as_args.push_back(item.str());
+    } else if (opt.startswith("extra-library-path=")) {
+      extra_library_path = opt.substr(strlen("extra_library_path="));
     } else if (opt.startswith("pass-through=")) {
       llvm::StringRef item = opt.substr(strlen("pass-through="));
       pass_through.push_back(item.str());
@@ -132,8 +139,6 @@ ld_plugin_status onload(ld_plugin_tv *tv) {
   // for services.
 
   bool registeredClaimFile = false;
-  bool registeredAllSymbolsRead = false;
-  bool registeredCleanup = false;
 
   for (; tv->tv_tag != LDPT_NULL; ++tv) {
     switch (tv->tv_tag) {
@@ -181,8 +186,6 @@ ld_plugin_status onload(ld_plugin_tv *tv) {
 
         if ((*callback)(all_symbols_read_hook) != LDPS_OK)
           return LDPS_ERR;
-
-        registeredAllSymbolsRead = true;
       } break;
       case LDPT_REGISTER_CLEANUP_HOOK: {
         ld_plugin_register_cleanup callback;
@@ -190,8 +193,6 @@ ld_plugin_status onload(ld_plugin_tv *tv) {
 
         if ((*callback)(cleanup_hook) != LDPS_OK)
           return LDPS_ERR;
-
-        registeredCleanup = true;
       } break;
       case LDPT_ADD_SYMBOLS:
         add_symbols = tv->tv_u.tv_add_symbols;
@@ -204,6 +205,9 @@ ld_plugin_status onload(ld_plugin_tv *tv) {
         break;
       case LDPT_ADD_INPUT_LIBRARY:
         add_input_library = tv->tv_u.tv_add_input_file;
+        break;
+      case LDPT_SET_EXTRA_LIBRARY_PATH:
+        set_extra_library_path = tv->tv_u.tv_set_extra_library_path;
         break;
       case LDPT_MESSAGE:
         message = tv->tv_u.tv_message;
@@ -412,6 +416,9 @@ static ld_plugin_status all_symbols_read_hook(void) {
     }
     lto_codegen_set_assembler_args(cg, &as_args_p[0], as_args_p.size());
   }
+  if (!options::mcpu.empty())
+    lto_codegen_set_cpu(cg, options::mcpu.c_str());
+
   // Pass through extra options to the code generator.
   if (!options::extra.empty()) {
     for (std::vector<std::string>::iterator it = options::extra.begin();
@@ -458,9 +465,15 @@ static ld_plugin_status all_symbols_read_hook(void) {
 
   lto_codegen_dispose(cg);
 
-  if ((*add_input_file)(const_cast<char*>(uniqueObjPath.c_str())) != LDPS_OK) {
+  if ((*add_input_file)(uniqueObjPath.c_str()) != LDPS_OK) {
     (*message)(LDPL_ERROR, "Unable to add .o file to the link.");
     (*message)(LDPL_ERROR, "File left behind in: %s", uniqueObjPath.c_str());
+    return LDPS_ERR;
+  }
+
+  if (!options::extra_library_path.empty() &&
+      set_extra_library_path(options::extra_library_path.c_str()) != LDPS_OK) {
+    (*message)(LDPL_ERROR, "Unable to set the extra library path.");
     return LDPS_ERR;
   }
 
@@ -468,7 +481,7 @@ static ld_plugin_status all_symbols_read_hook(void) {
                                           e = options::pass_through.end();
        i != e; ++i) {
     std::string &item = *i;
-    char *item_p = const_cast<char*>(item.c_str());
+    const char *item_p = item.c_str();
     if (llvm::StringRef(item).startswith("-l")) {
       if (add_input_library(item_p + 2) != LDPS_OK) {
         (*message)(LDPL_ERROR, "Unable to add library to the link.");

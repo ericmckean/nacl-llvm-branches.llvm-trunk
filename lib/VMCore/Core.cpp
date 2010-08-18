@@ -22,6 +22,7 @@
 #include "llvm/TypeSymbolTable.h"
 #include "llvm/InlineAsm.h"
 #include "llvm/IntrinsicInst.h"
+#include "llvm/PassManager.h"
 #include "llvm/Support/CallSite.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -117,6 +118,11 @@ LLVMTypeRef LLVMGetTypeByName(LLVMModuleRef M, const char *Name) {
 
 void LLVMDumpModule(LLVMModuleRef M) {
   unwrap(M)->dump();
+}
+
+/*--.. Operations on inline assembler ......................................--*/
+void LLVMSetModuleInlineAsm(LLVMModuleRef M, const char *Asm) {
+  unwrap(M)->setModuleInlineAsm(StringRef(Asm));
 }
 
 
@@ -322,8 +328,7 @@ LLVMTypeRef LLVMUnionTypeInContext(LLVMContextRef C, LLVMTypeRef *ElementTypes,
   return wrap(UnionType::get(&Tys[0], Tys.size()));
 }
 
-LLVMTypeRef LLVMUnionType(LLVMTypeRef *ElementTypes,
-                           unsigned ElementCount, int Packed) {
+LLVMTypeRef LLVMUnionType(LLVMTypeRef *ElementTypes, unsigned ElementCount) {
   return LLVMUnionTypeInContext(LLVMGetGlobalContext(), ElementTypes,
                                 ElementCount);
 }
@@ -1054,6 +1059,8 @@ LLVMLinkage LLVMGetLinkage(LLVMValueRef Global) {
     return LLVMPrivateLinkage;
   case GlobalValue::LinkerPrivateLinkage:
     return LLVMLinkerPrivateLinkage;
+  case GlobalValue::LinkerPrivateWeakLinkage:
+    return LLVMLinkerPrivateWeakLinkage;
   case GlobalValue::DLLImportLinkage:
     return LLVMDLLImportLinkage;
   case GlobalValue::DLLExportLinkage:
@@ -1103,6 +1110,9 @@ void LLVMSetLinkage(LLVMValueRef Global, LLVMLinkage Linkage) {
     break;
   case LLVMLinkerPrivateLinkage:
     GV->setLinkage(GlobalValue::LinkerPrivateLinkage);
+    break;
+  case LLVMLinkerPrivateWeakLinkage:
+    GV->setLinkage(GlobalValue::LinkerPrivateWeakLinkage);
     break;
   case LLVMDLLImportLinkage:
     GV->setLinkage(GlobalValue::DLLImportLinkage);
@@ -1506,6 +1516,14 @@ void LLVMDeleteBasicBlock(LLVMBasicBlockRef BBRef) {
   unwrap(BBRef)->eraseFromParent();
 }
 
+void LLVMMoveBasicBlockBefore(LLVMBasicBlockRef BB, LLVMBasicBlockRef MovePos) {
+  unwrap(BB)->moveBefore(unwrap(MovePos));
+}
+
+void LLVMMoveBasicBlockAfter(LLVMBasicBlockRef BB, LLVMBasicBlockRef MovePos) {
+  unwrap(BB)->moveAfter(unwrap(MovePos));
+}
+
 /*--.. Operations on instructions ..........................................--*/
 
 LLVMBasicBlockRef LLVMGetInstructionParent(LLVMValueRef Inst) {
@@ -1651,7 +1669,7 @@ LLVMBasicBlockRef LLVMGetInsertBlock(LLVMBuilderRef Builder) {
 }
 
 void LLVMClearInsertionPosition(LLVMBuilderRef Builder) {
-  unwrap(Builder)->ClearInsertionPoint ();
+  unwrap(Builder)->ClearInsertionPoint();
 }
 
 void LLVMInsertIntoBuilder(LLVMBuilderRef Builder, LLVMValueRef Instr) {
@@ -1670,11 +1688,13 @@ void LLVMDisposeBuilder(LLVMBuilderRef Builder) {
 /*--.. Metadata builders ...................................................--*/
 
 void LLVMSetCurrentDebugLocation(LLVMBuilderRef Builder, LLVMValueRef L) {
-  unwrap(Builder)->SetCurrentDebugLocation(L? unwrap<MDNode>(L) : NULL);
+  MDNode *Loc = L ? unwrap<MDNode>(L) : NULL;
+  unwrap(Builder)->SetCurrentDebugLocation(DebugLoc::getFromDILocation(Loc));
 }
 
 LLVMValueRef LLVMGetCurrentDebugLocation(LLVMBuilderRef Builder) {
-  return wrap(unwrap(Builder)->getCurrentDebugLocation());
+  return wrap(unwrap(Builder)->getCurrentDebugLocation()
+              .getAsMDNode(unwrap(Builder)->getContext()));
 }
 
 void LLVMSetInstDebugLocation(LLVMBuilderRef Builder, LLVMValueRef Inst) {
@@ -2199,17 +2219,52 @@ LLVMBool LLVMCreateMemoryBufferWithContentsOfFile(
 
 LLVMBool LLVMCreateMemoryBufferWithSTDIN(LLVMMemoryBufferRef *OutMemBuf,
                                          char **OutMessage) {
-  MemoryBuffer *MB = MemoryBuffer::getSTDIN();
-  if (!MB->getBufferSize()) {
-    delete MB;
-    *OutMessage = strdup("stdin is empty.");
-    return 1;
+  std::string Error;
+  if (MemoryBuffer *MB = MemoryBuffer::getSTDIN(&Error)) {
+    *OutMemBuf = wrap(MB);
+    return 0;
   }
 
-  *OutMemBuf = wrap(MB);
-  return 0;
+  *OutMessage = strdup(Error.c_str());
+  return 1;
 }
 
 void LLVMDisposeMemoryBuffer(LLVMMemoryBufferRef MemBuf) {
   delete unwrap(MemBuf);
+}
+
+
+/*===-- Pass Manager ------------------------------------------------------===*/
+
+LLVMPassManagerRef LLVMCreatePassManager() {
+  return wrap(new PassManager());
+}
+
+LLVMPassManagerRef LLVMCreateFunctionPassManagerForModule(LLVMModuleRef M) {
+  return wrap(new FunctionPassManager(unwrap(M)));
+}
+
+LLVMPassManagerRef LLVMCreateFunctionPassManager(LLVMModuleProviderRef P) {
+  return LLVMCreateFunctionPassManagerForModule(
+                                            reinterpret_cast<LLVMModuleRef>(P));
+}
+
+LLVMBool LLVMRunPassManager(LLVMPassManagerRef PM, LLVMModuleRef M) {
+  return unwrap<PassManager>(PM)->run(*unwrap(M));
+}
+
+LLVMBool LLVMInitializeFunctionPassManager(LLVMPassManagerRef FPM) {
+  return unwrap<FunctionPassManager>(FPM)->doInitialization();
+}
+
+LLVMBool LLVMRunFunctionPassManager(LLVMPassManagerRef FPM, LLVMValueRef F) {
+  return unwrap<FunctionPassManager>(FPM)->run(*unwrap<Function>(F));
+}
+
+LLVMBool LLVMFinalizeFunctionPassManager(LLVMPassManagerRef FPM) {
+  return unwrap<FunctionPassManager>(FPM)->doFinalization();
+}
+
+void LLVMDisposePassManager(LLVMPassManagerRef PM) {
+  delete unwrap(PM);
 }

@@ -1,7 +1,7 @@
 " Vim syntax file
 " Language:   llvm
 " Maintainer: The LLVM team, http://llvm.org/
-" Version:      $Revision: 97271 $
+" Version:      $Revision: 109772 $
 
 if version < 600
   syntax clear
@@ -64,7 +64,7 @@ syn keyword llvmError  uninitialized implementation
 syn keyword llvmError  getresult big little endian begin end
 
 " Misc syntax.
-syn match   llvmIgnore /[%@]\d\+\>/
+syn match   llvmNoName /[%@]\d\+\>/
 syn match   llvmNumber /-\?\<\d\+\>/
 syn match   llvmFloat  /-\?\<\d\+\.\d*\(e[+-]\d\+\)\?\>/
 syn match   llvmFloat  /\<0x\x\+\>/
@@ -99,7 +99,7 @@ if version >= 508 || !exists("did_c_syn_inits")
   HiLink llvmKeyword Keyword
   HiLink llvmBoolean Boolean
   HiLink llvmFloat Float
-  HiLink llvmIgnore Ignore
+  HiLink llvmNoName Identifier
   HiLink llvmConstant Constant
   HiLink llvmSpecialComment SpecialComment
   HiLink llvmError Error

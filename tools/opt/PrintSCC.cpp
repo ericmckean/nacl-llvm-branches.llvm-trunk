@@ -36,7 +36,7 @@ using namespace llvm;
 namespace {
   struct CFGSCC : public FunctionPass {
     static char ID;  // Pass identification, replacement for typeid
-    CFGSCC() : FunctionPass(&ID) {}
+    CFGSCC() : FunctionPass(ID) {}
     bool runOnFunction(Function& func);
 
     void print(raw_ostream &O, const Module* = 0) const { }
@@ -48,7 +48,7 @@ namespace {
 
   struct CallGraphSCC : public ModulePass {
     static char ID;  // Pass identification, replacement for typeid
-    CallGraphSCC() : ModulePass(&ID) {}
+    CallGraphSCC() : ModulePass(ID) {}
 
     // run - Print out SCCs in the call graph for the specified module.
     bool runOnModule(Module &M);
@@ -102,7 +102,7 @@ bool CallGraphSCC::runOnModule(Module &M) {
     for (std::vector<CallGraphNode*>::const_iterator I = nextSCC.begin(),
            E = nextSCC.end(); I != E; ++I)
       outs() << ((*I)->getFunction() ? (*I)->getFunction()->getNameStr()
-                 : std::string("Indirect CallGraph node")) << ", ";
+                 : std::string("external node")) << ", ";
     if (nextSCC.size() == 1 && SCCI.hasLoop())
       outs() << " (Has self-loop).";
   }

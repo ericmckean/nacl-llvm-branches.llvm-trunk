@@ -36,14 +36,11 @@ public:
   /// Code Generation virtual methods...
   const unsigned *getCalleeSavedRegs(const MachineFunction *MF = 0) const;
 
-  const TargetRegisterClass* const*
-    getCalleeSavedRegClasses(const MachineFunction *MF = 0) const;
-
   BitVector getReservedRegs(const MachineFunction &MF) const;
   const TargetRegisterClass* getPointerRegClass(unsigned Kind = 0) const;
 
   bool hasFP(const MachineFunction &MF) const;
-  bool hasReservedCallFrame(MachineFunction &MF) const;
+  bool hasReservedCallFrame(const MachineFunction &MF) const;
 
   void eliminateCallFramePseudoInstr(MachineFunction &MF,
                                      MachineBasicBlock &MBB,

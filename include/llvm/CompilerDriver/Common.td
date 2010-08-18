@@ -32,6 +32,7 @@ def actions;
 
 def alias_option;
 def switch_option;
+def switch_list_option;
 def parameter_option;
 def parameter_list_option;
 def prefix_option;
@@ -39,7 +40,6 @@ def prefix_list_option;
 
 // Possible option properties.
 
-def extern;
 def help;
 def hidden;
 def init;
@@ -99,11 +99,6 @@ def dec_weight;
 
 // Empty DAG marker.
 def empty_dag_marker;
-
-// Used to specify plugin priority.
-class PluginPriority<int p> {
-      int priority = p;
-}
 
 // Option list - a single place to specify options.
 class OptionList<list<dag> l> {

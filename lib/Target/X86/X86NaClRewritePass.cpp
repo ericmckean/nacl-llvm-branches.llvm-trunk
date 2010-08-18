@@ -20,6 +20,7 @@
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
+#include "llvm/CodeGen/MachineJumpTableInfo.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/FormattedStream.h"
@@ -31,7 +32,7 @@ namespace {
   class X86NaClRewritePass : public MachineFunctionPass {
   public:
     static char ID;
-    X86NaClRewritePass() : MachineFunctionPass(&ID) {}
+    X86NaClRewritePass() : MachineFunctionPass(ID) {}
 
     virtual bool runOnMachineFunction(MachineFunction &Fn);
 
@@ -43,7 +44,10 @@ namespace {
 
     const TargetMachine *TM;
     const TargetInstrInfo *TII;
+    const TargetRegisterInfo *TRI;
     const X86Subtarget *Subtarget;
+
+    bool IsStackChange(MachineInstr &MI);
 
     bool PassSandboxingStack(MachineBasicBlock &MBB,
                              const TargetInstrInfo* TII);
@@ -53,6 +57,7 @@ namespace {
     bool PassSandboxingPopRbp(MachineBasicBlock &MBB,
                               const TargetInstrInfo* TII);
     void PassLightWeightValidator(MachineBasicBlock &MBB, bool is64bit);
+    bool AlignJumpTableTargets(MachineFunction &MF);
   };
 
   char X86NaClRewritePass::ID = 0;
@@ -63,9 +68,9 @@ static void DumpInstructionVerbose(const MachineInstr &MI);
 
 
 // Note: this is a little adhoc and needs more work
-static bool IsStackChange(MachineInstr &MI) {
-  return MI.modifiesRegister(X86::ESP) ||
-         MI.modifiesRegister(X86::RSP);
+bool X86NaClRewritePass::IsStackChange(MachineInstr &MI) {
+  return MI.modifiesRegister(X86::ESP, TRI) ||
+         MI.modifiesRegister(X86::RSP, TRI);
 }
 
 
@@ -134,8 +139,8 @@ static unsigned FindMemoryOperand(const MachineInstr &MI, bool &found) {
   // Typical Store
   if (isMem(&MI, 0)) {
     found = true;
-    if (X86AddrNumOperands < (signed)numOps
-        && isMem(&MI, X86AddrNumOperands)) {
+    if (X86::AddrNumOperands < (signed)numOps
+        && isMem(&MI, X86::AddrNumOperands)) {
       dbgs() << "FindMemoryOperand multiple memory ops\n";
       DumpInstructionVerbose(MI);
       assert(false);
@@ -269,6 +274,9 @@ static bool IsIndirectControlFlowChange(MachineInstr &MI) {
   switch (Opcode) {
    default:
     return false;
+
+   case X86::TRAP:
+     return true;
 
    // Returns
    case X86::RET:
@@ -405,6 +413,25 @@ void X86NaClRewritePass::PassLightWeightValidator(MachineBasicBlock &MBB,
       }
     }
   }
+}
+
+bool X86NaClRewritePass::AlignJumpTableTargets(MachineFunction &MF) {
+  bool Modified = true;
+
+  MF.setAlignment(5); // log2, 32 = 2^5
+
+  MachineJumpTableInfo *jt_info = MF.getJumpTableInfo();
+  if (jt_info != NULL) {
+    const std::vector<MachineJumpTableEntry> &JT = jt_info->getJumpTables();
+    for (unsigned i = 0; i < JT.size(); ++i) {
+      const std::vector<MachineBasicBlock*>& MBBs(JT[i].MBBs);
+      for (unsigned j = 0; j < MBBs.size(); ++j) {
+        MBBs[j]->setAlignment(32); // in bits
+        Modified |= true;
+      }
+    }
+  }
+  return Modified;
 }
 
 /*
@@ -681,17 +708,16 @@ bool X86NaClRewritePass::PassSandboxingControlFlow(
       Modified = true;
 #endif
       break;
-
-     case X86::JMP32r:
+     case X86::TRAP:
        if (is64Bit) {
-         // use NACL_JMP64r when in 64bit mode (so that rzp is inserted)
-         DEBUG(dbgs() << "Switching JMP32r to NACL_JMP64r\n");
-         MI.setDesc(TII->get(X86::NACL_JMP64r));
-         assert (is32BitReg(MI.getOperand(0).getReg()) &&
-                 "JMP32r w/ non-32bit reg");
+         MI.setDesc(TII->get(X86::NACL_TRAP64));
        } else {
-         MI.setDesc(TII->get(X86::NACL_JMP32r));
+         MI.setDesc(TII->get(X86::NACL_TRAP32));
        }
+       Modified = true;
+       break;
+     case X86::JMP32r:
+       MI.setDesc(TII->get(X86::NACL_JMP32r));
        Modified = true;
        break;
 
@@ -701,6 +727,21 @@ bool X86NaClRewritePass::PassSandboxingControlFlow(
       break;
 
      case X86::RET:
+      if (is64Bit) {
+        MI.setDesc(TII->get(X86::NACL_RET64));
+      } else {
+        MI.setDesc(TII->get(X86::NACL_RET32));
+      }
+      Modified = true;
+      break;
+
+     case X86::EH_RETURN:
+     case X86::EH_RETURN64:
+      // EH_RETURN has a single argment which is not actually used directly.
+      // The argument gives the location where to reposition the stack pointer before returning.
+      // EmitPrologue takes care of that repositioning.
+      // So EH_RETURN just ultimately emits a plain "ret"
+
       if (is64Bit) {
         MI.setDesc(TII->get(X86::NACL_RET64));
       } else {
@@ -719,15 +760,17 @@ bool X86NaClRewritePass::PassSandboxingControlFlow(
        Modified = true;
        break;
 
-     case X86::JMP64r:{
-       MI.setDesc(TII->get(X86::NACL_JMP64r));
-       const MachineOperand &IndexReg  = MI.getOperand(0);
-       const unsigned reg32 = Get32BitRegFor64BitReg(IndexReg.getReg());
-       assert (reg32 > 0);
-       const_cast<MachineOperand&>(IndexReg).setReg(reg32);
-       Modified = true;
-       break;
-     }
+/* (This shouldn't ever be used anyway) */
+//     case X86::JMP64r:{
+//       MI.setDesc(TII->get(X86::NACL_JMP64r));
+//       const MachineOperand &IndexReg  = MI.getOperand(0);
+//       const unsigned reg32 = Get32BitRegFor64BitReg(IndexReg.getReg());
+//       assert (reg32 > 0);
+//       const_cast<MachineOperand&>(IndexReg).setReg(reg32);
+//       Modified = true;
+//       break;
+//     }
+
      case X86::CALL64r: {
 // Made unnecessary by pattern matching
 #if 0
@@ -758,6 +801,7 @@ bool X86NaClRewritePass::runOnMachineFunction(MachineFunction &MF) {
 
   TM = &MF.getTarget();
   TII = TM->getInstrInfo();
+  TRI = TM->getRegisterInfo();
   Subtarget = &TM->getSubtarget<X86Subtarget>();
 
 
@@ -778,6 +822,7 @@ bool X86NaClRewritePass::runOnMachineFunction(MachineFunction &MF) {
     PassLightWeightValidator(*MFI, Subtarget->is64Bit());
   }
 
+  AlignJumpTableTargets(MF);
   return Modified;
 }
 

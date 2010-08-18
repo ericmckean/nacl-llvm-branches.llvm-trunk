@@ -21,6 +21,7 @@ using namespace llvm;
 MCAsmInfo::MCAsmInfo() {
   HasSubsectionsViaSymbols = false;
   HasMachoZeroFillDirective = false;
+  HasMachoTBSSDirective = false;
   HasStaticCtorDtorReferenceInStaticMode = false;
   MaxInstLength = 4;
   PCSymbol = "$";
@@ -35,6 +36,7 @@ MCAsmInfo::MCAsmInfo() {
   AssemblerDialect = 0;
   AllowQuotesInName = false;
   AllowNameToStartWithDigit = false;
+  AllowPeriodsInName = true;
   ZeroDirective = "\t.zero\t";
   AsciiDirective = "\t.ascii\t";
   AscizDirective = "\t.asciz\t";
@@ -60,8 +62,6 @@ MCAsmInfo::MCAsmInfo() {
   LinkOnceDirective = 0;
   HiddenVisibilityAttr = MCSA_Hidden;
   ProtectedVisibilityAttr = MCSA_Protected;
-  AbsoluteDebugSectionOffsets = false;
-  AbsoluteEHSectionOffsets = false;
   HasLEB128 = false;
   HasDotLocAndDotFile = false;
   SupportsDebugInformation = false;

@@ -1,4 +1,4 @@
-//===- MipsInstrInfo.td - Mips Register defs --------------------*- C++ -*-===//
+//===- MipsInstrInfo.td - Mips Register defs ---------------*- tablegen -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -29,7 +29,8 @@ def SDT_MipsCallSeqEnd   : SDCallSeqEnd<[SDTCisVT<0, i32>, SDTCisVT<1, i32>]>;
 
 // Call
 def MipsJmpLink : SDNode<"MipsISD::JmpLink",SDT_MipsJmpLink, 
-                         [SDNPHasChain, SDNPOutFlag, SDNPOptInFlag]>;
+                         [SDNPHasChain, SDNPOutFlag, SDNPOptInFlag,
+                          SDNPVariadic]>;
 
 // Hi and Lo nodes are used to handle global addresses. Used on 
 // MipsISelLowering to lower stuff like GlobalAddress, ExternalSymbol 
@@ -540,7 +541,7 @@ let Predicates = [HasSwap] in {
 def MIPS_CMOV_ZERO  : PatLeaf<(i32 0)>;
 def MIPS_CMOV_NZERO : PatLeaf<(i32 1)>;
 
-let Predicates = [HasCondMov], isTwoAddress = 1 in {
+let Predicates = [HasCondMov], Constraints = "$F = $dst" in {
   def MOVN : CondMov<0x0a, "movn", MIPS_CMOV_NZERO>;
   def MOVZ : CondMov<0x0b, "movz", MIPS_CMOV_ZERO>;
 }

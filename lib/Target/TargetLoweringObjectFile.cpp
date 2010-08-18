@@ -101,7 +101,7 @@ static bool IsNullTerminatedString(const Constant *C) {
 
     ConstantInt *Null =
       dyn_cast<ConstantInt>(CVA->getOperand(ATy->getNumElements()-1));
-    if (Null == 0 || Null->getZExtValue() != 0)
+    if (Null == 0 || !Null->isZero())
       return false; // Not null terminated.
 
     // Verify that the null doesn't occur anywhere else in the string.
@@ -310,14 +310,14 @@ getExprForDwarfReference(const MCSymbol *Sym, Mangler *Mang,
 
   switch (Encoding & 0xF0) {
   default:
-    llvm_report_error("We do not support this DWARF encoding yet!");
+    report_fatal_error("We do not support this DWARF encoding yet!");
   case dwarf::DW_EH_PE_absptr:
     // Do nothing special
     return Res;
   case dwarf::DW_EH_PE_pcrel: {
     // Emit a label to the streamer for the current position.  This gives us
     // .-foo addressing.
-    MCSymbol *PCSym = getContext().GetOrCreateTemporarySymbol();
+    MCSymbol *PCSym = getContext().CreateTempSymbol();
     Streamer.EmitLabel(PCSym);
     const MCExpr *PC = MCSymbolRefExpr::Create(PCSym, getContext());
     return MCBinaryExpr::CreateSub(Res, PC, getContext());

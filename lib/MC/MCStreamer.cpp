@@ -10,9 +10,12 @@
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/Twine.h"
+#include <cstdlib>
 using namespace llvm;
 
-MCStreamer::MCStreamer(MCContext &_Context) : Context(_Context), CurSection(0) {
+MCStreamer::MCStreamer(MCContext &Ctx) : Context(Ctx), CurSection(0) {
 }
 
 MCStreamer::~MCStreamer() {
@@ -43,4 +46,19 @@ void MCStreamer::EmitFill(uint64_t NumBytes, uint8_t FillValue,
   const MCExpr *E = MCConstantExpr::Create(FillValue, getContext());
   for (uint64_t i = 0, e = NumBytes; i != e; ++i)
     EmitValue(E, 1, AddrSpace);
+}
+
+/// EmitRawText - If this file is backed by an assembly streamer, this dumps
+/// the specified string in the output .s file.  This capability is
+/// indicated by the hasRawTextSupport() predicate.
+void MCStreamer::EmitRawText(StringRef String) {
+  errs() << "EmitRawText called on an MCStreamer that doesn't support it, "
+  " something must not be fully mc'ized\n";
+  abort();
+}
+
+void MCStreamer::EmitRawText(const Twine &T) {
+  SmallString<128> Str;
+  T.toVector(Str);
+  EmitRawText(Str.str());
 }

@@ -19,12 +19,11 @@
 #include "llvm/Value.h"
 #include "llvm/Analysis/CallGraph.h"
 #include "llvm/Analysis/Dominators.h"
-#include <iostream>
-#include <fstream>
+#include "llvm/Support/raw_ostream.h"
 using namespace llvm;
 
 template<typename GraphType>
-static void WriteGraphToFile(std::ostream &O, const std::string &GraphName,
+static void WriteGraphToFile(raw_ostream &O, const std::string &GraphName,
                              const GraphType &GT) {
   std::string Filename = GraphName + ".dot";
   O << "Writing '" << Filename << "'...";
@@ -57,7 +56,7 @@ namespace llvm {
       if (Node->getFunction())
         return ((Value*)Node->getFunction())->getName();
       else
-        return "Indirect call node";
+        return "external node";
     }
   };
 }
@@ -66,10 +65,10 @@ namespace llvm {
 namespace {
   struct CallGraphPrinter : public ModulePass {
     static char ID; // Pass ID, replacement for typeid
-    CallGraphPrinter() : ModulePass(&ID) {}
+    CallGraphPrinter() : ModulePass(ID) {}
 
     virtual bool runOnModule(Module &M) {
-      WriteGraphToFile(std::cerr, "callgraph", &getAnalysis<CallGraph>());
+      WriteGraphToFile(llvm::errs(), "callgraph", &getAnalysis<CallGraph>());
       return false;
     }
 
@@ -94,7 +93,7 @@ namespace {
   class DomInfoPrinter : public FunctionPass {
   public:
     static char ID; // Pass identification, replacement for typeid
-    DomInfoPrinter() : FunctionPass(&ID) {}
+    DomInfoPrinter() : FunctionPass(ID) {}
 
     virtual void getAnalysisUsage(AnalysisUsage &AU) const {
       AU.setPreservesAll();

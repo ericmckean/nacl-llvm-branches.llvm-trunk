@@ -38,9 +38,10 @@ namespace {
   class ARMSFIPlacement : public MachineFunctionPass {
   public:
     static char ID;
-    ARMSFIPlacement() : MachineFunctionPass(&ID) {}
+    ARMSFIPlacement() : MachineFunctionPass(ID) {}
 
     const TargetInstrInfo *TII;
+    const TargetRegisterInfo *TRI;
 
     virtual void getAnalysisUsage(AnalysisUsage &AU) const;
     virtual bool runOnMachineFunction(MachineFunction &Fn);
@@ -208,6 +209,24 @@ bool ARMSFIPlacement::SandboxStoresInBlock(MachineBasicBlock &MBB) {
    * barf when applied pre-emit, after allocation, so we must do it ourselves.
    */
 
+  // LOCALMOD(pdox): Short-circuit this function. Assume CPSR is always live,
+  //                 until we figure out why the assert is tripping.
+  bool Modified2 = false;
+  for (MachineBasicBlock::iterator MBBI = MBB.begin(), E = MBB.end();
+       MBBI != E;
+       ++MBBI) {
+    MachineInstr &MI = *MBBI;
+    int AddrIdx;
+
+    if (IsDangerousStore(MI, &AddrIdx)) {
+      bool CPSRLive = true;
+      SandboxStore(MBB, MBBI, MI, AddrIdx, CPSRLive);
+      Modified2 = true;
+    }
+  }
+  return Modified2;
+  // END LOCALMOD(pdox)
+
   bool CPSRLive = IsCPSRLiveOut(MBB);
 
   // Given that, record which instructions should not be altered to trash CPSR:
@@ -218,7 +237,7 @@ bool ARMSFIPlacement::SandboxStoresInBlock(MachineBasicBlock &MBB) {
        ++MBBI) {
     const MachineInstr &MI = *MBBI;
     // Check for kills first.
-    if (MI.modifiesRegister(ARM::CPSR)) CPSRLive = false;
+    if (MI.modifiesRegister(ARM::CPSR, TRI)) CPSRLive = false;
     // Then check for uses.
     if (MI.readsRegister(ARM::CPSR)) CPSRLive = true;
 
@@ -250,6 +269,7 @@ bool ARMSFIPlacement::SandboxStoresInBlock(MachineBasicBlock &MBB) {
 
 bool ARMSFIPlacement::runOnMachineFunction(MachineFunction &MF) {
   TII = MF.getTarget().getInstrInfo();
+  TRI = MF.getTarget().getRegisterInfo();
 
   bool Modified = false;
   for (MachineFunction::iterator MFI = MF.begin(), E = MF.end();
