@@ -72,7 +72,7 @@ namespace {  // Anonymous namespace for class
   struct PreVerifier : public FunctionPass {
     static char ID; // Pass ID, replacement for typeid
 
-    PreVerifier() : FunctionPass(&ID) { }
+    PreVerifier() : FunctionPass(ID) { }
 
     virtual void getAnalysisUsage(AnalysisUsage &AU) const {
       AU.setPreservesAll();
@@ -104,7 +104,7 @@ namespace {  // Anonymous namespace for class
 char PreVerifier::ID = 0;
 static RegisterPass<PreVerifier>
 PreVer("preverify", "Preliminary module verification");
-static const PassInfo *const PreVerifyID = &PreVer;
+char &PreVerifyID = PreVerifier::ID;
 
 namespace {
   class TypeSet : public AbstractTypeUser {
@@ -182,20 +182,20 @@ namespace {
     SmallPtrSet<MDNode *, 32> MDNodes;
 
     Verifier()
-      : FunctionPass(&ID), 
+      : FunctionPass(ID), 
       Broken(false), RealPass(true), action(AbortProcessAction),
       Mod(0), Context(0), DT(0), MessagesStr(Messages) {}
     explicit Verifier(VerifierFailureAction ctn)
-      : FunctionPass(&ID), 
+      : FunctionPass(ID), 
       Broken(false), RealPass(true), action(ctn), Mod(0), Context(0), DT(0),
       MessagesStr(Messages) {}
     explicit Verifier(bool AB)
-      : FunctionPass(&ID), 
+      : FunctionPass(ID), 
       Broken(false), RealPass(true),
       action( AB ? AbortProcessAction : PrintMessageAction), Mod(0),
       Context(0), DT(0), MessagesStr(Messages) {}
     explicit Verifier(DominatorTree &dt)
-      : FunctionPass(&ID), 
+      : FunctionPass(ID), 
       Broken(false), RealPass(false), action(PrintMessageAction), Mod(0),
       Context(0), DT(&dt), MessagesStr(Messages) {}
 
@@ -331,6 +331,7 @@ namespace {
     void visitBranchInst(BranchInst &BI);
     void visitReturnInst(ReturnInst &RI);
     void visitSwitchInst(SwitchInst &SI);
+    void visitIndirectBrInst(IndirectBrInst &BI);
     void visitSelectInst(SelectInst &SI);
     void visitUserOp1(Instruction &I);
     void visitUserOp2(Instruction &I) { visitUserOp1(I); }
@@ -864,6 +865,16 @@ void Verifier::visitSwitchInst(SwitchInst &SI) {
   visitTerminatorInst(SI);
 }
 
+void Verifier::visitIndirectBrInst(IndirectBrInst &BI) {
+  Assert1(BI.getAddress()->getType()->isPointerTy(),
+          "Indirectbr operand must have pointer type!", &BI);
+  for (unsigned i = 0, e = BI.getNumDestinations(); i != e; ++i)
+    Assert1(BI.getDestination(i)->getType()->isLabelTy(),
+            "Indirectbr destinations must all have pointer type!", &BI);
+
+  visitTerminatorInst(BI);
+}
+
 void Verifier::visitSelectInst(SelectInst &SI) {
   Assert1(!SelectInst::areInvalidOperands(SI.getOperand(0), SI.getOperand(1),
                                           SI.getOperand(2)),
@@ -1202,6 +1213,7 @@ void Verifier::visitCallInst(CallInst &CI) {
 
 void Verifier::visitInvokeInst(InvokeInst &II) {
   VerifyCallSite(&II);
+  visitTerminatorInst(II);
 }
 
 /// visitBinaryOperator - Check that both arguments to the binary operator are
@@ -1310,27 +1322,6 @@ void Verifier::visitShuffleVectorInst(ShuffleVectorInst &SV) {
   Assert1(ShuffleVectorInst::isValidOperands(SV.getOperand(0), SV.getOperand(1),
                                              SV.getOperand(2)),
           "Invalid shufflevector operands!", &SV);
-
-  const VectorType *VTy = dyn_cast<VectorType>(SV.getOperand(0)->getType());
-  Assert1(VTy, "Operands are not a vector type", &SV);
-
-  // Check to see if Mask is valid.
-  if (const ConstantVector *MV = dyn_cast<ConstantVector>(SV.getOperand(2))) {
-    for (unsigned i = 0, e = MV->getNumOperands(); i != e; ++i) {
-      if (ConstantInt* CI = dyn_cast<ConstantInt>(MV->getOperand(i))) {
-        Assert1(!CI->uge(VTy->getNumElements()*2),
-                "Invalid shufflevector shuffle mask!", &SV);
-      } else {
-        Assert1(isa<UndefValue>(MV->getOperand(i)),
-                "Invalid shufflevector shuffle mask!", &SV);
-      }
-    }
-  } else {
-    Assert1(isa<UndefValue>(SV.getOperand(2)) || 
-            isa<ConstantAggregateZero>(SV.getOperand(2)),
-            "Invalid shufflevector shuffle mask!", &SV);
-  }
-
   visitInstruction(SV);
 }
 
@@ -1407,10 +1398,6 @@ void Verifier::visitInstruction(Instruction &I) {
       Assert1(*UI != (User*)&I || !DT->isReachableFromEntry(BB),
               "Only PHI nodes may reference their own value!", &I);
   }
-
-  // Verify that if this is a terminator that it is at the end of the block.
-  if (isa<TerminatorInst>(I))
-    Assert1(BB->getTerminator() == &I, "Terminator not at end of block!", &I);
 
   // Check that void typed values don't have names
   Assert1(!I.getType()->isVoidTy() || !I.hasName(),
@@ -1832,8 +1819,13 @@ bool Verifier::PerformTypeCheck(Intrinsic::ID ID, Function *F, const Type *Ty,
     // and iPTR. In the verifier, we can not distinguish which case we have so
     // allow either case to be legal.
     if (const PointerType* PTyp = dyn_cast<PointerType>(Ty)) {
-      Suffix += ".p" + utostr(PTyp->getAddressSpace()) + 
-        EVT::getEVT(PTyp->getElementType()).getEVTString();
+      EVT PointeeVT = EVT::getEVT(PTyp->getElementType(), true);
+      if (PointeeVT == MVT::Other) {
+        CheckFailed("Intrinsic has pointer to complex type.");
+        return false;
+      }
+      Suffix += ".p" + utostr(PTyp->getAddressSpace()) +
+        PointeeVT.getEVTString();
     } else {
       CheckFailed(IntrinsicParam(ArgNo, NumRetVals) + " is not a "
                   "pointer and a pointer is required.", F);

@@ -27,7 +27,7 @@
 using namespace llvm;
 
 static cl::opt<unsigned>
-UnrollThreshold("unroll-threshold", cl::init(100), cl::Hidden,
+UnrollThreshold("unroll-threshold", cl::init(200), cl::Hidden,
   cl::desc("The cut-off point for automatic loop unrolling"));
 
 static cl::opt<unsigned>
@@ -43,7 +43,7 @@ namespace {
   class LoopUnroll : public LoopPass {
   public:
     static char ID; // Pass ID, replacement for typeid
-    LoopUnroll() : LoopPass(&ID) {}
+    LoopUnroll() : LoopPass(ID) {}
 
     /// A magic value for use with the Threshold parameter to indicate
     /// that the loop unroll should be performed regardless of how much

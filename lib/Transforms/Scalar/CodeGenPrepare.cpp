@@ -33,6 +33,7 @@
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/Assembly/Writer.h"
 #include "llvm/Support/CallSite.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/GetElementPtrTypeIterator.h"
 #include "llvm/Support/PatternMatch.h"
@@ -40,6 +41,11 @@
 #include "llvm/Support/IRBuilder.h"
 using namespace llvm;
 using namespace llvm::PatternMatch;
+
+static cl::opt<bool>
+CriticalEdgeSplit("cgp-critical-edge-splitting",
+                  cl::desc("Split critical edges during codegen prepare"),
+                  cl::init(true), cl::Hidden);
 
 namespace {
   class CodeGenPrepare : public FunctionPass {
@@ -54,7 +60,7 @@ namespace {
   public:
     static char ID; // Pass identification, replacement for typeid
     explicit CodeGenPrepare(const TargetLowering *tli = 0)
-      : FunctionPass(&ID), TLI(tli) {}
+      : FunctionPass(ID), TLI(tli) {}
     bool runOnFunction(Function &F);
 
     virtual void getAnalysisUsage(AnalysisUsage &AU) const {
@@ -891,12 +897,14 @@ bool CodeGenPrepare::OptimizeBlock(BasicBlock &BB) {
   bool MadeChange = false;
 
   // Split all critical edges where the dest block has a PHI.
-  TerminatorInst *BBTI = BB.getTerminator();
-  if (BBTI->getNumSuccessors() > 1 && !isa<IndirectBrInst>(BBTI)) {
-    for (unsigned i = 0, e = BBTI->getNumSuccessors(); i != e; ++i) {
-      BasicBlock *SuccBB = BBTI->getSuccessor(i);
-      if (isa<PHINode>(SuccBB->begin()) && isCriticalEdge(BBTI, i, true))
-        SplitEdgeNicely(BBTI, i, BackEdges, this);
+  if (CriticalEdgeSplit) {
+    TerminatorInst *BBTI = BB.getTerminator();
+    if (BBTI->getNumSuccessors() > 1 && !isa<IndirectBrInst>(BBTI)) {
+      for (unsigned i = 0, e = BBTI->getNumSuccessors(); i != e; ++i) {
+        BasicBlock *SuccBB = BBTI->getSuccessor(i);
+        if (isa<PHINode>(SuccBB->begin()) && isCriticalEdge(BBTI, i, true))
+          SplitEdgeNicely(BBTI, i, BackEdges, this);
+      }
     }
   }
 

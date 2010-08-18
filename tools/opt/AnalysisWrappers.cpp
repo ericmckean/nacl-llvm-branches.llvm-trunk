@@ -31,7 +31,7 @@ namespace {
   /// or handle in alias analyses.
   struct ExternalFunctionsPassedConstants : public ModulePass {
     static char ID; // Pass ID, replacement for typeid
-    ExternalFunctionsPassedConstants() : ModulePass(&ID) {}
+    ExternalFunctionsPassedConstants() : ModulePass(ID) {}
     virtual bool runOnModule(Module &M) {
       for (Module::iterator I = M.begin(), E = M.end(); I != E; ++I) {
         if (!I->isDeclaration()) continue;
@@ -42,8 +42,8 @@ namespace {
           Instruction *User = dyn_cast<Instruction>(*UI);
           if (!User) continue;
           
-          CallSite CS = CallSite::get(User);
-          if (!CS.getInstruction()) continue;
+          CallSite CS(cast<Value>(User));
+          if (!CS) continue;
           
           for (CallSite::arg_iterator AI = CS.arg_begin(),
                E = CS.arg_end(); AI != E; ++AI) {
@@ -74,7 +74,7 @@ namespace {
 
   struct CallGraphPrinter : public ModulePass {
     static char ID; // Pass ID, replacement for typeid
-    CallGraphPrinter() : ModulePass(&ID) {}
+    CallGraphPrinter() : ModulePass(ID) {}
 
     virtual void getAnalysisUsage(AnalysisUsage &AU) const {
       AU.setPreservesAll();

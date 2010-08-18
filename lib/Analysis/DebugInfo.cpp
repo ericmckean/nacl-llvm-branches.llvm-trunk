@@ -32,6 +32,21 @@ using namespace llvm::dwarf;
 // DIDescriptor
 //===----------------------------------------------------------------------===//
 
+DIDescriptor::DIDescriptor(const DIFile F) : DbgNode(F.DbgNode) {
+}
+
+DIDescriptor::DIDescriptor(const DISubprogram F) : DbgNode(F.DbgNode) {
+}
+
+DIDescriptor::DIDescriptor(const DILexicalBlock F) : DbgNode(F.DbgNode) {
+}
+
+DIDescriptor::DIDescriptor(const DIVariable F) : DbgNode(F.DbgNode) {
+}
+
+DIDescriptor::DIDescriptor(const DIType F) : DbgNode(F.DbgNode) {
+}
+
 StringRef
 DIDescriptor::getStringField(unsigned Elt) const {
   if (DbgNode == 0)
@@ -71,6 +86,15 @@ GlobalVariable *DIDescriptor::getGlobalVariableField(unsigned Elt) const {
 
   if (Elt < DbgNode->getNumOperands())
       return dyn_cast_or_null<GlobalVariable>(DbgNode->getOperand(Elt));
+  return 0;
+}
+
+Constant *DIDescriptor::getConstantField(unsigned Elt) const {
+  if (DbgNode == 0)
+    return 0;
+
+  if (Elt < DbgNode->getNumOperands())
+      return dyn_cast_or_null<Constant>(DbgNode->getOperand(Elt));
   return 0;
 }
 
@@ -162,7 +186,8 @@ bool DIDescriptor::isSubprogram() const {
 /// isGlobalVariable - Return true if the specified tag is legal for
 /// DIGlobalVariable.
 bool DIDescriptor::isGlobalVariable() const {
-  return DbgNode && getTag() == dwarf::DW_TAG_variable;
+  return DbgNode && (getTag() == dwarf::DW_TAG_variable ||
+                     getTag() == dwarf::DW_TAG_constant);
 }
 
 /// isGlobal - Return true if the specified tag is legal for DIGlobal.
@@ -326,7 +351,7 @@ bool DIGlobalVariable::Verify() const {
   if (!Ty.Verify())
     return false;
 
-  if (!getGlobal())
+  if (!getGlobal() && !getConstant())
     return false;
 
   return true;
@@ -898,7 +923,14 @@ DICompositeType DIFactory::CreateCompositeType(unsigned Tag,
     ConstantInt::get(Type::getInt32Ty(VMContext), RuntimeLang),
     ContainingType
   };
-  return DICompositeType(MDNode::get(VMContext, &Elts[0], 13));
+
+  MDNode *Node = MDNode::get(VMContext, &Elts[0], 13);
+  // Create a named metadata so that we do not lose this enum info.
+  if (Tag == dwarf::DW_TAG_enumeration_type) {
+    NamedMDNode *NMD = M.getOrInsertNamedMetadata("llvm.dbg.enum");
+    NMD->addOperand(Node);
+  }
+  return DICompositeType(Node);
 }
 
 
@@ -914,8 +946,8 @@ DICompositeType DIFactory::CreateCompositeTypeEx(unsigned Tag,
                                                  unsigned Flags,
                                                  DIType DerivedFrom,
                                                  DIArray Elements,
-                                                 unsigned RuntimeLang) {
-
+                                                 unsigned RuntimeLang,
+                                                 MDNode *ContainingType) {
   Value *Elts[] = {
     GetTagConstant(Tag),
     Context,
@@ -928,9 +960,16 @@ DICompositeType DIFactory::CreateCompositeTypeEx(unsigned Tag,
     ConstantInt::get(Type::getInt32Ty(VMContext), Flags),
     DerivedFrom,
     Elements,
-    ConstantInt::get(Type::getInt32Ty(VMContext), RuntimeLang)
+    ConstantInt::get(Type::getInt32Ty(VMContext), RuntimeLang),
+    ContainingType
   };
-  return DICompositeType(MDNode::get(VMContext, &Elts[0], 12));
+  MDNode *Node = MDNode::get(VMContext, &Elts[0], 13);
+  // Create a named metadata so that we do not lose this enum info.
+  if (Tag == dwarf::DW_TAG_enumeration_type) {
+    NamedMDNode *NMD = M.getOrInsertNamedMetadata("llvm.dbg.enum");
+    NMD->addOperand(Node);
+  }
+  return DICompositeType(Node);
 }
 
 
@@ -1045,6 +1084,38 @@ DIFactory::CreateGlobalVariable(DIDescriptor Context, StringRef Name,
   return DIGlobalVariable(Node);
 }
 
+/// CreateGlobalVariable - Create a new descriptor for the specified constant.
+DIGlobalVariable
+DIFactory::CreateGlobalVariable(DIDescriptor Context, StringRef Name,
+                                StringRef DisplayName,
+                                StringRef LinkageName,
+                                DIFile F,
+                                unsigned LineNo, DIType Ty,bool isLocalToUnit,
+                                bool isDefinition, llvm::Constant *Val) {
+  Value *Elts[] = {
+    GetTagConstant(dwarf::DW_TAG_variable),
+    llvm::Constant::getNullValue(Type::getInt32Ty(VMContext)),
+    Context,
+    MDString::get(VMContext, Name),
+    MDString::get(VMContext, DisplayName),
+    MDString::get(VMContext, LinkageName),
+    F,
+    ConstantInt::get(Type::getInt32Ty(VMContext), LineNo),
+    Ty,
+    ConstantInt::get(Type::getInt1Ty(VMContext), isLocalToUnit),
+    ConstantInt::get(Type::getInt1Ty(VMContext), isDefinition),
+    Val
+  };
+
+  Value *const *Vs = &Elts[0];
+  MDNode *Node = MDNode::get(VMContext,Vs, 12);
+
+  // Create a named metadata so that we do not lose this mdnode.
+  NamedMDNode *NMD = M.getOrInsertNamedMetadata("llvm.dbg.gv");
+  NMD->addOperand(Node);
+
+  return DIGlobalVariable(Node);
+}
 
 /// CreateVariable - Create a new descriptor for the specified variable.
 DIVariable DIFactory::CreateVariable(unsigned Tag, DIDescriptor Context,

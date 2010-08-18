@@ -491,20 +491,21 @@
    the "hello world" module:</p>
 
 <pre class="doc_code">
-<i>; Declare the string constant as a global constant.</i>
-<a href="#identifiers">@.LC0</a> = <a href="#linkage_internal">internal</a> <a href="#globalvars">constant</a> <a href="#t_array">[13 x i8]</a> c"hello world\0A\00"    <i>; [13 x i8]*</i>
+<i>; Declare the string constant as a global constant.</i>&nbsp;
+<a href="#identifiers">@.LC0</a> = <a href="#linkage_internal">internal</a> <a href="#globalvars">constant</a> <a href="#t_array">[13 x i8]</a> c"hello world\0A\00"      <i>; [13 x i8]*</i>&nbsp;
 
-<i>; External declaration of the puts function</i>
-<a href="#functionstructure">declare</a> i32 @puts(i8*)                                     <i>; i32 (i8*)* </i>
+<i>; External declaration of the puts function</i>&nbsp;
+<a href="#functionstructure">declare</a> i32 @puts(i8*)                                      <i>; i32 (i8*)* </i>&nbsp;
 
 <i>; Definition of main function</i>
-define i32 @main() {                                        <i>; i32()* </i>
-  <i>; Convert [13 x i8]* to i8  *...</i>
-  %cast210 = <a href="#i_getelementptr">getelementptr</a> [13 x i8]* @.LC0, i64 0, i64 0   <i>; i8*</i>
+define i32 @main() {   <i>; i32()* </i>&nbsp;
+  <i>; Convert [13 x i8]* to i8  *...</i>&nbsp;
+  %cast210 = <a href="#i_getelementptr">getelementptr</a> [13 x i8]* @.LC0, i64 0, i64 0   <i>; i8*</i>&nbsp;
 
-  <i>; Call puts function to write out the string to stdout.</i>
-  <a href="#i_call">call</a> i32 @puts(i8* %cast210)                             <i>; i32</i>
-  <a href="#i_ret">ret</a> i32 0<br>}
+  <i>; Call puts function to write out the string to stdout.</i>&nbsp;
+  <a href="#i_call">call</a> i32 @puts(i8* %cast210)           <i>; i32</i>&nbsp;
+  <a href="#i_ret">ret</a> i32 0&nbsp;
+}
 
 <i>; Named metadata</i>
 !1 = metadata !{i32 41}
@@ -788,7 +789,7 @@ define i32 @main() {                                        <i>; i32()* </i>
 </pre>
 
 <p>You may give a name to any <a href="#typesystem">type</a> except
-   "<a href="t_void">void</a>".  Type name aliases may be used anywhere a type
+   "<a href="#t_void">void</a>".  Type name aliases may be used anywhere a type
    is expected with the syntax "%mytype".</p>
 
 <p>Note that type names are aliases for the structural type that they indicate,
@@ -6119,8 +6120,8 @@ LLVM</a>.</p>
 
 <h5>Syntax:</h5>
 <p>This is an overloaded intrinsic. You can use llvm.memset on any integer bit
-   width and for different address spaces. Not all targets support all bit
-   widths however.</p>
+   width and for different address spaces. However, not all targets support all
+   bit widths.</p>
 
 <pre>
   declare void @llvm.memset.p0i8.i32(i8* &lt;dest&gt;, i8 &lt;val&gt;,
@@ -6134,14 +6135,14 @@ LLVM</a>.</p>
    particular byte value.</p>
 
 <p>Note that, unlike the standard libc function, the <tt>llvm.memset</tt>
-   intrinsic does not return a value, takes extra alignment/volatile arguments,
-   and the destination can be in an arbitrary address space.</p>
+   intrinsic does not return a value and takes extra alignment/volatile
+   arguments.  Also, the destination can be in an arbitrary address space.</p>
 
 <h5>Arguments:</h5>
 <p>The first argument is a pointer to the destination to fill, the second is the
-   byte value to fill it with, the third argument is an integer argument
+   byte value with which to fill it, the third argument is an integer argument
    specifying the number of bytes to fill, and the fourth argument is the known
-   alignment of destination location.</p>
+   alignment of the destination location.</p>
 
 <p>If the call to this intrinsic has an alignment value that is not 0 or 1,
    then the caller guarantees that the destination pointer is aligned to that
@@ -7748,7 +7749,7 @@ LLVM</a>.</p>
 
   <a href="mailto:sabre@nondot.org">Chris Lattner</a><br>
   <a href="http://llvm.org">The LLVM Compiler Infrastructure</a><br>
-  Last modified: $Date: 2010-07-21 11:54:18 -0700 (Wed, 21 Jul 2010) $
+  Last modified: $Date: 2010-08-17 16:26:04 -0700 (Tue, 17 Aug 2010) $
 </address>
 
 </body>

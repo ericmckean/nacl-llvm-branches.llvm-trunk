@@ -505,12 +505,14 @@ static int64_t ExtractImmediate(const SCEV *&S, ScalarEvolution &SE) {
   } else if (const SCEVAddExpr *Add = dyn_cast<SCEVAddExpr>(S)) {
     SmallVector<const SCEV *, 8> NewOps(Add->op_begin(), Add->op_end());
     int64_t Result = ExtractImmediate(NewOps.front(), SE);
-    S = SE.getAddExpr(NewOps);
+    if (Result != 0)
+      S = SE.getAddExpr(NewOps);
     return Result;
   } else if (const SCEVAddRecExpr *AR = dyn_cast<SCEVAddRecExpr>(S)) {
     SmallVector<const SCEV *, 8> NewOps(AR->op_begin(), AR->op_end());
     int64_t Result = ExtractImmediate(NewOps.front(), SE);
-    S = SE.getAddRecExpr(NewOps, AR->getLoop());
+    if (Result != 0)
+      S = SE.getAddRecExpr(NewOps, AR->getLoop());
     return Result;
   }
   return 0;
@@ -528,12 +530,14 @@ static GlobalValue *ExtractSymbol(const SCEV *&S, ScalarEvolution &SE) {
   } else if (const SCEVAddExpr *Add = dyn_cast<SCEVAddExpr>(S)) {
     SmallVector<const SCEV *, 8> NewOps(Add->op_begin(), Add->op_end());
     GlobalValue *Result = ExtractSymbol(NewOps.back(), SE);
-    S = SE.getAddExpr(NewOps);
+    if (Result)
+      S = SE.getAddExpr(NewOps);
     return Result;
   } else if (const SCEVAddRecExpr *AR = dyn_cast<SCEVAddRecExpr>(S)) {
     SmallVector<const SCEV *, 8> NewOps(AR->op_begin(), AR->op_end());
     GlobalValue *Result = ExtractSymbol(NewOps.front(), SE);
-    S = SE.getAddRecExpr(NewOps, AR->getLoop());
+    if (Result)
+      S = SE.getAddRecExpr(NewOps, AR->getLoop());
     return Result;
   }
   return 0;
@@ -1083,7 +1087,7 @@ void LSRUse::print(raw_ostream &OS) const {
   for (SmallVectorImpl<int64_t>::const_iterator I = Offsets.begin(),
        E = Offsets.end(); I != E; ++I) {
     OS << *I;
-    if (next(I) != E)
+    if (llvm::next(I) != E)
       OS << ',';
   }
   OS << '}';
@@ -1597,7 +1601,7 @@ ICmpInst *LSRInstance::OptimizeMax(ICmpInst *Cond, IVStrideUse* &CondUse) {
   const SCEV *One = SE.getConstant(BackedgeTakenCount->getType(), 1);
 
   // Add one to the backedge-taken count to get the trip count.
-  const SCEV *IterationCount = SE.getAddExpr(BackedgeTakenCount, One);
+  const SCEV *IterationCount = SE.getAddExpr(One, BackedgeTakenCount);
   if (IterationCount != SE.getSCEV(Sel)) return Cond;
 
   // Check for a max calculation that matches the pattern. There's no check
@@ -1987,7 +1991,7 @@ void LSRInstance::CollectInterestingTypesAndFactors() {
   for (SmallSetVector<const SCEV *, 4>::const_iterator
        I = Strides.begin(), E = Strides.end(); I != E; ++I)
     for (SmallSetVector<const SCEV *, 4>::const_iterator NewStrideIter =
-         next(I); NewStrideIter != E; ++NewStrideIter) {
+         llvm::next(I); NewStrideIter != E; ++NewStrideIter) {
       const SCEV *OldStride = *I;
       const SCEV *NewStride = *NewStrideIter;
 
@@ -2226,14 +2230,13 @@ LSRInstance::CollectLoopInvariantFixupsAndFormulae() {
 /// separate registers. If C is non-null, multiply each subexpression by C.
 static void CollectSubexprs(const SCEV *S, const SCEVConstant *C,
                             SmallVectorImpl<const SCEV *> &Ops,
-                            SmallVectorImpl<const SCEV *> &UninterestingOps,
                             const Loop *L,
                             ScalarEvolution &SE) {
   if (const SCEVAddExpr *Add = dyn_cast<SCEVAddExpr>(S)) {
     // Break out add operands.
     for (SCEVAddExpr::op_iterator I = Add->op_begin(), E = Add->op_end();
          I != E; ++I)
-      CollectSubexprs(*I, C, Ops, UninterestingOps, L, SE);
+      CollectSubexprs(*I, C, Ops, L, SE);
     return;
   } else if (const SCEVAddRecExpr *AR = dyn_cast<SCEVAddRecExpr>(S)) {
     // Split a non-zero base out of an addrec.
@@ -2241,8 +2244,8 @@ static void CollectSubexprs(const SCEV *S, const SCEVConstant *C,
       CollectSubexprs(SE.getAddRecExpr(SE.getConstant(AR->getType(), 0),
                                        AR->getStepRecurrence(SE),
                                        AR->getLoop()),
-                      C, Ops, UninterestingOps, L, SE);
-      CollectSubexprs(AR->getStart(), C, Ops, UninterestingOps, L, SE);
+                      C, Ops, L, SE);
+      CollectSubexprs(AR->getStart(), C, Ops, L, SE);
       return;
     }
   } else if (const SCEVMulExpr *Mul = dyn_cast<SCEVMulExpr>(S)) {
@@ -2252,17 +2255,13 @@ static void CollectSubexprs(const SCEV *S, const SCEVConstant *C,
             dyn_cast<SCEVConstant>(Mul->getOperand(0))) {
         CollectSubexprs(Mul->getOperand(1),
                         C ? cast<SCEVConstant>(SE.getMulExpr(C, Op0)) : Op0,
-                        Ops, UninterestingOps, L, SE);
+                        Ops, L, SE);
         return;
       }
   }
 
-  // Otherwise use the value itself. Loop-variant "unknown" values are
-  // uninteresting; we won't be able to do anything meaningful with them.
-  if (!C && isa<SCEVUnknown>(S) && !S->isLoopInvariant(L))
-    UninterestingOps.push_back(S);
-  else
-    Ops.push_back(C ? SE.getMulExpr(C, S) : S);
+  // Otherwise use the value itself, optionally with a scale applied.
+  Ops.push_back(C ? SE.getMulExpr(C, S) : S);
 }
 
 /// GenerateReassociations - Split out subexpressions from adds and the bases of
@@ -2276,19 +2275,19 @@ void LSRInstance::GenerateReassociations(LSRUse &LU, unsigned LUIdx,
   for (size_t i = 0, e = Base.BaseRegs.size(); i != e; ++i) {
     const SCEV *BaseReg = Base.BaseRegs[i];
 
-    SmallVector<const SCEV *, 8> AddOps, UninterestingAddOps;
-    CollectSubexprs(BaseReg, 0, AddOps, UninterestingAddOps, L, SE);
-
-    // Add any uninteresting values as one register, as we won't be able to
-    // form any interesting reassociation opportunities with them. They'll
-    // just have to be added inside the loop no matter what we do.
-    if (!UninterestingAddOps.empty())
-      AddOps.push_back(SE.getAddExpr(UninterestingAddOps));
+    SmallVector<const SCEV *, 8> AddOps;
+    CollectSubexprs(BaseReg, 0, AddOps, L, SE);
 
     if (AddOps.size() == 1) continue;
 
     for (SmallVectorImpl<const SCEV *>::const_iterator J = AddOps.begin(),
          JE = AddOps.end(); J != JE; ++J) {
+
+      // Loop-variant "unknown" values are uninteresting; we won't be able to
+      // do anything meaningful with them.
+      if (isa<SCEVUnknown>(*J) && !(*J)->isLoopInvariant(L))
+        continue;
+
       // Don't pull a constant into a register if the constant could be folded
       // into an immediate field.
       if (isAlwaysFoldable(*J, LU.MinOffset, LU.MaxOffset,
@@ -2298,9 +2297,9 @@ void LSRInstance::GenerateReassociations(LSRUse &LU, unsigned LUIdx,
 
       // Collect all operands except *J.
       SmallVector<const SCEV *, 8> InnerAddOps
-        (         ((const SmallVector<const SCEV *, 8> &)AddOps).begin(), J);
+        (((const SmallVector<const SCEV *, 8> &)AddOps).begin(), J);
       InnerAddOps.append
-        (next(J), ((const SmallVector<const SCEV *, 8> &)AddOps).end());
+        (llvm::next(J), ((const SmallVector<const SCEV *, 8> &)AddOps).end());
 
       // Don't leave just a constant behind in a register if the constant could
       // be folded into an immediate field.
@@ -2396,7 +2395,7 @@ void LSRInstance::GenerateConstantOffsets(LSRUse &LU, unsigned LUIdx,
       if (isLegalUse(F.AM, LU.MinOffset - *I, LU.MaxOffset - *I,
                      LU.Kind, LU.AccessTy, TLI)) {
         // Add the offset to the base register.
-        const SCEV *NewG = SE.getAddExpr(G, SE.getConstant(G->getType(), *I));
+        const SCEV *NewG = SE.getAddExpr(SE.getConstant(G->getType(), *I), G);
         // If it cancelled out, drop the base register, otherwise update it.
         if (NewG->isZero()) {
           std::swap(F.BaseRegs[i], F.BaseRegs.back());
@@ -3751,7 +3750,7 @@ Pass *llvm::createLoopStrengthReducePass(const TargetLowering *TLI) {
 }
 
 LoopStrengthReduce::LoopStrengthReduce(const TargetLowering *tli)
-  : LoopPass(&ID), TLI(tli) {}
+  : LoopPass(ID), TLI(tli) {}
 
 void LoopStrengthReduce::getAnalysisUsage(AnalysisUsage &AU) const {
   // We split critical edges, so we change the CFG.  However, we do update

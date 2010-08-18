@@ -45,7 +45,10 @@ Threshold("jump-threading-threshold",
 
 // Turn on use of LazyValueInfo.
 static cl::opt<bool>
-EnableLVI("enable-jump-threading-lvi", cl::ReallyHidden);
+EnableLVI("enable-jump-threading-lvi",
+          cl::desc("Use LVI for jump threading"),
+          cl::init(false),
+          cl::ReallyHidden);
 
 
 
@@ -76,7 +79,7 @@ namespace {
 #endif
   public:
     static char ID; // Pass identification
-    JumpThreading() : FunctionPass(&ID) {}
+    JumpThreading() : FunctionPass(ID) {}
 
     bool runOnFunction(Function &F);
     
@@ -338,25 +341,21 @@ ComputeValueKnownInPredecessors(Value *V, BasicBlock *BB,PredValueInfo &Result){
       else
         InterestingVal = ConstantInt::getFalse(I->getContext());
       
+      SmallPtrSet<BasicBlock*, 4> LHSKnownBBs;
+      
       // Scan for the sentinel.  If we find an undef, force it to the
       // interesting value: x|undef -> true and x&undef -> false.
       for (unsigned i = 0, e = LHSVals.size(); i != e; ++i)
         if (LHSVals[i].first == InterestingVal || LHSVals[i].first == 0) {
           Result.push_back(LHSVals[i]);
           Result.back().first = InterestingVal;
+          LHSKnownBBs.insert(LHSVals[i].second);
         }
       for (unsigned i = 0, e = RHSVals.size(); i != e; ++i)
         if (RHSVals[i].first == InterestingVal || RHSVals[i].first == 0) {
           // If we already inferred a value for this block on the LHS, don't
           // re-add it.
-          bool HasValue = false;
-          for (unsigned r = 0, e = Result.size(); r != e; ++r)
-            if (Result[r].second == RHSVals[i].second) {
-              HasValue = true;
-              break;
-            }
-          
-          if (!HasValue) {
+          if (!LHSKnownBBs.count(RHSVals[i].second)) {
             Result.push_back(RHSVals[i]);
             Result.back().first = InterestingVal;
           }

@@ -51,7 +51,7 @@ STATISTIC(NumGlobals,   "Number of allocas copied from constant global");
 namespace {
   struct SROA : public FunctionPass {
     static char ID; // Pass identification, replacement for typeid
-    explicit SROA(signed T = -1) : FunctionPass(&ID) {
+    explicit SROA(signed T = -1) : FunctionPass(ID) {
       if (T == -1)
         SRThreshold = 128;
       else
@@ -114,8 +114,7 @@ namespace {
     void DoScalarReplacement(AllocaInst *AI, 
                              std::vector<AllocaInst*> &WorkList);
     void DeleteDeadInstructions();
-    AllocaInst *AddNewAlloca(Function &F, const Type *Ty, AllocaInst *Base);
-    
+   
     void RewriteForScalarRepl(Instruction *I, AllocaInst *AI, uint64_t Offset,
                               SmallVector<AllocaInst*, 32> &NewElts);
     void RewriteBitCast(BitCastInst *BC, AllocaInst *AI, uint64_t Offset,

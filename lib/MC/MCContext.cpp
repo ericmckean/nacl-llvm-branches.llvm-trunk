@@ -148,7 +148,7 @@ getMachOSection(StringRef Segment, StringRef Section,
 
 const MCSection *MCContext::
 getELFSection(StringRef Section, unsigned Type, unsigned Flags,
-              SectionKind Kind, bool IsExplicit) {
+              SectionKind Kind, bool IsExplicit, unsigned EntrySize) {
   if (ELFUniquingMap == 0)
     ELFUniquingMap = new ELFUniqueMapTy();
   ELFUniqueMapTy &Map = *(ELFUniqueMapTy*)ELFUniquingMap;
@@ -158,7 +158,7 @@ getELFSection(StringRef Section, unsigned Type, unsigned Flags,
   if (Entry.getValue()) return Entry.getValue();
   
   MCSectionELF *Result = new (*this) MCSectionELF(Entry.getKey(), Type, Flags,
-                                                  Kind, IsExplicit);
+                                                  Kind, IsExplicit, EntrySize);
   Entry.setValue(Result);
   return Result;
 }
@@ -213,7 +213,6 @@ unsigned MCContext::GetDwarfFile(StringRef FileName, unsigned FileNumber) {
   std::pair<StringRef, StringRef> Slash = FileName.rsplit('/');
 
   // Find or make a entry in the MCDwarfDirs vector for this Directory.
-  StringRef Directory;
   StringRef Name;
   unsigned DirIndex;
   // Capture directory name.
@@ -221,23 +220,29 @@ unsigned MCContext::GetDwarfFile(StringRef FileName, unsigned FileNumber) {
     Name = Slash.first;
     DirIndex = 0; // For FileNames with no directories a DirIndex of 0 is used.
   } else {
-    Directory = Slash.first;
+    StringRef Directory = Slash.first;
     Name = Slash.second;
-    for (DirIndex = 1; DirIndex < MCDwarfDirs.size(); DirIndex++) {
-      std::string *&Dir = MCDwarfDirs[DirIndex];
-      if (Directory == *Dir)
+    for (DirIndex = 0; DirIndex < MCDwarfDirs.size(); DirIndex++) {
+      if (Directory == MCDwarfDirs[DirIndex])
 	break;
     }
     if (DirIndex >= MCDwarfDirs.size()) {
-      MCDwarfDirs.resize(DirIndex + 1);
-      std::string *&NewDir = MCDwarfDirs[DirIndex];
-      NewDir = new (*this) std::string(Directory);
+      char *Buf = static_cast<char *>(Allocate(Directory.size()));
+      memcpy(Buf, Directory.data(), Directory.size());
+      MCDwarfDirs.push_back(StringRef(Buf, Directory.size()));
     }
+    // The DirIndex is one based, as DirIndex of 0 is used for FileNames with
+    // no directories.  MCDwarfDirs[] is unlike MCDwarfFiles[] in that the
+    // directory names are stored at MCDwarfDirs[DirIndex-1] where FileNames are
+    // stored at MCDwarfFiles[FileNumber].Name .
+    DirIndex++;
   }
   
   // Now make the MCDwarfFile entry and place it in the slot in the MCDwarfFiles
   // vector.
-  File = new (*this) MCDwarfFile(Name, DirIndex);
+  char *Buf = static_cast<char *>(Allocate(Name.size()));
+  memcpy(Buf, Name.data(), Name.size());
+  File = new (*this) MCDwarfFile(StringRef(Buf, Name.size()), DirIndex);
 
   // return the allocated FileNumber.
   return FileNumber;

@@ -65,7 +65,7 @@ namespace {
     static char ID;
   public:
     ARMCodeEmitter(TargetMachine &tm, JITCodeEmitter &mce)
-      : MachineFunctionPass(&ID), JTI(0),
+      : MachineFunctionPass(ID), JTI(0),
         II((const ARMInstrInfo *)tm.getInstrInfo()),
         TD(tm.getTargetData()), TM(tm),
         MCE(mce), MCPEs(0), MJTEs(0),
@@ -123,6 +123,8 @@ namespace {
     void emitExtendInstruction(const MachineInstr &MI);
 
     void emitMiscArithInstruction(const MachineInstr &MI);
+
+    void emitSaturateInstruction(const MachineInstr &MI);
 
     void emitBranchInstruction(const MachineInstr &MI);
 
@@ -388,6 +390,9 @@ void ARMCodeEmitter::emitInstruction(const MachineInstr &MI) {
     break;
   case ARMII::ArithMiscFrm:
     emitMiscArithInstruction(MI);
+    break;
+  case ARMII::SatFrm:
+    emitSaturateInstruction(MI);
     break;
   case ARMII::BrFrm:
     emitBranchInstruction(MI);
@@ -1222,8 +1227,54 @@ void ARMCodeEmitter::emitMiscArithInstruction(const MachineInstr &MI) {
 
   // Encode shift_imm.
   unsigned ShiftAmt = MI.getOperand(OpIdx).getImm();
+  if (TID.Opcode == ARM::PKHTB) {
+    assert(ShiftAmt != 0 && "PKHTB shift_imm is 0!");
+    if (ShiftAmt == 32)
+      ShiftAmt = 0;
+  }
   assert(ShiftAmt < 32 && "shift_imm range is 0 to 31!");
   Binary |= ShiftAmt << ARMII::ShiftShift;
+
+  emitWordLE(Binary);
+}
+
+void ARMCodeEmitter::emitSaturateInstruction(const MachineInstr &MI) {
+  const TargetInstrDesc &TID = MI.getDesc();
+
+  // Part of binary is determined by TableGen.
+  unsigned Binary = getBinaryCodeForInstr(MI);
+
+  // Set the conditional execution predicate
+  Binary |= II->getPredicate(&MI) << ARMII::CondShift;
+
+  // Encode Rd
+  Binary |= getMachineOpValue(MI, 0) << ARMII::RegRdShift;
+
+  // Encode saturate bit position.
+  unsigned Pos = MI.getOperand(1).getImm();
+  if (TID.Opcode == ARM::SSAT || TID.Opcode == ARM::SSAT16)
+    Pos -= 1;
+  assert((Pos < 16 || (Pos < 32 &&
+                       TID.Opcode != ARM::SSAT16 &&
+                       TID.Opcode != ARM::USAT16)) &&
+         "saturate bit position out of range");
+  Binary |= Pos << 16;
+
+  // Encode Rm
+  Binary |= getMachineOpValue(MI, 2);
+
+  // Encode shift_imm.
+  if (TID.getNumOperands() == 4) {
+    unsigned ShiftOp = MI.getOperand(3).getImm();
+    ARM_AM::ShiftOpc Opc = ARM_AM::getSORegShOp(ShiftOp);
+    if (Opc == ARM_AM::asr)
+      Binary |= (1 << 6);
+    unsigned ShiftAmt = MI.getOperand(3).getImm();
+    if (ShiftAmt == 32 && Opc == ARM_AM::asr)
+      ShiftAmt = 0;
+    assert(ShiftAmt < 32 && "shift_imm range is 0 to 31!");
+    Binary |= ShiftAmt << ARMII::ShiftShift;
+  }
 
   emitWordLE(Binary);
 }

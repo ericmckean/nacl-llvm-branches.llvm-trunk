@@ -46,10 +46,15 @@ static MCStreamer *createMCStreamer(const Target &T, const std::string &TT,
                                     bool RelaxAll) {
   Triple TheTriple(TT);
   switch (TheTriple.getOS()) {
-  case Triple::Win32:
-    return createWinCOFFStreamer(Ctx, TAB, *_Emitter, _OS);
-  default:
+  case Triple::Darwin:
     return createMachOStreamer(Ctx, TAB, _OS, _Emitter, RelaxAll);
+  case Triple::MinGW32:
+  case Triple::MinGW64:
+  case Triple::Cygwin:
+  case Triple::Win32:
+    return createWinCOFFStreamer(Ctx, TAB, *_Emitter, _OS, RelaxAll);
+  default:
+    return createELFStreamer(Ctx, TAB, _OS, _Emitter, RelaxAll);
   }
 }
 

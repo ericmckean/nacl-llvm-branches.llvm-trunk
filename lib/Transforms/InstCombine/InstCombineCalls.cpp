@@ -111,7 +111,7 @@ unsigned InstCombiner::GetOrEnforceKnownAlignment(Value *V,
   unsigned Align = 1u << std::min(BitWidth - 1, TrailZ);
 
   // LLVM doesn't support alignments larger than this currently.
-  Align = std::min(Align, MaximumAlignment);
+  Align = std::min(Align, +Value::MaximumAlignment);
 
   if (PrefAlign > Align)
     Align = EnforceKnownAlignment(V, Align, PrefAlign);
@@ -538,7 +538,7 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
       // X + 0 -> {X, false}
       if (RHS->isZero()) {
         Constant *V[] = {
-          UndefValue::get(II->getCalledValue()->getType()),
+          UndefValue::get(II->getArgOperand(0)->getType()),
           ConstantInt::getFalse(II->getContext())
         };
         Constant *Struct = ConstantStruct::get(II->getContext(), V, 2, false);
