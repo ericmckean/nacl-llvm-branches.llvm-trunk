@@ -49,7 +49,7 @@ STATISTIC(NumJTInserted, "Number of jump table intermediate blocks inserted");
 
 // @LOCALMOD-START
 #include "llvm/Support/CommandLine.h"
-
+cl::opt<bool> FlagSfiCpDisableVerify("sfi-cp-disable-verify");
 cl::opt<bool> FlagSfiCpFudge("sfi-cp-fudge");
 cl::opt<int> FlagSfiCpFudgePercent("sfi-cp-fudge-percent", cl::init(85));
 extern cl::opt<bool> FlagSfiBranch;
@@ -244,8 +244,21 @@ namespace {
 /// verify - check BBOffsets, BBSizes, alignment of islands
 void ARMConstantIslands::verify(MachineFunction &MF) {
   assert(BBOffsets.size() == BBSizes.size());
-  for (unsigned i = 1, e = BBOffsets.size(); i != e; ++i)
-    assert(BBOffsets[i-1]+BBSizes[i-1] == BBOffsets[i]);
+  for (unsigned i = 1, e = BBOffsets.size(); i != e; ++i) 
+    
+    // @LOCALMOD-START
+    // NOTE: this is horrible hack and needs to be cleaned up when
+    //       we revisit constant pools for arm 
+    {
+      if (FlagSfiCpDisableVerify) {
+	if (!(BBOffsets[i-1]+BBSizes[i-1] == BBOffsets[i])) {
+	  errs() << "\nCONSTANT POOL INCONSISTENCY IN SIZES - IGNORED\n\n";
+	}
+      } else {
+	assert(BBOffsets[i-1]+BBSizes[i-1] == BBOffsets[i]);
+      }
+  } 
+  // @LOCALMOD-END
   if (!isThumb)
     return;
 #ifndef NDEBUG
@@ -255,9 +268,19 @@ void ARMConstantIslands::verify(MachineFunction &MF) {
     if (!MBB->empty() &&
         MBB->begin()->getOpcode() == ARM::CONSTPOOL_ENTRY) {
       unsigned MBBId = MBB->getNumber();
-      assert(HasInlineAsm ||
-             (BBOffsets[MBBId]%4 == 0 && BBSizes[MBBId]%4 == 0) ||
-             (BBOffsets[MBBId]%4 != 0 && BBSizes[MBBId]%4 != 0));
+      // @LOCALMOD-START
+      if (FlagSfiCpDisableVerify) {
+	if (!(HasInlineAsm ||
+	      (BBOffsets[MBBId]%4 == 0 && BBSizes[MBBId]%4 == 0) ||
+	      (BBOffsets[MBBId]%4 != 0 && BBSizes[MBBId]%4 != 0))) {
+	  errs() << "\nCONSTANT POOL INCONSISTENCY IN ALIGNMENT - IGNORED\n\n";
+	}
+      } else {
+	assert(HasInlineAsm ||
+	       (BBOffsets[MBBId]%4 == 0 && BBSizes[MBBId]%4 == 0) ||
+	       (BBOffsets[MBBId]%4 != 0 && BBSizes[MBBId]%4 != 0));
+      }
+      // @LOCALMOD-END
     }
   }
   for (unsigned i = 0, e = CPUsers.size(); i != e; ++i) {
@@ -266,7 +289,16 @@ void ARMConstantIslands::verify(MachineFunction &MF) {
     unsigned CPEOffset  = GetOffsetOf(U.CPEMI);
     unsigned Disp = UserOffset < CPEOffset ? CPEOffset - UserOffset :
       UserOffset - CPEOffset;
-    assert(Disp <= U.MaxDisp || "Constant pool entry out of range!");
+    // @LOCALMOD-START
+    if (FlagSfiCpDisableVerify) {
+      if(Disp > U.MaxDisp) {
+	errs() << "\nCONSTANT POOL INCONSISTENCY IN DISP - IGNORED\n\n";
+      }
+    } else {
+      // NOTE the original assert used || which is a bug 
+      assert(Disp <= U.MaxDisp && "Constant pool entry out of range!");
+    }
+    // @LOCALMOD-END
   }
 #endif
 }
@@ -375,7 +407,6 @@ bool ARMConstantIslands::runOnMachineFunction(MachineFunction &MF) {
   // Shrink 32-bit Thumb2 branch, load, and store instructions.
   if (isThumb2 && !STI->prefers32BitThumb())
     MadeChange |= OptimizeThumb2Instructions(MF);
-
   // After a while, this might be made debug-only, but it is not expensive.
   verify(MF);
 
