@@ -1137,8 +1137,13 @@ llvm::ConstantFoldCall(Function *F,
                  Name == "llvm.sqrt.f64") {
           if (V >= -0.0)
             return ConstantFoldFP(sqrt, V, Ty);
-          else // Undefined
-            return Constant::getNullValue(Ty);
+          else
+            // @LOCALMOD-BEGIN
+            // (Don't make it undefined. Just don't constant fold in this case!)
+            return 0;
+            // Undefined
+            //return Constant::getNullValue(Ty);
+            // @LOCALMOD-END
         }
         break;
       case 's':
@@ -1285,4 +1290,3 @@ llvm::ConstantFoldCall(Function *F,
   }
   return 0;
 }
-
