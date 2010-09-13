@@ -46,18 +46,17 @@ using namespace sys;
 unsigned 
 Process::GetPageSize() 
 {
-#if defined(__native_client__)
-  size_t page_size = ::getpagesize(); 
-#elif defined(__CYGWIN__)
+#if defined(__CYGWIN__)
   // On Cygwin, getpagesize() returns 64k but the page size for the purposes of
   // memory protection and mmap() is 4k.
   // See http://www.cygwin.com/ml/cygwin/2009-01/threads.html#00492
   const int page_size = 0x1000;
 #elif defined(HAVE_GETPAGESIZE)
   const int page_size = ::getpagesize();
-#elif defined(HAVE_SYSCONF)
+#elif defined(HAVE_SYSCONF)  && !defined(__native_client__)
   long page_size = ::sysconf(_SC_PAGE_SIZE);
 #else
+  const int page_size = 0;
 #warning Cannot get the page size on this machine
 #endif
   return static_cast<unsigned>(page_size);
@@ -112,7 +111,7 @@ Process::GetTimeUsage(TimeValue& elapsed, TimeValue& user_time,
                       TimeValue& sys_time)
 {
   elapsed = TimeValue::now();
-#if defined(HAVE_GETRUSAGE)
+#if defined(HAVE_GETRUSAGE) && !defined(__native_client__)
   struct rusage usage;
   ::getrusage(RUSAGE_SELF, &usage);
   user_time = TimeValue( 
