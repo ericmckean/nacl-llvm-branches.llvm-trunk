@@ -120,6 +120,7 @@ cross-compile-build-tools:
 	(unset SDKROOT; \
 	 $(MAKE) -C BuildTools \
 	  BUILD_DIRS_ONLY=1 \
+	  SANDBOX_LLVM=0 \
 	  UNIVERSAL= \
 	  ENABLE_OPTIMIZED=$(ENABLE_OPTIMIZED) \
 	  ENABLE_PROFILING=$(ENABLE_PROFILING) \

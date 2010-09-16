@@ -132,10 +132,12 @@ static RETSIGTYPE SignalHandler(int Sig) {
   // instead of recursing in the signal handler.
   UnregisterHandlers();
 
+#if !defined(__native_client__)
   // Unmask all potentially blocked kill signals.
   sigset_t SigMask;
   sigfillset(&SigMask);
   sigprocmask(SIG_UNBLOCK, &SigMask, 0);
+#endif
 
   SignalsMutex.acquire();
   RemoveFilesToRemove();
