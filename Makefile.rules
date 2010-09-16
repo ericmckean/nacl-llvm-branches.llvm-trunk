@@ -565,6 +565,11 @@ endif
 endif
 endif
 
+ifeq ($(SANDBOX_LLVM),1)
+  LIBS += -lnosys
+else
+  LIBS +=
+endif
 
 #----------------------------------------------------------
 # Options To Invoke Tools
