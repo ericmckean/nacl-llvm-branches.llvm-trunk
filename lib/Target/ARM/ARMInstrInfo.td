@@ -681,6 +681,17 @@ PseudoInst<(outs), (ins pred:$p), NoItinerary,
            "sfi_return_preamble lr, $p",
            []>;
 
+def SFI_NOP_IF_AT_BUNDLE_END :
+PseudoInst<(outs), (ins), NoItinerary,
+           "sfi_nop_if_at_bundle_end",
+           []>;
+
+// Note: intention is that $src and $dst are the same register.
+def SFI_DATA_MASK :
+PseudoInst<(outs GPR:$dst), (ins GPR:$src, pred:$p), NoItinerary,
+           "sfi_data_mask $dst, $p",
+           []>;
+
 // @LOCALMOD-END
 
 
@@ -1651,18 +1662,6 @@ defm ADD  : AsI1_bin_irs<0b0100, "add",
                          BinOpFrag<(add  node:$LHS, node:$RHS)>, 1>;
 defm SUB  : AsI1_bin_irs<0b0010, "sub",
                          BinOpFrag<(sub  node:$LHS, node:$RHS)>>;
-
-// @LOCALMOD-START
-// These instructions must match ADD and SUB, respectively,
-// but without the dag pattern.
-def STACK_ADDri  : AsI1<0, (outs GPR:$dst), (ins GPR:$a, so_imm:$b), DPFrm,
-                         IIC_iALUi, "sfi_add", "\t$dst, $a, $b", []>;
-def STACK_SUBri : AsI1<0, (outs GPR:$dst), (ins GPR:$a, so_imm:$b), DPFrm,
-                         IIC_iALUi, "sfi_sub", "\t$dst, $a, $b", []>;
-let neverHasSideEffects = 1 in
-def STACK_MOVr : AsI1<0b1101, (outs GPR:$dst), (ins GPR:$src), DPFrm, IIC_iMOVr,
-                 "sfi_mov", " $dst, $src", []>, UnaryDP;
-// @LOCALMOD-END
 
 // ADD and SUB with 's' bit set.
 defm ADDS : AI1_bin_s_irs<0b0100, "adds",

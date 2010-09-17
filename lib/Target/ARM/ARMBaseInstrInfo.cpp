@@ -37,8 +37,6 @@
 using namespace llvm;
 
 
-extern cl::opt<bool> FlagSfiStack; // @LOCALMOD
-
 static cl::opt<bool>
 EnableARM3Addr("enable-arm-3-addr-conv", cl::Hidden,
                cl::desc("Enable ARM 2-addr to 3-addr conv"));
@@ -665,10 +663,7 @@ void ARMBaseInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
   bool GPRSrc  = ARM::GPRRegClass.contains(SrcReg);
 
   if (GPRDest && GPRSrc) {
-    // @LOCALMOD-START
-    // NOTE: rename stack loads/moves so we have an sfi hook
-    unsigned Opc = (FlagSfiStack && DestReg == ARM::SP) ?
-                   ARM::STACK_MOVr : ARM::MOVr;
+    unsigned Opc = ARM::MOVr;
     AddDefaultCC(AddDefaultPred(BuildMI(MBB, I, DL, get(Opc), DestReg)
                                   .addReg(SrcReg, getKillRegState(KillSrc))));
     return;
@@ -1232,17 +1227,9 @@ void llvm::emitARMRegPlusImmediate(MachineBasicBlock &MBB,
     assert(ARM_AM::getSOImmVal(ThisVal) != -1 && "Bit extraction didn't work?");
 
     // Build the new ADD / SUB.
-    // @LOCALMOD-START
-    // NOTE: add stackhook
     unsigned Opc;
-    if (FlagSfiStack && DestReg == ARM::SP ) {
-      Opc = isSub ? ARM::STACK_SUBri : ARM::STACK_ADDri;
+    Opc = isSub ? ARM::SUBri : ARM::ADDri;
 
-      /* assert(BaseReg == DestReg); */
-    } else {
-      Opc = isSub ? ARM::SUBri : ARM::ADDri;
-    }
-    // @LOCALMOD-END
     BuildMI(MBB, MBBI, dl, TII.get(Opc), DestReg)
       .addReg(BaseReg, RegState::Kill).addImm(ThisVal)
       .addImm((unsigned)Pred).addReg(PredReg).addReg(0);

@@ -18,6 +18,7 @@
 #include "ARMAddressingModes.h"
 #include "ARMMachineFunctionInfo.h"
 #include "ARMInstrInfo.h"
+#include "ARMSFIStack.h" // @LOCALMOD
 #include "Thumb2InstrInfo.h"
 #include "llvm/CodeGen/MachineConstantPool.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
@@ -174,6 +175,7 @@ namespace {
     bool HasInlineAsm;
 
     const ARMInstrInfo *TII;
+    const TargetRegisterInfo *TRI; // @LOCALMOD
     const ARMSubtarget *STI;
     ARMFunctionInfo *AFI;
     bool isThumb;
@@ -321,6 +323,7 @@ bool ARMConstantIslands::runOnMachineFunction(MachineFunction &MF) {
   MachineConstantPool &MCP = *MF.getConstantPool();
 
   TII = (const ARMInstrInfo*)MF.getTarget().getInstrInfo();
+  TRI = MF.getTarget().getRegisterInfo(); // @LOCALMOD
   AFI = MF.getInfo<ARMFunctionInfo>();
   STI = &MF.getTarget().getSubtarget<ARMSubtarget>();
 
@@ -515,7 +518,7 @@ void ARMConstantIslands::JumpTableFunctionScan(MachineFunction &MF) {
 
 //@LOCALMOD-START
 // We try to account for extra sfi space overhead here
-// NOTE: This function needs to be updatd whenever changes
+// NOTE: This function needs to be updated whenever changes
 //       to the sfi scheme are made
 // NOTE: this is very likely missing a few cases
 //       we will add those as neeeded and otherwise
@@ -568,15 +571,6 @@ unsigned ARMConstantIslands::GetFudge(const MachineInstr* I,
     if ((offset + fudge) % kBundleSize == 0) fudge += 4;
     break;
 
-   case ARM::STACK_ADDri:
-   case ARM::STACK_SUBri:
-   case ARM::STACK_MOVr:
-    // stack adjusts must not be in the last slot
-    if ( (offset + fudge) % kBundleSize == 0xc) fudge += 4;
-    // add masking
-    fudge += 4;
-    break;
-
    case ARM::STR:
    case ARM::STRB:
    case ARM::STRH:
@@ -605,6 +599,15 @@ unsigned ARMConstantIslands::GetFudge(const MachineInstr* I,
     // one mask
     fudge += 4;
     break;
+  }
+
+  // Check for stack adjustments, which will be sandboxed later
+  // (possibly adding padding and a data mask instrs).
+  if (ARM_SFI::NeedSandboxStackChange(*I, TRI)) {
+    // stack adjusts must not be in the last slot
+    if ( (offset + fudge) % kBundleSize == 0xc) fudge += 4;
+    // add masking
+    fudge += 4;
   }
 
   return fudge;

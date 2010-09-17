@@ -13,9 +13,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "arm-pseudo"
+#define DEBUG_TYPE "arm-sfi"
 #include "ARM.h"
 #include "ARMBaseInstrInfo.h"
+#include "ARMSFIBase.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/Support/CommandLine.h"
@@ -60,15 +61,6 @@ namespace {
     bool TryPredicating(MachineInstr &MI, ARMCC::CondCodes);
   };
   char ARMSFIPlacement::ID = 0;
-}
-
-static ARMCC::CondCodes GetPredicate(MachineInstr &MI) {
-  int PIdx = MI.findFirstPredOperandIdx();
-  if (PIdx != -1) {
-    return (ARMCC::CondCodes)MI.getOperand(PIdx).getImm();
-  } else {
-    return ARMCC::AL;
-  }
 }
 
 void ARMSFIPlacement::getAnalysisUsage(AnalysisUsage &AU) const {
@@ -120,7 +112,7 @@ void ARMSFIPlacement::SandboxStore(MachineBasicBlock &MBB,
       .addReg(0);         // apparently unused source register?
   } else {
     // Use the older BIC sandbox, which is universal, but incurs a stall.
-    ARMCC::CondCodes Pred = GetPredicate(MI);
+    ARMCC::CondCodes Pred = ARM_SFI::GetPredicate(MI);
     BuildMI(MBB, MBBI, MI.getDebugLoc(),
             TII->get(ARM::SFI_GUARD_STORE))
       .addOperand(Addr)        // rD
