@@ -7,7 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "arm-pseudo"
+#define DEBUG_TYPE "arm-sfi"
 #include "ARM.h"
 #include "ARMBaseInstrInfo.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"

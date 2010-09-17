@@ -25,6 +25,7 @@ using namespace llvm;
 // @LOCALMOD-START
 extern cl::opt<bool> FlagSfiStore;
 extern cl::opt<bool> FlagSfiBranch;
+extern cl::opt<bool> FlagSfiStack;
 // @LOCALMOD-END
 
 static MCAsmInfo *createMCAsmInfo(const Target &T, StringRef TT) {
@@ -156,6 +157,8 @@ bool ARMBaseTargetMachine::addPreEmitPass(PassManagerBase &PM,
     PM.add(createARMSFIPlacementPass());
   if (FlagSfiBranch)
     PM.add(createARMSFIBranchPass());
+  if (FlagSfiStack)
+    PM.add(createARMSFIStackPass());
   // @LOCALMOD-END
 
     return true;

@@ -409,7 +409,6 @@ static inline bool isMatchingDecrement(MachineInstr *MI, unsigned Base,
       MI->getOpcode() != ARM::t2SUBrSPi &&
       MI->getOpcode() != ARM::t2SUBrSPi12 &&
       MI->getOpcode() != ARM::tSUBspi &&
-      MI->getOpcode() != ARM::STACK_SUBri && // @LOCALMOD
       MI->getOpcode() != ARM::SUBri)
     return false;
 
@@ -436,7 +435,6 @@ static inline bool isMatchingIncrement(MachineInstr *MI, unsigned Base,
       MI->getOpcode() != ARM::t2ADDrSPi &&
       MI->getOpcode() != ARM::t2ADDrSPi12 &&
       MI->getOpcode() != ARM::tADDspi &&
-      MI->getOpcode() != ARM::STACK_ADDri && // @LOCALMOD
       MI->getOpcode() != ARM::ADDri)
     return false;
 

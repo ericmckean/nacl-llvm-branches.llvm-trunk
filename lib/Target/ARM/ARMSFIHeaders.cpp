@@ -186,69 +186,6 @@ void EmitSFIHeaders(raw_ostream &O) {
     NULL,
   };
 
-  if (FlagSfiStack) {
-
-    O << " @ ========================================\n";
-
-    O <<
-      "\t.macro sfi_add rega regb imm rot=0\n"
-      "\tsfi_nop_if_at_bundle_end\n"
-      "\tadd \\rega, \\regb, \\imm, \\rot\n"
-      "\tsfi_data_mask \\rega\n"
-      "\t.endm\n"
-      "\n\n";
-
-    for (int p=0; kPreds[p] != NULL; ++p) {
-      O <<
-        "\t.macro sfi_add" << kPreds[p] << " rega regb imm rot=0\n"
-        "\tsfi_nop_if_at_bundle_end\n"
-        "\tadd" << kPreds[p] << " \\rega, \\regb, \\imm, \\rot\n"
-        "\tsfi_data_mask \\rega, " << kPreds[p] << "\n"
-        "\t.endm\n"
-        "\n\n";
-    }
-
-    O << " @ ========================================\n";
-    O <<
-      "\t.macro sfi_sub rega regb imm rot=0\n"
-      "\tsfi_nop_if_at_bundle_end\n"
-      "\tsub \\rega, \\regb, \\imm, \\rot\n"
-      "\tsfi_data_mask \\rega\n"
-      "\t.endm\n"
-      "\n\n";
-
-    for (int p=0; kPreds[p] != NULL; ++ p) {
-      O <<
-        "\t.macro sfi_sub" << kPreds[p] << " rega regb imm rot=0\n"
-        "\tsfi_nop_if_at_bundle_end\n"
-        "\tsub" << kPreds[p] << " \\rega, \\regb, \\imm, \\rot\n"
-        "\tsfi_data_mask \\rega, " << kPreds[p] << "\n"
-        "\t.endm\n"
-        "\n\n";
-    }
-
-    O << " @ ========================================\n";
-
-    O <<
-      "\t.macro sfi_mov rega regb\n"
-      "\tsfi_nop_if_at_bundle_end\n"
-      "\tmov \\rega, \\regb\n"
-      "\tsfi_data_mask \\rega\n"
-      "\t.endm\n"
-      "\n\n";
-
-    for (int p=0; kPreds[p] != NULL; ++ p) {
-      O <<
-        "\t.macro mov_sub" << kPreds[p] << " rega regb imm rot=0\n"
-        "\tsfi_nop_if_at_bundle_end\n"
-        "\tmov" << kPreds[p] << " \\rega, \\regb, \\imm, \\rot\n"
-        "\tsfi_data_mask \\rega, " << kPreds[p] << "\n"
-        "\t.endm\n"
-        "\n\n";
-    }
-
-  } // FlagSfiStack
-  
   O << " @ ========================================\n";
   O << "\t.text\n";
 }
