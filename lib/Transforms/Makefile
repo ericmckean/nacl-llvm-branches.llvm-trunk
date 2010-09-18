@@ -10,7 +10,7 @@
 LEVEL = ../..
 PARALLEL_DIRS = Utils Instrumentation Scalar InstCombine IPO Hello
 
-ifdef SANDBOX_LLVM
+ifeq ($(SANDBOX_LLVM),1)
   PARALLEL_DIRS := $(filter-out Hello, $(PARALLEL_DIRS))
 endif
 

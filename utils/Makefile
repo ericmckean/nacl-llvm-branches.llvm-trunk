@@ -11,7 +11,7 @@ LEVEL = ..
 PARALLEL_DIRS := FileCheck FileUpdate TableGen PerfectShuffle \
 	      count fpcmp llvm-lit not unittest
 
-ifdef SANDBOX_LLVM
+ifeq ($(SANDBOX_LLVM),1)
   PARALLEL_DIRS := $(filter-out FileCheck FileUpdate PerfectShuffle \
                 count fpcmp llvm-lit not unittest, $(PARALLEL_DIRS))
 endif
