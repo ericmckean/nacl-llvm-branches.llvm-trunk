@@ -43,7 +43,7 @@ EXTRA_DIST := test unittests llvm.spec include win32 Xcode
 
 include $(LEVEL)/Makefile.config
 
-ifdef SANDBOX_LLVM
+ifeq ($(SANDBOX_LLVM),1)
   DIRS := $(filter-out tools/llvm-shlib runtime docs unittests, $(DIRS))
   OPTIONAL_DIRS :=
 endif
