@@ -83,12 +83,7 @@ X86TargetLowering::X86TargetLowering(X86TargetMachine &TM)
   X86ScalarSSEf64 = Subtarget->hasSSE2();
   X86ScalarSSEf32 = Subtarget->hasSSE1();
   // @LOCALMOD-START
-  if (Subtarget->is64Bit() && !Subtarget->isTargetNaCl()) {
-    X86StackPtr = X86::RSP;
-  } else { 
-    X86StackPtr = X86::ESP;
-  }
-  X86StackPtrTy = getPointerTy();
+  X86StackPtr = Subtarget->has64BitPointers() ? X86::RSP : X86::ESP;
   // @LOCALMOD-END
 
   RegInfo = TM.getRegisterInfo();
@@ -1751,8 +1746,8 @@ X86TargetLowering::LowerFormalArguments(SDValue Chain,
     unsigned Reg = FuncInfo->getSRetReturnReg();
     if (!Reg) {
       // @LOCALMOD
-      MVT sRetPtrTy = getPointerTy();
-      Reg = MF.getRegInfo().createVirtualRegister(getRegClassFor(sRetPtrTy));
+      Reg = MF.getRegInfo().createVirtualRegister(
+          getRegClassFor(getPointerTy()));
       FuncInfo->setSRetReturnReg(Reg);
     }
     SDValue Copy = DAG.getCopyToReg(DAG.getEntryNode(), dl, Reg, InVals[0]);
@@ -1885,10 +1880,8 @@ X86TargetLowering::LowerMemOpCallTo(SDValue Chain,
                                     ISD::ArgFlagsTy Flags) const {
   const unsigned FirstStackArgOffset = (Subtarget->isTargetWin64() ? 32 : 0);
   unsigned LocMemOffset = FirstStackArgOffset + VA.getLocMemOffset();
-  // LOCALMOD-START
-  SDValue PtrOff = DAG.getConstant(LocMemOffset, X86StackPtrTy, false);
-  PtrOff = DAG.getNode(ISD::ADD, dl, X86StackPtrTy, StackPtr, PtrOff);
-  // LOCALMOD-END
+  SDValue PtrOff = DAG.getIntPtrConstant(LocMemOffset);
+  PtrOff = DAG.getNode(ISD::ADD, dl, getPointerTy(), StackPtr, PtrOff);
   if (Flags.isByVal()) {
     return CreateCopyOfByValArgument(Arg, PtrOff, Chain, Flags, DAG, dl);
   }
@@ -2054,8 +2047,7 @@ X86TargetLowering::LowerCall(SDValue Chain, SDValue Callee,
     } else if (!IsSibcall && (!isTailCall || isByVal)) {
       assert(VA.isMemLoc());
       if (StackPtr.getNode() == 0)
-        // @LOCALMOD
-        StackPtr = DAG.getCopyFromReg(Chain, dl, X86StackPtr, X86StackPtrTy);
+        StackPtr = DAG.getCopyFromReg(Chain, dl, X86StackPtr, getPointerTy());
       MemOpChains.push_back(LowerMemOpCallTo(Chain, StackPtr, Arg,
                                              dl, DAG, VA, Flags));
     }
@@ -2162,11 +2154,10 @@ X86TargetLowering::LowerCall(SDValue Chain, SDValue Callee,
           // Copy relative to framepointer.
           SDValue Source = DAG.getIntPtrConstant(VA.getLocMemOffset());
           if (StackPtr.getNode() == 0)
-            // @LOCALMOD-START
             StackPtr = DAG.getCopyFromReg(Chain, dl, X86StackPtr,
-                                          X86StackPtrTy);
-          Source = DAG.getNode(ISD::ADD, dl, X86StackPtrTy, StackPtr, Source);
-          // @LOCALMOD-END
+                                          getPointerTy());
+          Source = DAG.getNode(ISD::ADD, dl, getPointerTy(), StackPtr, Source);
+
           MemOpChains2.push_back(CreateCopyOfByValArgument(Source, FIN,
                                                            ArgChain,
                                                            Flags, DAG, dl));
@@ -5541,10 +5532,10 @@ X86TargetLowering::LowerGlobalTLSAddress(SDValue Op, SelectionDAG &DAG) const {
     TLSModel::Model model 
       = getTLSModel(GV, getTargetMachine().getRelocationModel());
     
-  // @LOCAMOD-START
-  if (Subtarget->isTargetNaCl64())
-    return LowerToTLSNaClModel64(GA, DAG, getPointerTy());
-  // @LOCALMOD-END
+    // @LOCAMOD-START
+    if (Subtarget->isTargetNaCl64())
+      return LowerToTLSNaClModel64(GA, DAG, getPointerTy());
+    // @LOCALMOD-END
 
     switch (model) {
       case TLSModel::GeneralDynamic:
@@ -6324,8 +6315,9 @@ SDValue X86TargetLowering::EmitCmp(SDValue Op0, SDValue Op1, unsigned X86CC,
 /// if it's possible.
 SDValue X86TargetLowering::LowerToBT(SDValue And, ISD::CondCode CC,
                                      DebugLoc dl, SelectionDAG &DAG) const {
-  
-  return SDValue(); // @LOCALMOD disable bt usage for now
+   // @LOCALMOD: NaCl validator rejects BT, BTS, and BTC.
+  if (Subtarget->isTargetNaCl())
+    return SDValue();
   
   SDValue Op0 = And.getOperand(0);
   SDValue Op1 = And.getOperand(1);
@@ -6862,7 +6854,7 @@ X86TargetLowering::LowerDYNAMIC_STACKALLOC(SDValue Op,
   SDValue Flag;
 
   // LOCALMOD
-  EVT SPTy = X86StackPtrTy;
+  EVT SPTy = getPointerTy();
 
   Chain = DAG.getCopyToReg(Chain, dl, X86::EAX, Size, Flag);
   Flag = Chain.getValue(1);
@@ -9082,9 +9074,6 @@ X86TargetLowering::EmitVAStartSaveXMMRegsWithCustomInserter(
 
   return EndMBB;
 }
-
-
-
 
 MachineBasicBlock *
 X86TargetLowering::EmitLoweredSelect(MachineInstr *MI,

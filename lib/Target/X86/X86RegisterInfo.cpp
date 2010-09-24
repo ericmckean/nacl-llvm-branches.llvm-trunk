@@ -331,8 +331,7 @@ X86RegisterInfo::getMatchingSuperRegClass(const TargetRegisterClass *A,
 const TargetRegisterClass *
 X86RegisterInfo::getPointerRegClass(unsigned Kind) const {
   // @LOCALMOD-BEGIN
-  const X86Subtarget &Subtarget = TM.getSubtarget<X86Subtarget>();
-  bool isPTR64Bit = Subtarget.isPTR64Bit();
+  bool isPTR64Bit = TM.getSubtarget<X86Subtarget>().has64BitPointers();
   // @LOCALMOD-END
 
   switch (Kind) {
