@@ -25,7 +25,7 @@ namespace {
     static char ID;
     ARMSFIBranch() : MachineFunctionPass(ID) {}
 
-    const TargetInstrInfo *TII;
+    const ARMBaseInstrInfo *TII;
 
     virtual void getAnalysisUsage(AnalysisUsage &AU) const;
     virtual bool runOnMachineFunction(MachineFunction &Fn);
@@ -48,7 +48,7 @@ void ARMSFIBranch::getAnalysisUsage(AnalysisUsage &AU) const {
 }
 
 bool ARMSFIBranch::runOnMachineFunction(MachineFunction &MF) {
-  TII = MF.getTarget().getInstrInfo();
+  TII = static_cast<const ARMBaseInstrInfo*>(MF.getTarget().getInstrInfo());
 
   bool Modified = false;
   for (MachineFunction::iterator MFI = MF.begin(), E = MF.end();
@@ -64,15 +64,6 @@ static bool IsReturn(const MachineInstr &MI) {
 
    case ARM::BX_RET:
     return true;
-  }
-}
-
-static ARMCC::CondCodes GetPredicate(MachineInstr &MI) {
-  int PIdx = MI.findFirstPredOperandIdx();
-  if (PIdx != -1) {
-    return (ARMCC::CondCodes)MI.getOperand(PIdx).getImm();
-  } else {
-    return ARMCC::AL;
   }
 }
 
@@ -124,7 +115,7 @@ bool ARMSFIBranch::SandboxBranchesInBlock(MachineBasicBlock &MBB) {
     MachineInstr &MI = *MBBI;
 
     if (IsReturn(MI)) {
-      ARMCC::CondCodes Pred = GetPredicate(MI);
+      ARMCC::CondCodes Pred = TII->getPredicate(&MI);
       BuildMI(MBB, MBBI, MI.getDebugLoc(),
               TII->get(ARM::SFI_GUARD_RETURN))
         .addImm((int64_t) Pred)  // predicate condition
@@ -134,7 +125,7 @@ bool ARMSFIBranch::SandboxBranchesInBlock(MachineBasicBlock &MBB) {
 
     if (IsIndirectJump(MI)) {
       MachineOperand &Addr = MI.getOperand(0);
-      ARMCC::CondCodes Pred = GetPredicate(MI);
+      ARMCC::CondCodes Pred = TII->getPredicate(&MI);
       BuildMI(MBB, MBBI, MI.getDebugLoc(),
               TII->get(ARM::SFI_GUARD_INDIRECT_JMP))
         .addOperand(Addr)        // rD
@@ -145,7 +136,7 @@ bool ARMSFIBranch::SandboxBranchesInBlock(MachineBasicBlock &MBB) {
     }
 
     if (IsDirectCall(MI)) {
-      ARMCC::CondCodes Pred = GetPredicate(MI);
+      ARMCC::CondCodes Pred = TII->getPredicate(&MI);
       BuildMI(MBB, MBBI, MI.getDebugLoc(),
               TII->get(ARM::SFI_GUARD_CALL))
         .addImm((int64_t) Pred)  // predicate condition
@@ -155,7 +146,7 @@ bool ARMSFIBranch::SandboxBranchesInBlock(MachineBasicBlock &MBB) {
 
     if (IsIndirectCall(MI)) {
       MachineOperand &Addr = MI.getOperand(0);
-      ARMCC::CondCodes Pred = GetPredicate(MI);
+      ARMCC::CondCodes Pred = TII->getPredicate(&MI);
       BuildMI(MBB, MBBI, MI.getDebugLoc(),
               TII->get(ARM::SFI_GUARD_INDIRECT_CALL))
         .addOperand(Addr)        // rD

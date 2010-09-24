@@ -33,7 +33,6 @@ add_llvm_target(ARMCodeGen
   ARMMCInstLower.cpp
   ARMRegisterInfo.cpp
   ARMSelectionDAGInfo.cpp
-  ARMSFIBase.cpp
   ARMSFIBranch.cpp
   ARMSFIHeaders.cpp
   ARMSFIPlacement.cpp
