@@ -15,7 +15,6 @@
 #define DEBUG_TYPE "arm-sfi"
 #include "ARM.h"
 #include "ARMBaseInstrInfo.h"
-#include "ARMSFIBase.h"
 #include "ARMSFIStack.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
@@ -31,7 +30,7 @@ namespace {
     static char ID;
     ARMSFIStack() : MachineFunctionPass(ID) {}
 
-    const TargetInstrInfo *TII;
+    const ARMBaseInstrInfo *TII;
     const TargetRegisterInfo *TRI;
     virtual void getAnalysisUsage(AnalysisUsage &AU) const;
     virtual bool runOnMachineFunction(MachineFunction &Fn);
@@ -234,7 +233,7 @@ void ARMSFIStack::SandboxStackChange(MachineBasicBlock &MBB,
   MachineInstr &MI = *MBBI;
 
   // Use same predicate as current instruction.
-  ARMCC::CondCodes Pred = ARM_SFI::GetPredicate(MI);
+  ARMCC::CondCodes Pred = TII->getPredicate(&MI);
 
   BuildMI(MBB, MBBI, MI.getDebugLoc(),
           TII->get(ARM::SFI_NOP_IF_AT_BUNDLE_END));
@@ -256,7 +255,7 @@ void ARMSFIStack::SandboxStackChange(MachineBasicBlock &MBB,
 /**********************************************************************/
 
 bool ARMSFIStack::runOnMachineFunction(MachineFunction &MF) {
-  TII = MF.getTarget().getInstrInfo();
+  TII = static_cast<const ARMBaseInstrInfo*>(MF.getTarget().getInstrInfo());
   TRI = MF.getTarget().getRegisterInfo();
 
   bool Modified = false;

@@ -16,7 +16,6 @@
 #define DEBUG_TYPE "arm-sfi"
 #include "ARM.h"
 #include "ARMBaseInstrInfo.h"
-#include "ARMSFIBase.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/Support/CommandLine.h"
@@ -41,7 +40,7 @@ namespace {
     static char ID;
     ARMSFIPlacement() : MachineFunctionPass(ID) {}
 
-    const TargetInstrInfo *TII;
+    const ARMBaseInstrInfo *TII;
     const TargetRegisterInfo *TRI;
 
     virtual void getAnalysisUsage(AnalysisUsage &AU) const;
@@ -112,7 +111,7 @@ void ARMSFIPlacement::SandboxStore(MachineBasicBlock &MBB,
       .addReg(0);         // apparently unused source register?
   } else {
     // Use the older BIC sandbox, which is universal, but incurs a stall.
-    ARMCC::CondCodes Pred = ARM_SFI::GetPredicate(MI);
+    ARMCC::CondCodes Pred = TII->getPredicate(&MI);
     BuildMI(MBB, MBBI, MI.getDebugLoc(),
             TII->get(ARM::SFI_GUARD_STORE))
       .addOperand(Addr)        // rD
@@ -264,7 +263,7 @@ bool ARMSFIPlacement::SandboxStoresInBlock(MachineBasicBlock &MBB) {
 }
 
 bool ARMSFIPlacement::runOnMachineFunction(MachineFunction &MF) {
-  TII = MF.getTarget().getInstrInfo();
+  TII = static_cast<const ARMBaseInstrInfo*>(MF.getTarget().getInstrInfo());
   TRI = MF.getTarget().getRegisterInfo();
 
   bool Modified = false;

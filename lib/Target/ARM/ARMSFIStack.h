@@ -1,4 +1,4 @@
-//===-- ARMSFIBase.h - NaCl SFI Stack Pointer updates ---- --*- C++ -*-===//
+//===-- ARMSFIStack.h - NaCl SFI Stack Pointer updates ------- --*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
