@@ -628,8 +628,6 @@ namespace llvm {
 
     /// X86StackPtr - X86 physical register used as stack ptr.
     unsigned X86StackPtr;
-    // LOCALMOD
-    MVT X86StackPtrTy;
 
     /// X86ScalarSSEf32, X86ScalarSSEf64 - Select between SSE or x87 
     /// floating point ops.
