@@ -382,18 +382,12 @@ X86RegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
   };
 
   static const unsigned CalleeSavedRegs64Bit[] = {
-    X86::RBX, X86::R12, X86::R13, X86::R14,
-    // @LOCALMOD
-    // X86::R15,
-    X86::RBP, 0
+    X86::RBX, X86::R12, X86::R13, X86::R14, X86::R15, X86::RBP, 0
   };
 
   static const unsigned CalleeSavedRegs64EHRet[] = {
     X86::RAX, X86::RDX, X86::RBX, X86::R12,
-    X86::R13, X86::R14,
-    // @LOCALMOD
-    // X86::R15,
-    X86::RBP, 0
+    X86::R13, X86::R14, X86::R15, X86::RBP, 0
   };
 
   static const unsigned CalleeSavedRegsWin64[] = {
@@ -871,11 +865,10 @@ void X86RegisterInfo::emitCalleeSavedFrameMoves(MachineFunction &MF,
   bool HasFP = hasFP(MF);
 
   // Calculate amount of bytes used for return address storing.
-  int RASize = Is64Bit ? 8 : 4;  // @LOCALMOD
   int stackGrowth =
     (MF.getTarget().getFrameInfo()->getStackGrowthDirection() ==
      TargetFrameInfo::StackGrowsUp ?
-     RASize : -RASize);
+     SlotSize : -SlotSize);  // @LOCALMOD
 
   // FIXME: This is dirty hack. The code itself is pretty mess right now.
   // It should be rewritten from scratch and generalized sometimes.
