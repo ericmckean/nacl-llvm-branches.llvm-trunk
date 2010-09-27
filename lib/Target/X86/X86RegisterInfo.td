@@ -270,9 +270,7 @@ let Namespace = "X86" in {
 // cannot be encoded.
 def GR8 : RegisterClass<"X86", [i8],  8,
                         [AL, CL, DL, AH, CH, DH, BL, BH, SIL, DIL, BPL, SPL,
-// @LOCALMOD
-//                         R8B, R9B, R10B, R11B, R14B, R15B, R12B, R13B]> {
-                         R8B, R9B, R10B, R11B, R14B, R12B, R13B]> {
+                         R8B, R9B, R10B, R11B, R14B, R15B, R12B, R13B]> {
   let MethodProtos = [{
     iterator allocation_order_begin(const MachineFunction &MF) const;
     iterator allocation_order_end(const MachineFunction &MF) const;
@@ -281,9 +279,7 @@ def GR8 : RegisterClass<"X86", [i8],  8,
     static const unsigned X86_GR8_AO_64[] = {
       X86::AL,   X86::CL,   X86::DL,   X86::SIL, X86::DIL,
       X86::R8B,  X86::R9B,  X86::R10B, X86::R11B,
-// @LOCALMOD
-//      X86::BL,   X86::R14B, X86::R15B, X86::R12B, X86::R13B, X86::BPL
-      X86::BL,   X86::R14B, X86::R12B, X86::R13B, X86::BPL
+      X86::BL,   X86::R14B, X86::R15B, X86::R12B, X86::R13B, X86::BPL
     };
 
     GR8Class::iterator
@@ -318,8 +314,7 @@ def GR8 : RegisterClass<"X86", [i8],  8,
 
 def GR16 : RegisterClass<"X86", [i16], 16,
                          [AX, CX, DX, SI, DI, BX, BP, SP,
-                          // @LOCALMOD (removed R15W)
-                          R8W, R9W, R10W, R11W, R14W, R12W, R13W]> { 
+                          R8W, R9W, R10W, R11W, R14W, R15W, R12W, R13W]> {
   let SubRegClasses = [(GR8 sub_8bit, sub_8bit_hi)];
   let MethodProtos = [{
     iterator allocation_order_begin(const MachineFunction &MF) const;
@@ -329,9 +324,7 @@ def GR16 : RegisterClass<"X86", [i16], 16,
     static const unsigned X86_GR16_AO_64[] = {
       X86::AX,  X86::CX,   X86::DX,   X86::SI,   X86::DI,
       X86::R8W, X86::R9W,  X86::R10W, X86::R11W,
-// @LOCALMOD
-//      X86::BX, X86::R14W, X86::R15W,  X86::R12W, X86::R13W, X86::BP
-      X86::BX, X86::R14W,  X86::R12W, X86::R13W, X86::BP
+      X86::BX, X86::R14W, X86::R15W,  X86::R12W, X86::R13W, X86::BP
     };
 
     GR16Class::iterator
@@ -373,10 +366,8 @@ def GR16 : RegisterClass<"X86", [i16], 16,
 
 def GR32 : RegisterClass<"X86", [i32], 32,
                          [EAX, ECX, EDX, ESI, EDI, EBX, EBP, ESP,
-                          // @LOCALMOD (removed R15D)
-                          R8D, R9D, R10D, R11D, R14D, R12D, R13D]> {
+                          R8D, R9D, R10D, R11D, R14D, R15D, R12D, R13D]> {
   let SubRegClasses = [(GR8 sub_8bit, sub_8bit_hi), (GR16 sub_16bit)];
-
   let MethodProtos = [{
     iterator allocation_order_begin(const MachineFunction &MF) const;
     iterator allocation_order_end(const MachineFunction &MF) const;
@@ -385,9 +376,7 @@ def GR32 : RegisterClass<"X86", [i32], 32,
     static const unsigned X86_GR32_AO_64[] = {
       X86::EAX, X86::ECX,  X86::EDX,  X86::ESI,  X86::EDI,
       X86::R8D, X86::R9D,  X86::R10D, X86::R11D,
-// @LOCALMOD
-//      X86::EBX, X86::R14D, X86::R15D, X86::R12D, X86::R13D, X86::EBP
-      X86::EBX, X86::R14D, X86::R12D, X86::R13D, X86::EBP
+      X86::EBX, X86::R14D, X86::R15D, X86::R12D, X86::R13D, X86::EBP
     };
 
     GR32Class::iterator
@@ -426,14 +415,13 @@ def GR32 : RegisterClass<"X86", [i32], 32,
     }
   }];
 }
-    
+
 // GR64 - 64-bit GPRs. This oddly includes RIP, which isn't accurate, since
 // RIP isn't really a register and it can't be used anywhere except in an
 // address, but it doesn't cause trouble.
 def GR64 : RegisterClass<"X86", [i64], 64,
                          [RAX, RCX, RDX, RSI, RDI, R8, R9, R10, R11,
-// @LOCALMOD (removed R15)
-                          RBX, R14, R12, R13, RBP, RSP, RIP]> {
+                          RBX, R14, R15, R12, R13, RBP, RSP, RIP]> {
   let SubRegClasses = [(GR8 sub_8bit, sub_8bit_hi),
                        (GR16 sub_16bit),
                        (GR32 sub_32bit)];
@@ -625,10 +613,8 @@ def GR64_NOREX : RegisterClass<"X86", [i64], 64,
 // GR32_NOSP - GR32 registers except ESP.
 def GR32_NOSP : RegisterClass<"X86", [i32], 32,
                               [EAX, ECX, EDX, ESI, EDI, EBX, EBP,
-                               // @LOCALMOD (removed R15D)
-                               R8D, R9D, R10D, R11D, R14D, R12D, R13D]> {
+                               R8D, R9D, R10D, R11D, R14D, R15D, R12D, R13D]> {
   let SubRegClasses = [(GR8 sub_8bit, sub_8bit_hi), (GR16 sub_16bit)];
-
   let MethodProtos = [{
     iterator allocation_order_begin(const MachineFunction &MF) const;
     iterator allocation_order_end(const MachineFunction &MF) const;
@@ -637,9 +623,7 @@ def GR32_NOSP : RegisterClass<"X86", [i32], 32,
     static const unsigned X86_GR32_NOSP_AO_64[] = {
       X86::EAX, X86::ECX,  X86::EDX,  X86::ESI,  X86::EDI,
       X86::R8D, X86::R9D,  X86::R10D, X86::R11D,
-// @LOCALAMOD
-//      X86::EBX, X86::R14D, X86::R15D, X86::R12D, X86::R13D, X86::EBP
-      X86::EBX, X86::R14D, X86::R12D, X86::R13D, X86::EBP
+      X86::EBX, X86::R14D, X86::R15D, X86::R12D, X86::R13D, X86::EBP
     };
 
     GR32_NOSPClass::iterator
@@ -682,8 +666,7 @@ def GR32_NOSP : RegisterClass<"X86", [i32], 32,
 // GR64_NOSP - GR64 registers except RSP (and RIP).
 def GR64_NOSP : RegisterClass<"X86", [i64], 64,
                               [RAX, RCX, RDX, RSI, RDI, R8, R9, R10, R11,
-                               // @LOCALMOD (removed R15)
-                               RBX, R14, R12, R13, RBP]> {
+                               RBX, R14, R15, R12, R13, RBP]> {
   let SubRegClasses = [(GR8 sub_8bit, sub_8bit_hi),
                        (GR16 sub_16bit),
                        (GR32_NOSP sub_32bit)];

@@ -199,13 +199,6 @@ bool X86TargetMachine::addPostRegAlloc(PassManagerBase &PM,
   return true;  // -print-machineinstr should print after this.
 }
 
-// @LOCALMOD-START
-namespace llvm {
-extern FunctionPass* createX86NaClRewritePass();
-}
-// @LOCALMOD-END
-
-
 bool X86TargetMachine::addPreEmitPass(PassManagerBase &PM,
                                       CodeGenOpt::Level OptLevel) {
   bool Modified = false;
@@ -213,14 +206,14 @@ bool X86TargetMachine::addPreEmitPass(PassManagerBase &PM,
     PM.add(createSSEDomainFixPass());
     Modified = true;
   }
-  
+
   // @LOCALMOD-START
   if (Subtarget.isTargetNaCl()) {
     PM.add(createX86NaClRewritePass());
     Modified = true;
   }
   // @LOCALMOD-END
-  
+
   return Modified;
 }
 

@@ -1,4 +1,4 @@
-//===-- X86NaClRewritePAss.cpp - Rewrite Pseudo into instructions ---------*- C++ -*-=//
+//=== X86NaClRewritePAss.cpp - Rewrite instructions for NaCl SFI --*- C++ -*-=//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -7,10 +7,9 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file contains a pass that places mask instructions ahead of all stores.
-// This must be run as late in the game as possible -- after all scheduling and
-// constant island placement.  (This is set up in ARMTargetMachine.cpp.)
-//
+// This file contains a pass that ensures stores and loads and stack/frame
+// pointer addresses are within the NaCl sandbox (for x86-64).
+// It also ensures that indirect control flow follows NaCl requirments.
 //===----------------------------------------------------------------------===//
 #define DEBUG_TYPE "x86-sandboxing"
 
@@ -53,7 +52,7 @@ namespace {
                              const TargetInstrInfo* TII);
     bool PassSandboxingControlFlow(MachineBasicBlock &MBB,
                                    const TargetInstrInfo* TII);
-    bool PassSandboxingMassageLoadStore(MachineBasicBlock &MBB);
+    bool PassSandboxingLoadStore(MachineBasicBlock &MBB);
     bool PassSandboxingPopRbp(MachineBasicBlock &MBB,
                               const TargetInstrInfo* TII);
     void PassLightWeightValidator(MachineBasicBlock &MBB, bool is64bit);
@@ -73,58 +72,12 @@ bool X86NaClRewritePass::IsStackChange(MachineInstr &MI) {
          MI.modifiesRegister(X86::RSP, TRI);
 }
 
-
-// TODO(robertm): There may be better ways to figure out whether an
-// instruction is a store
 static bool IsStore(MachineInstr &MI) {
   return MI.getDesc().mayStore();
-#if 0
-  // NOTE: for reference, but incomplete
-  const unsigned Opcode = MI.getOpcode();
-  switch (Opcode) {
-   default:
-    return false;
-   case X86::MOV8mr:
-   case X86::MOV16mr:
-   case X86::MOV32mr:
-   case X86::MOV64mr:
-   case X86::ST_FpP64m:
-   case X86::MOVSSmr:
-   case X86::MOVSDmr:
-   case X86::MOVAPSmr:
-   case X86::MOVAPDmr:
-   case X86::MOVDQAmr:
-   case X86::MMX_MOVD64mr:
-   case X86::MMX_MOVQ64mr:
-   case X86::MMX_MOVNTQmr:
-    return true;
-  }
-#endif
 }
 
 static bool IsLoad(MachineInstr &MI) {
   return MI.getDesc().mayLoad();
-#if 0
-  // NOTE: for reference, but incomplete
-  const unsigned Opcode = MI.getOpcode();
-  switch (Opcode) {
-   default:
-    return false;
-   case X86::MOV8rm:
-   case X86::MOV16rm:
-   case X86::MOV32rm:
-   case X86::MOV64rm:
-   case X86::LD_Fp64m:
-   case X86::MOVSSrm:
-   case X86::MOVSDrm:
-   case X86::MOVAPSrm:
-   case X86::MOVAPDrm:
-   case X86::MOVDQArm:
-   case X86::MMX_MOVD64rm:
-   case X86::MMX_MOVQ64rm:
-    return true;
-  }
-#endif
 }
 
 static unsigned FindMemoryOperand(const MachineInstr &MI, bool &found) {
@@ -183,93 +136,7 @@ static bool IsPushPop(MachineInstr &MI) {
 }
 
 
-static bool is32BitReg(unsigned reg) {
-  return (X86::GR32RegClass.contains(reg));
-}
-
-static bool is64BitReg(unsigned reg) {
-  return (X86::GR64RegClass.contains(reg));
-}
-
-#define CASE(src, dst)  case X86:: src: return X86:: dst
-static unsigned Get32BitRegFor64BitReg(unsigned reg64) {
-  switch(reg64) {
-    default: {
-      if (is64BitReg(reg64)) {
-        dbgs() << "Missed 64bit reg case in Get32BitRegFor64BitReg: "
-               << reg64 << "\n";
-      } else if (is32BitReg(reg64)) {
-        DEBUG(dbgs() << "Get 32bit reg given 32bit reg\n");
-        return reg64;
-      } else {
-        dbgs() << "Get 32bit Reg for 64bit reg, not given 64bit reg "
-               << reg64 << "\n";
-      }
-      return 0;
-    }
-
-  case 0: return 0; // no reg actually specified.
-  CASE(RAX,EAX);
-  CASE(RDX,EDX);
-  CASE(RCX,ECX);
-  CASE(RBX,EBX);
-  CASE(RSI,ESI);
-  CASE(RDI,EDI);
-  CASE(RBP,EBP);
-  CASE(RSP,ESP);
-
-  CASE(R8 ,R8D);
-  CASE(R9 ,R9D);
-  CASE(R10,R10D);
-  CASE(R11,R11D);
-  CASE(R12,R12D);
-  CASE(R13,R13D);
-  CASE(R14,R14D);
-  CASE(R15,R15D);
-  CASE(RIP,EIP);
-  }
-}
-
-static unsigned Get64BitRegFor32BitReg(unsigned reg32) {
-  switch(reg32) {
-    default: {
-      if (is32BitReg(reg32)) {
-        dbgs() << "Missed 32bit reg case in Get64BitRegFor32BitReg: "
-               << reg32 << "\n";
-      } else if (is64BitReg(reg32)) {
-        DEBUG(dbgs() << "Get 64bit reg given 64bit reg\n");
-        return reg32;
-      } else {
-        dbgs() << "Get 64bit Reg for 32bit reg, not given 32bit reg "
-               << reg32 << "\n";
-      }
-      return 0;
-    }
-
-  case 0: return 0; // no reg actually specified.
-  CASE(EAX,RAX);
-  CASE(EDX,RDX);
-  CASE(ECX,RCX);
-  CASE(EBX,RBX);
-  CASE(ESI,RSI);
-  CASE(EDI,RDI);
-  CASE(EBP,RBP);
-  CASE(ESP,RSP);
-
-  CASE(R8D,R8);
-  CASE(R9D,R9);
-  CASE(R10D,R10);
-  CASE(R11D,R11);
-  CASE(R12D,R12);
-  CASE(R13D,R13);
-  CASE(R14D,R14);
-  CASE(R15D,R15);
-  CASE(EIP,RIP);
-  }
-}
-
-
-static bool IsIndirectControlFlowChange(MachineInstr &MI) {
+static bool IsUnsandboxedControlFlow(MachineInstr &MI) {
   const unsigned Opcode = MI.getOpcode();
   switch (Opcode) {
    default:
@@ -280,6 +147,7 @@ static bool IsIndirectControlFlowChange(MachineInstr &MI) {
 
    // Returns
    case X86::RET:
+   case X86::RETI:
     return true;
 
     // Indirect Jumps
@@ -299,7 +167,6 @@ static bool IsIndirectControlFlowChange(MachineInstr &MI) {
    case X86::FARJMP16m:
    case X86::FARJMP32m:
 
-   case X86::RETI:
    case X86::TCRETURNdi:
    case X86::TCRETURNri:
    case X86::TCRETURNmi:
@@ -384,7 +251,7 @@ void X86NaClRewritePass::PassLightWeightValidator(MachineBasicBlock &MBB,
           }
       }
 
-      if (IsIndirectControlFlowChange(MI)) {
+      if (IsUnsandboxedControlFlow(MI)) {
         // TODO(robertm): add proper test
         dbgs() << "@VALIDATOR: BAD 64-bit INDIRECT JUMP\n\n";
         DumpInstructionVerbose(MI);
@@ -551,7 +418,9 @@ static bool SandBoxMemoryOperand(MachineBasicBlock &MBB,
   MachineOperand &SegmentReg = MI.getOperand(Op + 4);
 
   // We need to make sure the index is using a 64-bit reg.
-  const unsigned reg64bit = Get64BitRegFor32BitReg(IndexReg.getReg());
+  const unsigned reg64bit = getX86SubSuperRegister(IndexReg.getReg(),
+                                                   MVT::i64,
+                                                   false);
   if (reg64bit) {
     IndexReg.setReg(reg64bit);
 
@@ -597,7 +466,7 @@ static bool SandBoxMemoryOperand(MachineBasicBlock &MBB,
 }
 
 
-bool X86NaClRewritePass::PassSandboxingMassageLoadStore(MachineBasicBlock &MBB) {
+bool X86NaClRewritePass::PassSandboxingLoadStore(MachineBasicBlock &MBB) {
   bool Modified = false;
 
   assert(Subtarget->isTargetNaCl64());
@@ -614,7 +483,7 @@ bool X86NaClRewritePass::PassSandboxingMassageLoadStore(MachineBasicBlock &MBB) 
       unsigned memOperand = FindMemoryOperand(MI, found);
       if (found) {
         if (SandBoxMemoryOperand(MBB, MBBI, memOperand)) {
-          DEBUG(dbgs() << "@PassSandboxingMassageLoadStore after massage op #"
+          DEBUG(dbgs() << "@PassSandboxingLoadStore after massage op #"
                 << memOperand << "\n");
           DEBUG(DumpInstructionVerbose(MI));
           Modified = true;
@@ -630,7 +499,7 @@ bool X86NaClRewritePass::PassSandboxingMassageLoadStore(MachineBasicBlock &MBB) 
       unsigned memOperand = FindMemoryOperand(MI, found);
       if (found) {
         if (SandBoxMemoryOperand(MBB, MBBI, memOperand)) {
-          DEBUG(dbgs() << "@PassSandboxingMassageLoadStore after massage op #"
+          DEBUG(dbgs() << "@PassSandboxingLoadStore after massage op #"
                 << memOperand << "\n");
           DEBUG(DumpInstructionVerbose(MI));
           Modified = true;
@@ -687,7 +556,7 @@ bool X86NaClRewritePass::PassSandboxingControlFlow(
 
     MachineInstr &MI = *MBBI;
 
-    if (!IsIndirectControlFlowChange(MI)) continue;
+    if (!IsUnsandboxedControlFlow(MI)) continue;
 
     const unsigned Opcode = MI.getOpcode();
     switch (Opcode) {
@@ -764,7 +633,9 @@ bool X86NaClRewritePass::PassSandboxingControlFlow(
 //     case X86::JMP64r:{
 //       MI.setDesc(TII->get(X86::NACL_JMP64r));
 //       const MachineOperand &IndexReg  = MI.getOperand(0);
-//       const unsigned reg32 = Get32BitRegFor64BitReg(IndexReg.getReg());
+//       const unsigned reg32 = getX86SubSuperRegister(IndexReg.getReg(),
+//                                                    MVT::i32,
+//                                                    false)
 //       assert (reg32 > 0);
 //       const_cast<MachineOperand&>(IndexReg).setReg(reg32);
 //       Modified = true;
@@ -776,7 +647,9 @@ bool X86NaClRewritePass::PassSandboxingControlFlow(
 #if 0
       MI.setDesc(TII->get(X86::NACL_CALL64r));
       const MachineOperand &IndexReg  = MI.getOperand(0);
-      const unsigned reg32 = Get32BitRegFor64BitReg(IndexReg.getReg());
+      const unsigned reg32 = getX86SubSuperRegister(IndexReg.getReg(),
+                                                    MVT::i32,
+                                                    false);
       assert (reg32 > 0);
       const_cast<MachineOperand&>(IndexReg).setReg(reg32);
       Modified = true;
@@ -814,7 +687,7 @@ bool X86NaClRewritePass::runOnMachineFunction(MachineFunction &MF) {
        ++MFI) {
     if (Subtarget->isTargetNaCl64()) {
       Modified |= PassSandboxingStack(*MFI, TII);
-      Modified |= PassSandboxingMassageLoadStore(*MFI);
+      Modified |= PassSandboxingLoadStore(*MFI);
       Modified |= PassSandboxingPopRbp(*MFI, TII);
     }
 
