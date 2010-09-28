@@ -13,6 +13,7 @@
 
 #include "llvm/MC/MCStreamer.h"
 
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/MC/MCAssembler.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCCodeEmitter.h"
@@ -34,16 +35,19 @@ using namespace llvm;
 namespace {
 
 class MCELFStreamer : public MCObjectStreamer {
+  void EmitInstToFragment(const MCInst &Inst);
+  void EmitInstToData(const MCInst &Inst);
 public:
   MCELFStreamer(MCContext &Context, TargetAsmBackend &TAB,
                   raw_ostream &OS, MCCodeEmitter *Emitter)
-    : MCObjectStreamer(Context, TAB, OS, Emitter) {}
+    : MCObjectStreamer(Context, TAB, OS, Emitter, false) {}
 
   ~MCELFStreamer() {}
 
   /// @name MCStreamer Interface
   /// @{
 
+  virtual void InitSections();
   virtual void EmitLabel(MCSymbol *Symbol);
   virtual void EmitAssemblerFlag(MCAssemblerFlag Flag);
   virtual void EmitAssignment(MCSymbol *Symbol, const MCExpr *Value);
@@ -106,25 +110,82 @@ public:
   virtual void EmitInstruction(const MCInst &Inst);
   virtual void Finish();
 
+private:
+  SmallPtrSet<MCSymbol *, 16> BindingExplicitlySet;
   /// @}
+  void SetSection(StringRef Section, unsigned Type, unsigned Flags,
+                  SectionKind Kind) {
+    SwitchSection(getContext().getELFSection(Section, Type, Flags, Kind));
+  }
+
+  void SetSectionData() {
+    SetSection(".data", MCSectionELF::SHT_PROGBITS,
+               MCSectionELF::SHF_WRITE |MCSectionELF::SHF_ALLOC,
+               SectionKind::getDataRel());
+    EmitCodeAlignment(4, 0);
+  }
+  void SetSectionText() {
+    SetSection(".text", MCSectionELF::SHT_PROGBITS,
+               MCSectionELF::SHF_EXECINSTR |
+               MCSectionELF::SHF_ALLOC, SectionKind::getText());
+    EmitCodeAlignment(4, 0);
+  }
+  void SetSectionBss() {
+    SetSection(".bss", MCSectionELF::SHT_NOBITS,
+               MCSectionELF::SHF_WRITE |
+               MCSectionELF::SHF_ALLOC, SectionKind::getBSS());
+    EmitCodeAlignment(4, 0);
+  }
 };
 
 } // end anonymous namespace.
 
+void MCELFStreamer::InitSections() {
+  // This emulates the same behavior of GNU as. This makes it easier
+  // to compare the output as the major sections are in the same order.
+  SetSectionText();
+  SetSectionData();
+  SetSectionBss();
+  SetSectionText();
+}
+
+static bool isSymbolLinkerVisible(const MCAssembler &Asm,
+                                  const MCSymbolData &Data) {
+  const MCSymbol &Symbol = Data.getSymbol();
+  // Absolute temporary labels are never visible.
+  if (!Symbol.isInSection())
+    return false;
+
+  if (Asm.getBackend().doesSectionRequireSymbols(Symbol.getSection()))
+    return true;
+
+  if (!Data.isExternal())
+    return false;
+
+  return Asm.isSymbolLinkerVisible(Symbol);
+}
+
 void MCELFStreamer::EmitLabel(MCSymbol *Symbol) {
   assert(Symbol->isUndefined() && "Cannot define a symbol twice!");
+
+  Symbol->setSection(*CurSection);
+
+  MCSymbolData &SD = getAssembler().getOrCreateSymbolData(*Symbol);
+
+  // We have to create a new fragment if this is an atom defining symbol,
+  // fragments cannot span atoms.
+  if (isSymbolLinkerVisible(getAssembler(), SD))
+    new MCDataFragment(getCurrentSectionData());
 
   // FIXME: This is wasteful, we don't necessarily need to create a data
   // fragment. Instead, we should mark the symbol as pointing into the data
   // fragment if it exists, otherwise we should just queue the label and set its
   // fragment pointer when we emit the next fragment.
   MCDataFragment *F = getOrCreateDataFragment();
-  MCSymbolData &SD = getAssembler().getOrCreateSymbolData(*Symbol);
+
   assert(!SD.getFragment() && "Unexpected fragment on symbol data!");
   SD.setFragment(F);
   SD.setOffset(F->getContents().size());
-
-  Symbol->setSection(*CurSection);
 }
 
 void MCELFStreamer::EmitAssemblerFlag(MCAssemblerFlag Flag) {
@@ -143,6 +204,38 @@ void MCELFStreamer::EmitAssignment(MCSymbol *Symbol, const MCExpr *Value) {
   // FIXME: Lift context changes into super class.
   getAssembler().getOrCreateSymbolData(*Symbol);
   Symbol->setVariableValue(AddValueSymbols(Value));
+}
+
+static void SetBinding(MCSymbolData &SD, unsigned Binding) {
+  assert(Binding == ELF::STB_LOCAL || Binding == ELF::STB_GLOBAL ||
+         Binding == ELF::STB_WEAK);
+  uint32_t OtherFlags = SD.getFlags() & ~(0xf << ELF_STB_Shift);
+  SD.setFlags(OtherFlags | (Binding << ELF_STB_Shift));
+}
+
+static unsigned GetBinding(const MCSymbolData &SD) {
+  uint32_t Binding = (SD.getFlags() & (0xf << ELF_STB_Shift)) >> ELF_STB_Shift;
+  assert(Binding == ELF::STB_LOCAL || Binding == ELF::STB_GLOBAL ||
+         Binding == ELF::STB_WEAK);
+  return Binding;
+}
+
+static void SetType(MCSymbolData &SD, unsigned Type) {
+  assert(Type == ELF::STT_NOTYPE || Type == ELF::STT_OBJECT ||
+         Type == ELF::STT_FUNC || Type == ELF::STT_SECTION ||
+         Type == ELF::STT_FILE || Type == ELF::STT_COMMON ||
+         Type == ELF::STT_TLS);
+
+  uint32_t OtherFlags = SD.getFlags() & ~(0xf << ELF_STT_Shift);
+  SD.setFlags(OtherFlags | (Type << ELF_STT_Shift));
+}
+
+static void SetVisibility(MCSymbolData &SD, unsigned Visibility) {
+  assert(Visibility == ELF::STV_DEFAULT || Visibility == ELF::STV_INTERNAL ||
+         Visibility == ELF::STV_HIDDEN || Visibility == ELF::STV_PROTECTED);
+
+  uint32_t OtherFlags = SD.getFlags() & ~(0xf << ELF_STV_Shift);
+  SD.setFlags(OtherFlags | (Visibility << ELF_STV_Shift));
 }
 
 void MCELFStreamer::EmitSymbolAttribute(MCSymbol *Symbol,
@@ -175,7 +268,6 @@ void MCELFStreamer::EmitSymbolAttribute(MCSymbol *Symbol,
   case MCSA_Reference:
   case MCSA_NoDeadStrip:
   case MCSA_PrivateExtern:
-  case MCSA_WeakReference:
   case MCSA_WeakDefinition:
   case MCSA_WeakDefAutoPrivate:
   case MCSA_Invalid:
@@ -185,48 +277,53 @@ void MCELFStreamer::EmitSymbolAttribute(MCSymbol *Symbol,
     break;
 
   case MCSA_Global:
-    SD.setFlags(SD.getFlags() | ELF_STB_Global);
+    SetBinding(SD, ELF::STB_GLOBAL);
     SD.setExternal(true);
+    BindingExplicitlySet.insert(Symbol);
     break;
 
+  case MCSA_WeakReference:
   case MCSA_Weak:
-    SD.setFlags(SD.getFlags() | ELF_STB_Weak);
+    SetBinding(SD, ELF::STB_WEAK);
+    BindingExplicitlySet.insert(Symbol);
     break;
 
   case MCSA_Local:
-    SD.setFlags(SD.getFlags() | ELF_STB_Local);
+    SetBinding(SD, ELF::STB_LOCAL);
+    SD.setExternal(false);
+    BindingExplicitlySet.insert(Symbol);
     break;
 
   case MCSA_ELF_TypeFunction:
-    SD.setFlags(SD.getFlags() | ELF_STT_Func);
+    SetType(SD, ELF::STT_FUNC);
     break;
 
   case MCSA_ELF_TypeObject:
-    SD.setFlags(SD.getFlags() | ELF_STT_Object);
+    SetType(SD, ELF::STT_OBJECT);
     break;
 
   case MCSA_ELF_TypeTLS:
-    SD.setFlags(SD.getFlags() | ELF_STT_Tls);
+    SetType(SD, ELF::STT_TLS);
     break;
 
   case MCSA_ELF_TypeCommon:
-    SD.setFlags(SD.getFlags() | ELF_STT_Common);
+    SetType(SD, ELF::STT_COMMON);
     break;
 
   case MCSA_ELF_TypeNoType:
-    SD.setFlags(SD.getFlags() | ELF_STT_Notype);
+    SetType(SD, ELF::STT_NOTYPE);
     break;
 
   case MCSA_Protected:
-    SD.setFlags(SD.getFlags() | ELF_STV_Protected);
+    SetVisibility(SD, ELF::STV_PROTECTED);
     break;
 
   case MCSA_Hidden:
-    SD.setFlags(SD.getFlags() | ELF_STV_Hidden);
+    SetVisibility(SD, ELF::STV_HIDDEN);
     break;
 
   case MCSA_Internal:
-    SD.setFlags(SD.getFlags() | ELF_STV_Internal);
+    SetVisibility(SD, ELF::STV_INTERNAL);
     break;
   }
 }
@@ -235,7 +332,12 @@ void MCELFStreamer::EmitCommonSymbol(MCSymbol *Symbol, uint64_t Size,
                                        unsigned ByteAlignment) {
   MCSymbolData &SD = getAssembler().getOrCreateSymbolData(*Symbol);
 
-  if ((SD.getFlags() & (0xf << ELF_STB_Shift)) == ELF_STB_Local) {
+  if (!BindingExplicitlySet.count(Symbol)) {
+    SetBinding(SD, ELF::STB_GLOBAL);
+    SD.setExternal(true);
+  }
+
+  if (GetBinding(SD) == ELF_STB_Local) {
     const MCSection *Section = getAssembler().getContext().getELFSection(".bss",
                                                                     MCSectionELF::SHT_NOBITS,
                                                                     MCSectionELF::SHF_WRITE |
@@ -243,15 +345,20 @@ void MCELFStreamer::EmitCommonSymbol(MCSymbol *Symbol, uint64_t Size,
                                                                     SectionKind::getBSS());
 
     MCSectionData &SectData = getAssembler().getOrCreateSectionData(*Section);
+    new MCAlignFragment(ByteAlignment, 0, 1, ByteAlignment, &SectData);
+
     MCFragment *F = new MCFillFragment(0, 0, Size, &SectData);
     SD.setFragment(F);
     Symbol->setSection(*Section);
-    SD.setSize(MCConstantExpr::Create(Size, getContext()));
+
+    // Update the maximum alignment of the section if necessary.
+    if (ByteAlignment > SectData.getAlignment())
+      SectData.setAlignment(ByteAlignment);
   } else {
-    SD.setExternal(true);
+    SD.setCommon(Size, ByteAlignment);
   }
 
-  SD.setCommon(Size, ByteAlignment);
+  SD.setSize(MCConstantExpr::Create(Size, getContext()));
 }
 
 void MCELFStreamer::EmitBytes(StringRef Data, unsigned AddrSpace) {
@@ -328,6 +435,40 @@ void MCELFStreamer::EmitFileDirective(StringRef Filename) {
   SD.setFlags(ELF_STT_File | ELF_STB_Local | ELF_STV_Default);
 }
 
+void MCELFStreamer::EmitInstToFragment(const MCInst &Inst) {
+  MCInstFragment *IF = new MCInstFragment(Inst, getCurrentSectionData());
+
+  // Add the fixups and data.
+  //
+  // FIXME: Revisit this design decision when relaxation is done, we may be
+  // able to get away with not storing any extra data in the MCInst.
+  SmallVector<MCFixup, 4> Fixups;
+  SmallString<256> Code;
+  raw_svector_ostream VecOS(Code);
+  getAssembler().getEmitter().EncodeInstruction(Inst, VecOS, Fixups);
+  VecOS.flush();
+
+  IF->getCode() = Code;
+  IF->getFixups() = Fixups;
+}
+
+void MCELFStreamer::EmitInstToData(const MCInst &Inst) {
+  MCDataFragment *DF = getOrCreateDataFragment();
+
+  SmallVector<MCFixup, 4> Fixups;
+  SmallString<256> Code;
+  raw_svector_ostream VecOS(Code);
+  getAssembler().getEmitter().EncodeInstruction(Inst, VecOS, Fixups);
+  VecOS.flush();
+
+  // Add the fixups and data.
+  for (unsigned i = 0, e = Fixups.size(); i != e; ++i) {
+    Fixups[i].setOffset(Fixups[i].getOffset() + DF->getContents().size());
+    DF->addFixup(Fixups[i]);
+  }
+  DF->getContents().append(Code.begin(), Code.end());
+}
+
 void MCELFStreamer::EmitInstruction(const MCInst &Inst) {
   // Scan for values.
   for (unsigned i = 0; i != Inst.getNumOperands(); ++i)
@@ -336,60 +477,59 @@ void MCELFStreamer::EmitInstruction(const MCInst &Inst) {
 
   getCurrentSectionData()->setHasInstructions(true);
 
-  // FIXME-PERF: Common case is that we don't need to relax, encode directly
-  // onto the data fragments buffers.
-
-  SmallVector<MCFixup, 4> Fixups;
-  SmallString<256> Code;
-  raw_svector_ostream VecOS(Code);
-  getAssembler().getEmitter().EncodeInstruction(Inst, VecOS, Fixups);
-  VecOS.flush();
-
-  // FIXME: Eliminate this copy.
-  SmallVector<MCFixup, 4> AsmFixups;
-  for (unsigned i = 0, e = Fixups.size(); i != e; ++i) {
-    MCFixup &F = Fixups[i];
-    AsmFixups.push_back(MCFixup::Create(F.getOffset(), F.getValue(),
-                                        F.getKind()));
-  }
-
-  // See if we might need to relax this instruction, if so it needs its own
-  // fragment.
-  //
-  // FIXME-PERF: Support target hook to do a fast path that avoids the encoder,
-  // when we can immediately tell that we will get something which might need
-  // relaxation (and compute its size).
-  //
-  // FIXME-PERF: We should also be smart about immediately relaxing instructions
-  // which we can already show will never possibly fit (we can also do a very
-  // good job of this before we do the first relaxation pass, because we have
-  // total knowledge about undefined symbols at that point). Even now, though,
-  // we can do a decent job, especially on Darwin where scattering means that we
-  // are going to often know that we can never fully resolve a fixup.
-  if (getAssembler().getBackend().MayNeedRelaxation(Inst)) {
-    MCInstFragment *IF = new MCInstFragment(Inst, getCurrentSectionData());
-
-    // Add the fixups and data.
-    //
-    // FIXME: Revisit this design decision when relaxation is done, we may be
-    // able to get away with not storing any extra data in the MCInst.
-    IF->getCode() = Code;
-    IF->getFixups() = AsmFixups;
-
+  // If this instruction doesn't need relaxation, just emit it as data.
+  if (!getAssembler().getBackend().MayNeedRelaxation(Inst)) {
+    EmitInstToData(Inst);
     return;
   }
 
-  // Add the fixups and data.
-  MCDataFragment *DF = getOrCreateDataFragment();
-  for (unsigned i = 0, e = AsmFixups.size(); i != e; ++i) {
-    AsmFixups[i].setOffset(AsmFixups[i].getOffset() + DF->getContents().size());
-    DF->addFixup(AsmFixups[i]);
+  // Otherwise, if we are relaxing everything, relax the instruction as much as
+  // possible and emit it as data.
+  if (getAssembler().getRelaxAll()) {
+    MCInst Relaxed;
+    getAssembler().getBackend().RelaxInstruction(Inst, Relaxed);
+    while (getAssembler().getBackend().MayNeedRelaxation(Relaxed))
+      getAssembler().getBackend().RelaxInstruction(Relaxed, Relaxed);
+    EmitInstToData(Relaxed);
+    return;
   }
-  DF->getContents().append(Code.begin(), Code.end());
+
+  // Otherwise emit to a separate fragment.
+  EmitInstToFragment(Inst);
 }
 
 void MCELFStreamer::Finish() {
-  getAssembler().Finish();
+  // FIXME: We create more atoms than it is necessary. Some relocations to
+  // merge sections can be implemented with section address + offset,
+  // figure out which ones and why.
+
+  // First, scan the symbol table to build a lookup table from fragments to
+  // defining symbols.
+  DenseMap<const MCFragment*, MCSymbolData*> DefiningSymbolMap;
+  for (MCAssembler::symbol_iterator it = getAssembler().symbol_begin(),
+         ie = getAssembler().symbol_end(); it != ie; ++it) {
+    if (isSymbolLinkerVisible(getAssembler(), *it) &&
+        it->getFragment()) {
+      // An atom defining symbol should never be internal to a fragment.
+      assert(it->getOffset() == 0 && "Invalid offset in atom defining symbol!");
+      DefiningSymbolMap[it->getFragment()] = it;
+    }
+  }
+
+  // Set the fragment atom associations by tracking the last seen atom defining
+  // symbol.
+  for (MCAssembler::iterator it = getAssembler().begin(),
+         ie = getAssembler().end(); it != ie; ++it) {
+    MCSymbolData *CurrentAtom = 0;
+    for (MCSectionData::iterator it2 = it->begin(),
+           ie2 = it->end(); it2 != ie2; ++it2) {
+      if (MCSymbolData *SD = DefiningSymbolMap.lookup(it2))
+        CurrentAtom = SD;
+      it2->setAtom(CurrentAtom);
+    }
+  }
+
+  this->MCObjectStreamer::Finish();
 }
 
 MCStreamer *llvm::createELFStreamer(MCContext &Context, TargetAsmBackend &TAB,

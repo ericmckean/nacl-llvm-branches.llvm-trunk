@@ -388,7 +388,6 @@ DwarfDebug::DwarfDebug(AsmPrinter *A, Module *M)
   DwarfFrameSectionSym = DwarfInfoSectionSym = DwarfAbbrevSectionSym = 0;
   DwarfStrSectionSym = TextSectionSym = 0;
   DwarfDebugRangeSectionSym = DwarfDebugLocSectionSym = 0;
-  DwarfDebugLineSectionSym = CurrentLineSectionSym = 0;
   FunctionBeginSym = FunctionEndSym = 0;
   DIEIntegerOne = new (DIEValueAllocator) DIEInteger(1);
   {
@@ -584,10 +583,15 @@ void DwarfDebug::addSourceLine(DIE *Die, DINameSpace NS) {
   addUInt(Die, dwarf::DW_AT_decl_line, 0, Line);
 }
 
-/// addVariableAddress - Add DW_AT_location attribute for a DbgVariable.
-void DwarfDebug::addVariableAddress(DbgVariable *&DV, DIE *Die,
-                                    unsigned Attribute,
-                                    const MachineLocation &Location) {
+/// addVariableAddress - Add DW_AT_location attribute for a DbgVariable based
+/// on provided frame index.
+void DwarfDebug::addVariableAddress(DbgVariable *&DV, DIE *Die, int64_t FI) {
+  MachineLocation Location;
+  unsigned FrameReg;
+  const TargetRegisterInfo *RI = Asm->TM.getRegisterInfo();
+  int Offset = RI->getFrameIndexReference(*Asm->MF, FI, FrameReg);
+  Location.set(FrameReg, Offset);
+
   if (DV->variableHasComplexAddress())
     addComplexAddress(DV, Die, dwarf::DW_AT_location, Location);
   else if (DV->isBlockByrefVariable())
@@ -807,6 +811,16 @@ void DwarfDebug::addAddress(DIE *Die, unsigned Attribute,
   const TargetRegisterInfo *RI = Asm->TM.getRegisterInfo();
   unsigned Reg = RI->getDwarfRegNum(Location.getReg(), false);
   DIEBlock *Block = new (DIEValueAllocator) DIEBlock();
+  const TargetRegisterInfo *TRI = Asm->TM.getRegisterInfo();
+
+  if (TRI->getFrameRegister(*Asm->MF) == Location.getReg()
+      && Location.getOffset()) {
+    // If variable offset is based in frame register then use fbreg.
+    addUInt(Block, 0, dwarf::DW_FORM_data1, dwarf::DW_OP_fbreg);
+    addSInt(Block, 0, dwarf::DW_FORM_sdata, Location.getOffset());
+    addBlock(Die, Attribute, 0, Block);
+    return;
+  }
 
   if (Location.isReg()) {
     if (Reg < 32) {
@@ -1625,9 +1639,16 @@ DIE *DwarfDebug::constructVariableDIE(DbgVariable *DV, DbgScope *Scope) {
     bool updated = false;
     // FIXME : Handle getNumOperands != 3
     if (DVInsn->getNumOperands() == 3) {
-      if (DVInsn->getOperand(0).isReg())
-        updated =
-          addRegisterAddress(VariableDie, DVLabel, DVInsn->getOperand(0));
+      if (DVInsn->getOperand(0).isReg()) {
+        const MachineOperand RegOp = DVInsn->getOperand(0);
+        const TargetRegisterInfo *TRI = Asm->TM.getRegisterInfo();
+        if (DVInsn->getOperand(1).isImm() &&
+            TRI->getFrameRegister(*Asm->MF) == RegOp.getReg()) {
+          addVariableAddress(DV, VariableDie, DVInsn->getOperand(1).getImm());
+          updated = true;
+        } else
+          updated = addRegisterAddress(VariableDie, DVLabel, RegOp);
+      }
       else if (DVInsn->getOperand(0).isImm())
         updated = addConstantValue(VariableDie, DVLabel, DVInsn->getOperand(0));
       else if (DVInsn->getOperand(0).isFPImm())
@@ -1654,15 +1675,10 @@ DIE *DwarfDebug::constructVariableDIE(DbgVariable *DV, DbgScope *Scope) {
   }
 
   // .. else use frame index, if available.
-  MachineLocation Location;
-  unsigned FrameReg;
-  const TargetRegisterInfo *RI = Asm->TM.getRegisterInfo();
   int FI = 0;
-  if (findVariableFrameIndex(DV, &FI)) {
-    int Offset = RI->getFrameIndexReference(*Asm->MF, FI, FrameReg);
-    Location.set(FrameReg, Offset);
-    addVariableAddress(DV, VariableDie, dwarf::DW_AT_location, Location);
-  }
+  if (findVariableFrameIndex(DV, &FI))
+    addVariableAddress(DV, VariableDie, FI);
+  
   DV->setDIE(VariableDie);
   return VariableDie;
 
@@ -1744,6 +1760,10 @@ unsigned DwarfDebug::GetOrCreateSourceID(StringRef DirName, StringRef FileName){
   unsigned DId;
   assert (DirName.empty() == false && "Invalid directory name!");
 
+  // If FE did not provide a file name, then assume stdin.
+  if (FileName.empty())
+    return GetOrCreateSourceID(DirName, "<stdin>");
+
   StringMap<unsigned>::iterator DI = DirectoryIdMap.find(DirName);
   if (DI != DirectoryIdMap.end()) {
     DId = DI->getValue();
@@ -1808,9 +1828,12 @@ void DwarfDebug::constructCompileUnit(const MDNode *N) {
   // simplifies debug range entries.
   addUInt(Die, dwarf::DW_AT_entry_pc, dwarf::DW_FORM_addr, 0);
   // DW_AT_stmt_list is a offset of line number information for this
-  // compile unit in debug_line section. This offset is calculated
-  // during endMoudle().
-  addLabel(Die, dwarf::DW_AT_stmt_list, dwarf::DW_FORM_data4, 0);
+  // compile unit in debug_line section.
+  if (Asm->MAI->doesDwarfUsesAbsoluteLabelForStmtList())
+    addLabel(Die, dwarf::DW_AT_stmt_list, dwarf::DW_FORM_addr,
+             Asm->GetTempSymbol("section_line"));
+  else
+    addUInt(Die, dwarf::DW_AT_stmt_list, dwarf::DW_FORM_data4, 0);
 
   if (!Dir.empty())
     addString(Die, dwarf::DW_AT_comp_dir, dwarf::DW_FORM_string, Dir);
@@ -1861,6 +1884,21 @@ CompileUnit *DwarfDebug::getCompileUnit(const MDNode *N) const {
   return I->second;
 }
 
+/// isUnsignedDIType - Return true if type encoding is unsigned.
+static bool isUnsignedDIType(DIType Ty) {
+  DIDerivedType DTy(Ty);
+  if (DTy.Verify())
+    return isUnsignedDIType(DTy.getTypeDerivedFrom());
+
+  DIBasicType BTy(Ty);
+  if (BTy.Verify()) {
+    unsigned Encoding = BTy.getEncoding();
+    if (Encoding == dwarf::DW_ATE_unsigned ||
+        Encoding == dwarf::DW_ATE_unsigned_char)
+      return true;
+  }
+  return false;
+}
 
 /// constructGlobalVariableDIE - Construct global variable DIE.
 void DwarfDebug::constructGlobalVariableDIE(const MDNode *N) {
@@ -1930,17 +1968,12 @@ void DwarfDebug::constructGlobalVariableDIE(const MDNode *N) {
     } 
   } else if (Constant *C = GV.getConstant()) {
     if (ConstantInt *CI = dyn_cast<ConstantInt>(C)) {
-      DIBasicType BTy(GTy);
-      if (BTy.Verify()) {
-        unsigned Encoding = BTy.getEncoding();
-        if (Encoding == dwarf::DW_ATE_unsigned ||
-            Encoding == dwarf::DW_ATE_unsigned_char)
+      if (isUnsignedDIType(GTy))
           addUInt(VariableDIE, dwarf::DW_AT_const_value, dwarf::DW_FORM_udata,
                   CI->getZExtValue());
         else
           addSInt(VariableDIE, dwarf::DW_AT_const_value, dwarf::DW_FORM_sdata,
                  CI->getSExtValue());
-      }
     }
   }
   return;
@@ -2127,14 +2160,14 @@ void DwarfDebug::endModule() {
   // Compute DIE offsets and sizes.
   computeSizeAndOffsets();
 
-  // Emit source line correspondence into a debug line section.
-  emitDebugLines();
-
   // Emit all the DIEs into a debug info section
   emitDebugInfo();
 
   // Corresponding abbreviations into a abbrev section.
   emitAbbreviations();
+
+  // Emit source line correspondence into a debug line section.
+  emitDebugLines();
 
   // Emit info into a debug pubnames section.
   emitDebugPubNames();
@@ -3054,8 +3087,7 @@ void DwarfDebug::EmitSectionLabels() {
   if (const MCSection *MacroInfo = TLOF.getDwarfMacroInfoSection())
     EmitSectionSym(Asm, MacroInfo);
 
-  DwarfDebugLineSectionSym =
-    EmitSectionSym(Asm, TLOF.getDwarfLineSection(), "section_line");
+  EmitSectionSym(Asm, TLOF.getDwarfLineSection(), "section_line");
   EmitSectionSym(Asm, TLOF.getDwarfLocSection());
   EmitSectionSym(Asm, TLOF.getDwarfPubNamesSection());
   EmitSectionSym(Asm, TLOF.getDwarfPubTypesSection());
@@ -3112,15 +3144,17 @@ void DwarfDebug::emitDIE(DIE *Die) {
     case dwarf::DW_AT_ranges: {
       // DW_AT_range Value encodes offset in debug_range section.
       DIEInteger *V = cast<DIEInteger>(Values[i]);
-      Asm->EmitLabelOffsetDifference(DwarfDebugRangeSectionSym,
-                                     V->getValue(),
-                                     DwarfDebugRangeSectionSym,
-                                     4);
-      break;
-    }
-    case dwarf::DW_AT_stmt_list: {
-      Asm->EmitLabelDifference(CurrentLineSectionSym,
-                               DwarfDebugLineSectionSym, 4);
+
+      if (Asm->MAI->doesDwarfUsesLabelOffsetForRanges()) {
+        Asm->EmitLabelPlusOffset(DwarfDebugRangeSectionSym,
+                                 V->getValue(),
+                                 4);
+      } else {
+        Asm->EmitLabelOffsetDifference(DwarfDebugRangeSectionSym,
+                                       V->getValue(),
+                                       DwarfDebugRangeSectionSym,
+                                       4);
+      }
       break;
     }
     case dwarf::DW_AT_location: {
@@ -3268,8 +3302,6 @@ void DwarfDebug::emitDebugLines() {
                             Asm->getObjFileLowering().getDwarfLineSection());
 
   // Construct the section header.
-  CurrentLineSectionSym = Asm->GetTempSymbol("section_line_begin");
-  Asm->OutStreamer.EmitLabel(CurrentLineSectionSym);
   Asm->OutStreamer.AddComment("Length of Source Line Info");
   Asm->EmitLabelDifference(Asm->GetTempSymbol("line_end"),
                            Asm->GetTempSymbol("line_begin"), 4);

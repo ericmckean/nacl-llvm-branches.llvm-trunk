@@ -156,8 +156,6 @@ LLVMTypeKind LLVMGetTypeKind(LLVMTypeRef Ty) {
     return LLVMFunctionTypeKind;
   case Type::StructTyID:
     return LLVMStructTypeKind;
-  case Type::UnionTyID:
-    return LLVMUnionTypeKind;
   case Type::ArrayTyID:
     return LLVMArrayTypeKind;
   case Type::PointerTyID:
@@ -166,6 +164,8 @@ LLVMTypeKind LLVMGetTypeKind(LLVMTypeRef Ty) {
     return LLVMOpaqueTypeKind;
   case Type::VectorTyID:
     return LLVMVectorTypeKind;
+  case Type::X86_MMXTyID:
+    return LLVMX86_MMXTypeKind;
   }
 }
 
@@ -234,6 +234,9 @@ LLVMTypeRef LLVMFP128TypeInContext(LLVMContextRef C) {
 LLVMTypeRef LLVMPPCFP128TypeInContext(LLVMContextRef C) {
   return (LLVMTypeRef) Type::getPPC_FP128Ty(*unwrap(C));
 }
+LLVMTypeRef LLVMX86MMXTypeInContext(LLVMContextRef C) {
+  return (LLVMTypeRef) Type::getX86_MMXTy(*unwrap(C));
+}
 
 LLVMTypeRef LLVMFloatType(void) {
   return LLVMFloatTypeInContext(LLVMGetGlobalContext());
@@ -249,6 +252,9 @@ LLVMTypeRef LLVMFP128Type(void) {
 }
 LLVMTypeRef LLVMPPCFP128Type(void) {
   return LLVMPPCFP128TypeInContext(LLVMGetGlobalContext());
+}
+LLVMTypeRef LLVMX86MMXType(void) {
+  return LLVMX86MMXTypeInContext(LLVMGetGlobalContext());
 }
 
 /*--.. Operations on function types ........................................--*/
@@ -314,34 +320,6 @@ void LLVMGetStructElementTypes(LLVMTypeRef StructTy, LLVMTypeRef *Dest) {
 
 LLVMBool LLVMIsPackedStruct(LLVMTypeRef StructTy) {
   return unwrap<StructType>(StructTy)->isPacked();
-}
-
-/*--.. Operations on union types ..........................................--*/
-
-LLVMTypeRef LLVMUnionTypeInContext(LLVMContextRef C, LLVMTypeRef *ElementTypes,
-                                   unsigned ElementCount) {
-  SmallVector<const Type*, 8> Tys;
-  for (LLVMTypeRef *I = ElementTypes,
-                   *E = ElementTypes + ElementCount; I != E; ++I)
-    Tys.push_back(unwrap(*I));
-  
-  return wrap(UnionType::get(&Tys[0], Tys.size()));
-}
-
-LLVMTypeRef LLVMUnionType(LLVMTypeRef *ElementTypes, unsigned ElementCount) {
-  return LLVMUnionTypeInContext(LLVMGetGlobalContext(), ElementTypes,
-                                ElementCount);
-}
-
-unsigned LLVMCountUnionElementTypes(LLVMTypeRef UnionTy) {
-  return unwrap<UnionType>(UnionTy)->getNumElements();
-}
-
-void LLVMGetUnionElementTypes(LLVMTypeRef UnionTy, LLVMTypeRef *Dest) {
-  UnionType *Ty = unwrap<UnionType>(UnionTy);
-  for (FunctionType::param_iterator I = Ty->element_begin(),
-                                    E = Ty->element_end(); I != E; ++I)
-    *Dest++ = wrap(*I);
 }
 
 /*--.. Operations on array, pointer, and vector types (sequence types) .....--*/
@@ -489,6 +467,14 @@ LLVMValueRef LLVMGetOperand(LLVMValueRef Val, unsigned Index) {
   return wrap(unwrap<User>(Val)->getOperand(Index));
 }
 
+void LLVMSetOperand(LLVMValueRef Val, unsigned Index, LLVMValueRef Op) {
+  unwrap<User>(Val)->setOperand(Index, unwrap(Op));
+}
+
+int LLVMGetNumOperands(LLVMValueRef Val) {
+  return unwrap<User>(Val)->getNumOperands();
+}
+
 /*--.. Operations on constants of any type .................................--*/
 
 LLVMValueRef LLVMConstNull(LLVMTypeRef Ty) {
@@ -620,10 +606,6 @@ LLVMValueRef LLVMConstVector(LLVMValueRef *ScalarConstantVals, unsigned Size) {
   return wrap(ConstantVector::get(
                             unwrap<Constant>(ScalarConstantVals, Size), Size));
 }
-LLVMValueRef LLVMConstUnion(LLVMTypeRef Ty, LLVMValueRef Val) {
-  return wrap(ConstantUnion::get(unwrap<UnionType>(Ty), unwrap<Constant>(Val)));
-}
-
 /*--.. Constant expressions ................................................--*/
 
 LLVMOpcode LLVMGetConstOpcode(LLVMValueRef ConstantVal) {
@@ -1061,6 +1043,8 @@ LLVMLinkage LLVMGetLinkage(LLVMValueRef Global) {
     return LLVMLinkerPrivateLinkage;
   case GlobalValue::LinkerPrivateWeakLinkage:
     return LLVMLinkerPrivateWeakLinkage;
+  case GlobalValue::LinkerPrivateWeakDefAutoLinkage:
+    return LLVMLinkerPrivateWeakDefAutoLinkage;
   case GlobalValue::DLLImportLinkage:
     return LLVMDLLImportLinkage;
   case GlobalValue::DLLExportLinkage:
@@ -1113,6 +1097,9 @@ void LLVMSetLinkage(LLVMValueRef Global, LLVMLinkage Linkage) {
     break;
   case LLVMLinkerPrivateWeakLinkage:
     GV->setLinkage(GlobalValue::LinkerPrivateWeakLinkage);
+    break;
+  case LLVMLinkerPrivateWeakDefAutoLinkage:
+    GV->setLinkage(GlobalValue::LinkerPrivateWeakDefAutoLinkage);
     break;
   case LLVMDLLImportLinkage:
     GV->setLinkage(GlobalValue::DLLImportLinkage);

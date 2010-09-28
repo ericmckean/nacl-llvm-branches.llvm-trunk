@@ -23,6 +23,7 @@
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/UniqueVector.h"
 #include "llvm/Support/Allocator.h"
+#include "llvm/Support/DebugLoc.h"
 
 namespace llvm {
 
@@ -261,7 +262,6 @@ class DwarfDebug {
   MCSymbol *DwarfFrameSectionSym, *DwarfInfoSectionSym, *DwarfAbbrevSectionSym;
   MCSymbol *DwarfStrSectionSym, *TextSectionSym, *DwarfDebugRangeSectionSym;
   MCSymbol *DwarfDebugLocSectionSym;
-  MCSymbol *DwarfDebugLineSectionSym, *CurrentLineSectionSym;
   MCSymbol *FunctionBeginSym, *FunctionEndSym;
 
   DIEInteger *DIEIntegerOne;
@@ -376,9 +376,9 @@ private:
   void addBlockByrefAddress(DbgVariable *&DV, DIE *Die, unsigned Attribute,
                             const MachineLocation &Location);
 
-  /// addVariableAddress - Add DW_AT_location attribute for a DbgVariable.
-  void addVariableAddress(DbgVariable *&DV, DIE *Die, unsigned Attribute,
-                          const MachineLocation &Location);
+  /// addVariableAddress - Add DW_AT_location attribute for a DbgVariable based
+  /// on provided frame index.
+  void addVariableAddress(DbgVariable *&DV, DIE *Die, int64_t FI);
 
   /// addToContextOwner - Add Die into the list of its context owner's children.
   void addToContextOwner(DIE *Die, DIDescriptor Context);

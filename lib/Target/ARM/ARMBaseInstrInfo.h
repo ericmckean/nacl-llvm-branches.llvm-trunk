@@ -181,22 +181,6 @@ namespace ARMII {
     I_BitShift     = 25,
     CondShift      = 28
   };
-
-  /// Target Operand Flag enum.
-  enum TOF {
-    //===------------------------------------------------------------------===//
-    // ARM Specific MachineOperand flags.
-
-    MO_NO_FLAG,
-
-    /// MO_LO16 - On a symbol operand, this represents a relocation containing
-    /// lower 16 bit of the address. Used only via movw instruction.
-    MO_LO16,
-
-    /// MO_HI16 - On a symbol operand, this represents a relocation containing
-    /// higher 16 bit of the address. Used only via movt instruction.
-    MO_HI16
-  };
 }
 
 class ARMBaseInstrInfo : public TargetInstrInfoImpl {
@@ -342,12 +326,16 @@ public:
   /// in SrcReg and the value it compares against in CmpValue. Return true if
   /// the comparison instruction can be analyzed.
   virtual bool AnalyzeCompare(const MachineInstr *MI, unsigned &SrcReg,
-                              int &CmpValue) const;
+                              int &CmpMask, int &CmpValue) const;
 
-  /// ConvertToSetZeroFlag - Convert the instruction to set the zero flag so
+  /// OptimizeCompareInstr - Convert the instruction to set the zero flag so
   /// that we can remove a "comparison with zero".
-  virtual bool ConvertToSetZeroFlag(MachineInstr *Instr,
-                                    MachineInstr *CmpInstr) const;
+  virtual bool OptimizeCompareInstr(MachineInstr *CmpInstr, unsigned SrcReg,
+                                    int CmpMask, int CmpValue,
+                                    MachineBasicBlock::iterator &MII) const;
+
+  virtual unsigned getNumMicroOps(const MachineInstr *MI,
+                                  const InstrItineraryData *ItinData) const;
 };
 
 static inline

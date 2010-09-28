@@ -90,9 +90,11 @@ namespace {
     virtual const char *getPassName() const {
       return "ARM Assembly Printer";
     }
-    
+
+    void EmitJumpTable(const MachineInstr *MI);
+    void EmitJump2Table(const MachineInstr *MI);
     void printInstructionThroughMCStreamer(const MachineInstr *MI);
-    
+
 
     void printOperand(const MachineInstr *MI, int OpNum, raw_ostream &O,
                       const char *Modifier = 0);
@@ -204,7 +206,7 @@ namespace {
 
     virtual void EmitInstruction(const MachineInstr *MI);
     bool runOnMachineFunction(MachineFunction &F);
-    
+
     virtual void EmitConstantPool() {} // we emit constant pools customly!
     virtual void EmitFunctionEntryLabel();
     void EmitStartOfAsmFile(Module &M);
@@ -234,6 +236,8 @@ namespace {
                                           const MachineBasicBlock *MBB) const;
     MCSymbol *GetARMJTIPICJumpTableLabel2(unsigned uid, unsigned uid2) const;
 
+    MCSymbol *GetARMSJLJEHLabel(void) const;
+
     /// EmitMachineConstantPoolValue - Print a machine constantpool value to
     /// the .s file.
     virtual void EmitMachineConstantPoolValue(MachineConstantPoolValue *MCPV) {
@@ -242,7 +246,7 @@ namespace {
       EmitMachineConstantPoolValue(MCPV, OS);
       OutStreamer.EmitRawText(OS.str());
     }
-    
+
     void EmitMachineConstantPoolValue(MachineConstantPoolValue *MCPV,
                                       raw_ostream &O) {
       switch (TM.getTargetData()->getTypeAllocSize(MCPV->getType())) {
@@ -268,7 +272,7 @@ namespace {
           // FIXME: Remove this when Darwin transition to @GOT like syntax.
           MCSymbol *Sym = GetSymbolWithGlobalValueBase(GV, "$non_lazy_ptr");
           O << *Sym;
-          
+
           MachineModuleInfoMachO &MMIMachO =
             MMI->getObjFileInfo<MachineModuleInfoMachO>();
           MachineModuleInfoImpl::StubValueTy &StubSym =
@@ -312,7 +316,7 @@ void ARMAsmPrinter::EmitFunctionEntryLabel() {
       OutStreamer.EmitRawText(OS.str());
     }
   }
-  
+
   OutStreamer.EmitLabel(CurrentFnSym);
 }
 
@@ -337,14 +341,8 @@ void ARMAsmPrinter::printOperand(const MachineInstr *MI, int OpNum,
   case MachineOperand::MO_Register: {
     unsigned Reg = MO.getReg();
     assert(TargetRegisterInfo::isPhysicalRegister(Reg));
-    if (Modifier && strcmp(Modifier, "dregpair") == 0) {
-      unsigned DRegLo = TM.getRegisterInfo()->getSubReg(Reg, ARM::dsub_0);
-      unsigned DRegHi = TM.getRegisterInfo()->getSubReg(Reg, ARM::dsub_1);
-      O << '{'
-        << getRegisterName(DRegLo) << ", " << getRegisterName(DRegHi)
-        << '}';
-    } else if (Modifier && strcmp(Modifier, "lane") == 0) {
-      unsigned RegNum = ARMRegisterInfo::getRegisterNumbering(Reg);
+    if (Modifier && strcmp(Modifier, "lane") == 0) {
+      unsigned RegNum = getARMRegisterNumbering(Reg);
       unsigned DReg =
         TM.getRegisterInfo()->getMatchingSuperReg(Reg,
           RegNum & 1 ? ARM::ssub_1 : ARM::ssub_0, &ARM::DPR_VFP2RegClass);
@@ -392,7 +390,7 @@ void ARMAsmPrinter::printOperand(const MachineInstr *MI, int OpNum,
   case MachineOperand::MO_ExternalSymbol: {
     bool isCallOp = Modifier && !strcmp(Modifier, "call");
     O << *GetExternalSymbolSymbol(MO.getSymbolName());
-    
+
     if (isCallOp && Subtarget->isTargetELF() &&
         TM.getRelocationModel() == Reloc::PIC_)
       O << "(PLT)";
@@ -606,16 +604,6 @@ void ARMAsmPrinter::printAddrMode5Operand(const MachineInstr *MI, int Op,
   }
 
   assert(TargetRegisterInfo::isPhysicalRegister(MO1.getReg()));
-
-  if (Modifier && strcmp(Modifier, "submode") == 0) {
-    ARM_AM::AMSubMode Mode = ARM_AM::getAM5SubMode(MO2.getImm());
-    O << ARM_AM::getAMSubModeStr(Mode);
-    return;
-  } else if (Modifier && strcmp(Modifier, "base") == 0) {
-    // Used for FSTM{D|S} and LSTM{D|S} operations.
-    O << getRegisterName(MO1.getReg());
-    return;
-  }
 
   O << "[" << getRegisterName(MO1.getReg());
 
@@ -967,13 +955,21 @@ GetARMJTIPICJumpTableLabel2(unsigned uid, unsigned uid2) const {
   return OutContext.GetOrCreateSymbol(Name.str());
 }
 
+
+MCSymbol *ARMAsmPrinter::GetARMSJLJEHLabel(void) const {
+  SmallString<60> Name;
+  raw_svector_ostream(Name) << MAI->getPrivateGlobalPrefix() << "SJLJEH"
+    << getFunctionNumber();
+  return OutContext.GetOrCreateSymbol(Name.str());
+}
+
 void ARMAsmPrinter::printJTBlockOperand(const MachineInstr *MI, int OpNum,
                                         raw_ostream &O) {
   assert(!Subtarget->isThumb2() && "Thumb2 should use double-jump jumptables!");
 
   const MachineOperand &MO1 = MI->getOperand(OpNum);
   const MachineOperand &MO2 = MI->getOperand(OpNum+1); // Unique Id
-  
+
   unsigned JTI = MO1.getIndex();
   MCSymbol *JTISymbol = GetARMJTIPICJumpTableLabel2(JTI, MO2.getImm());
   // Can't use EmitLabel until instprinter happens, label comes out in the wrong
@@ -1015,9 +1011,9 @@ void ARMAsmPrinter::printJT2BlockOperand(const MachineInstr *MI, int OpNum,
   const MachineOperand &MO1 = MI->getOperand(OpNum);
   const MachineOperand &MO2 = MI->getOperand(OpNum+1); // Unique Id
   unsigned JTI = MO1.getIndex();
-  
+
   MCSymbol *JTISymbol = GetARMJTIPICJumpTableLabel2(JTI, MO2.getImm());
-  
+
   // Can't use EmitLabel until instprinter happens, label comes out in the wrong
   // order.
   O << "\n" << *JTISymbol << ":\n";
@@ -1037,7 +1033,7 @@ void ARMAsmPrinter::printJT2BlockOperand(const MachineInstr *MI, int OpNum,
       O << MAI->getData8bitsDirective();
     else if (HalfWordOffset)
       O << MAI->getData16bitsDirective();
-    
+
     if (ByteOffset || HalfWordOffset)
       O << '(' << *MBB->getSymbol() << "-" << *JTISymbol << ")/2";
     else
@@ -1143,10 +1139,10 @@ void ARMAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     printInstructionThroughMCStreamer(MI);
     return;
   }
-  
+
   if (MI->getOpcode() == ARM::CONSTPOOL_ENTRY)
     EmitAlignment(2);
-  
+
   SmallString<128> Str;
   raw_svector_ostream OS(Str);
   if (MI->getOpcode() == ARM::DBG_VALUE) {
@@ -1163,13 +1159,82 @@ void ARMAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     OS << ']';
     OS << "+";
     printOperand(MI, NOps-2, OS);
-    OutStreamer.EmitRawText(OS.str());
-    return;
-  }
+  } else if (MI->getOpcode() == ARM::MOVs) {
+    // FIXME: Thumb variants?
+    const MachineOperand &Dst = MI->getOperand(0);
+    const MachineOperand &MO1 = MI->getOperand(1);
+    const MachineOperand &MO2 = MI->getOperand(2);
+    const MachineOperand &MO3 = MI->getOperand(3);
 
-  printInstruction(MI, OS);
+    OS << '\t' << ARM_AM::getShiftOpcStr(ARM_AM::getSORegShOp(MO3.getImm()));
+    printSBitModifierOperand(MI, 6, OS);
+    printPredicateOperand(MI, 4, OS);
+
+    OS << '\t' << getRegisterName(Dst.getReg())
+       << ", " << getRegisterName(MO1.getReg());
+
+    if (ARM_AM::getSORegShOp(MO3.getImm()) != ARM_AM::rrx) {
+      OS << ", ";
+
+      if (MO2.getReg()) {
+        OS << getRegisterName(MO2.getReg());
+        assert(ARM_AM::getSORegOffset(MO3.getImm()) == 0);
+      } else {
+        OS << "#" << ARM_AM::getSORegOffset(MO3.getImm());
+      }
+    }
+  } else
+  // A8.6.123 PUSH
+  if ((MI->getOpcode() == ARM::STM_UPD || MI->getOpcode() == ARM::t2STM_UPD) &&
+      MI->getOperand(0).getReg() == ARM::SP &&
+      ARM_AM::getAM4SubMode(MI->getOperand(2).getImm()) == ARM_AM::db) {
+    OS << '\t' << "push";
+    printPredicateOperand(MI, 3, OS);
+    OS << '\t';
+    printRegisterList(MI, 5, OS);
+  } else
+  // A8.6.122 POP
+  if ((MI->getOpcode() == ARM::LDM_UPD || MI->getOpcode() == ARM::t2LDM_UPD) &&
+      MI->getOperand(0).getReg() == ARM::SP &&
+      ARM_AM::getAM4SubMode(MI->getOperand(2).getImm()) == ARM_AM::ia) {
+    OS << '\t' << "pop";
+    printPredicateOperand(MI, 3, OS);
+    OS << '\t';
+    printRegisterList(MI, 5, OS);
+  } else
+  // A8.6.355 VPUSH
+  if ((MI->getOpcode() == ARM::VSTMS_UPD || MI->getOpcode() ==ARM::VSTMD_UPD) &&
+      MI->getOperand(0).getReg() == ARM::SP &&
+      ARM_AM::getAM4SubMode(MI->getOperand(2).getImm()) == ARM_AM::db) {
+    OS << '\t' << "vpush";
+    printPredicateOperand(MI, 3, OS);
+    OS << '\t';
+    printRegisterList(MI, 5, OS);
+  } else
+  // A8.6.354 VPOP
+  if ((MI->getOpcode() == ARM::VLDMS_UPD || MI->getOpcode() ==ARM::VLDMD_UPD) &&
+      MI->getOperand(0).getReg() == ARM::SP &&
+      ARM_AM::getAM4SubMode(MI->getOperand(2).getImm()) == ARM_AM::ia) {
+    OS << '\t' << "vpop";
+    printPredicateOperand(MI, 3, OS);
+    OS << '\t';
+    printRegisterList(MI, 5, OS);
+  } else
+  // TRAP and tTRAP need special handling for non-Darwin. The GNU binutils
+  // don't (yet) support the 'trap' mnemonic. (Use decimal, not hex, to
+  // be consistent with the MC instruction printer.)
+  // FIXME: This really should be in AsmPrinter/ARMInstPrinter.cpp, not here.
+  //        Need a way to ask "isTargetDarwin()" there, first, though.
+  if (MI->getOpcode() == ARM::TRAP && !Subtarget->isTargetDarwin()) {
+    OS << "\t.long\t3892305662\t\t" << MAI->getCommentString() << "trap";
+  } else if (MI->getOpcode() == ARM::tTRAP && !Subtarget->isTargetDarwin()) {
+    OS << "\t.short\t57086\t\t\t" << MAI->getCommentString() << " trap";
+  } else
+    printInstruction(MI, OS);
+
+  // Output the instruction to the stream
   OutStreamer.EmitRawText(OS.str());
-  
+
   // Make sure the instruction that follows TBB is 2-byte aligned.
   // FIXME: Constant island pass should insert an "ALIGN" instruction instead.
   if (MI->getOpcode() == ARM::t2TBB)
@@ -1186,7 +1251,7 @@ void ARMAsmPrinter::EmitStartOfAsmFile(Module &M) {
       // avoid out-of-range branches that are due a fundamental limitation of
       // the way symbol offsets are encoded with the current Darwin ARM
       // relocations.
-      const TargetLoweringObjectFileMachO &TLOFMacho = 
+      const TargetLoweringObjectFileMachO &TLOFMacho =
         static_cast<const TargetLoweringObjectFileMachO &>(
           getObjFileLowering());
       OutStreamer.SwitchSection(TLOFMacho.getTextSection());
@@ -1236,7 +1301,7 @@ void ARMAsmPrinter::EmitStartOfAsmFile(Module &M) {
       OutStreamer.EmitRawText("\t.eabi_attribute " +
                               Twine(ARMBuildAttrs::ABI_FP_exceptions) + ", 1");
     }
-    
+
     if (NoInfsFPMath && NoNaNsFPMath)
       OutStreamer.EmitRawText("\t.eabi_attribute " +
                               Twine(ARMBuildAttrs::ABI_FP_number_model)+ ", 1");
@@ -1290,10 +1355,10 @@ void ARMAsmPrinter::EmitEndOfAsmFile(Module &M) {
         else
           // Internal to current translation unit.
           //
-          // When we place the LSDA into the TEXT section, the type info pointers
-          // need to be indirect and pc-rel. We accomplish this by using NLPs.
-          // However, sometimes the types are local to the file. So we need to
-          // fill in the value for the NLP in those cases.
+          // When we place the LSDA into the TEXT section, the type info
+          // pointers need to be indirect and pc-rel. We accomplish this by
+          // using NLPs; however, sometimes the types are local to the file.
+          // We need to fill in the value for the NLP in those cases.
           OutStreamer.EmitValue(MCSymbolRefExpr::Create(MCSym.getPointer(),
                                                         OutContext),
                                 4/*size*/, 0/*addrspace*/);
@@ -1332,34 +1397,210 @@ void ARMAsmPrinter::EmitEndOfAsmFile(Module &M) {
 
 //===----------------------------------------------------------------------===//
 
+static MCSymbol *getPICLabel(const char *Prefix, unsigned FunctionNumber,
+                             unsigned LabelId, MCContext &Ctx) {
+
+  MCSymbol *Label = Ctx.GetOrCreateSymbol(Twine(Prefix)
+                       + "PC" + Twine(FunctionNumber) + "_" + Twine(LabelId));
+  return Label;
+}
+
+void ARMAsmPrinter::EmitJumpTable(const MachineInstr *MI) {
+  unsigned Opcode = MI->getOpcode();
+  int OpNum = 1;
+  if (Opcode == ARM::BR_JTadd)
+    OpNum = 2;
+  else if (Opcode == ARM::BR_JTm)
+    OpNum = 3;
+
+  const MachineOperand &MO1 = MI->getOperand(OpNum);
+  const MachineOperand &MO2 = MI->getOperand(OpNum+1); // Unique Id
+  unsigned JTI = MO1.getIndex();
+
+  // Emit a label for the jump table.
+  MCSymbol *JTISymbol = GetARMJTIPICJumpTableLabel2(JTI, MO2.getImm());
+  OutStreamer.EmitLabel(JTISymbol);
+
+  // Emit each entry of the table.
+  const MachineJumpTableInfo *MJTI = MF->getJumpTableInfo();
+  const std::vector<MachineJumpTableEntry> &JT = MJTI->getJumpTables();
+  const std::vector<MachineBasicBlock*> &JTBBs = JT[JTI].MBBs;
+
+  for (unsigned i = 0, e = JTBBs.size(); i != e; ++i) {
+    MachineBasicBlock *MBB = JTBBs[i];
+    // Construct an MCExpr for the entry. We want a value of the form:
+    // (BasicBlockAddr - TableBeginAddr)
+    //
+    // For example, a table with entries jumping to basic blocks BB0 and BB1
+    // would look like:
+    // LJTI_0_0:
+    //    .word (LBB0 - LJTI_0_0)
+    //    .word (LBB1 - LJTI_0_0)
+    const MCExpr *Expr = MCSymbolRefExpr::Create(MBB->getSymbol(), OutContext);
+
+    if (TM.getRelocationModel() == Reloc::PIC_)
+      Expr = MCBinaryExpr::CreateSub(Expr, MCSymbolRefExpr::Create(JTISymbol,
+                                                                   OutContext),
+                                     OutContext);
+    OutStreamer.EmitValue(Expr, 4);
+  }
+}
+
+void ARMAsmPrinter::EmitJump2Table(const MachineInstr *MI) {
+  unsigned Opcode = MI->getOpcode();
+  int OpNum = (Opcode == ARM::t2BR_JT) ? 2 : 1;
+  const MachineOperand &MO1 = MI->getOperand(OpNum);
+  const MachineOperand &MO2 = MI->getOperand(OpNum+1); // Unique Id
+  unsigned JTI = MO1.getIndex();
+
+  // Emit a label for the jump table.
+  MCSymbol *JTISymbol = GetARMJTIPICJumpTableLabel2(JTI, MO2.getImm());
+  OutStreamer.EmitLabel(JTISymbol);
+
+  // Emit each entry of the table.
+  const MachineJumpTableInfo *MJTI = MF->getJumpTableInfo();
+  const std::vector<MachineJumpTableEntry> &JT = MJTI->getJumpTables();
+  const std::vector<MachineBasicBlock*> &JTBBs = JT[JTI].MBBs;
+  unsigned OffsetWidth = 4;
+  if (MI->getOpcode() == ARM::t2TBB)
+    OffsetWidth = 1;
+  else if (MI->getOpcode() == ARM::t2TBH)
+    OffsetWidth = 2;
+
+  for (unsigned i = 0, e = JTBBs.size(); i != e; ++i) {
+    MachineBasicBlock *MBB = JTBBs[i];
+    const MCExpr *MBBSymbolExpr = MCSymbolRefExpr::Create(MBB->getSymbol(),
+                                                      OutContext);
+    // If this isn't a TBB or TBH, the entries are direct branch instructions.
+    if (OffsetWidth == 4) {
+      MCInst BrInst;
+      BrInst.setOpcode(ARM::t2B);
+      BrInst.addOperand(MCOperand::CreateExpr(MBBSymbolExpr));
+      OutStreamer.EmitInstruction(BrInst);
+      continue;
+    }
+    // Otherwise it's an offset from the dispatch instruction. Construct an
+    // MCExpr for the entry. We want a value of the form:
+    // (BasicBlockAddr - TableBeginAddr) / 2
+    //
+    // For example, a TBB table with entries jumping to basic blocks BB0 and BB1
+    // would look like:
+    // LJTI_0_0:
+    //    .byte (LBB0 - LJTI_0_0) / 2
+    //    .byte (LBB1 - LJTI_0_0) / 2
+    const MCExpr *Expr =
+      MCBinaryExpr::CreateSub(MBBSymbolExpr,
+                              MCSymbolRefExpr::Create(JTISymbol, OutContext),
+                              OutContext);
+    Expr = MCBinaryExpr::CreateDiv(Expr, MCConstantExpr::Create(2, OutContext),
+                                   OutContext);
+    OutStreamer.EmitValue(Expr, OffsetWidth);
+  }
+
+  // Make sure the instruction that follows TBB is 2-byte aligned.
+  // FIXME: Constant island pass should insert an "ALIGN" instruction instead.
+  if (MI->getOpcode() == ARM::t2TBB)
+    EmitAlignment(1);
+}
+
 void ARMAsmPrinter::printInstructionThroughMCStreamer(const MachineInstr *MI) {
   ARMMCInstLower MCInstLowering(OutContext, *Mang, *this);
   switch (MI->getOpcode()) {
   case ARM::t2MOVi32imm:
     assert(0 && "Should be lowered by thumb2it pass");
   default: break;
+  case ARM::tPICADD: {
+    // This is a pseudo op for a label + instruction sequence, which looks like:
+    // LPC0:
+    //     add r0, pc
+    // This adds the address of LPC0 to r0.
+
+    // Emit the label.
+    OutStreamer.EmitLabel(getPICLabel(MAI->getPrivateGlobalPrefix(),
+                          getFunctionNumber(), MI->getOperand(2).getImm(),
+                          OutContext));
+
+    // Form and emit the add.
+    MCInst AddInst;
+    AddInst.setOpcode(ARM::tADDhirr);
+    AddInst.addOperand(MCOperand::CreateReg(MI->getOperand(0).getReg()));
+    AddInst.addOperand(MCOperand::CreateReg(MI->getOperand(0).getReg()));
+    AddInst.addOperand(MCOperand::CreateReg(ARM::PC));
+    // Add predicate operands.
+    AddInst.addOperand(MCOperand::CreateImm(ARMCC::AL));
+    AddInst.addOperand(MCOperand::CreateReg(0));
+    OutStreamer.EmitInstruction(AddInst);
+    return;
+  }
   case ARM::PICADD: { // FIXME: Remove asm string from td file.
     // This is a pseudo op for a label + instruction sequence, which looks like:
     // LPC0:
     //     add r0, pc, r0
     // This adds the address of LPC0 to r0.
-    
+
     // Emit the label.
-    // FIXME: MOVE TO SHARED PLACE.
-    unsigned Id = (unsigned)MI->getOperand(2).getImm();
-    const char *Prefix = MAI->getPrivateGlobalPrefix();
-    MCSymbol *Label =OutContext.GetOrCreateSymbol(Twine(Prefix)
-                         + "PC" + Twine(getFunctionNumber()) + "_" + Twine(Id));
-    OutStreamer.EmitLabel(Label);
-    
-    
-    // Form and emit tha dd.
+    OutStreamer.EmitLabel(getPICLabel(MAI->getPrivateGlobalPrefix(),
+                          getFunctionNumber(), MI->getOperand(2).getImm(),
+                          OutContext));
+
+    // Form and emit the add.
     MCInst AddInst;
     AddInst.setOpcode(ARM::ADDrr);
     AddInst.addOperand(MCOperand::CreateReg(MI->getOperand(0).getReg()));
     AddInst.addOperand(MCOperand::CreateReg(ARM::PC));
     AddInst.addOperand(MCOperand::CreateReg(MI->getOperand(1).getReg()));
+    // Add predicate operands.
+    AddInst.addOperand(MCOperand::CreateImm(MI->getOperand(3).getImm()));
+    AddInst.addOperand(MCOperand::CreateReg(MI->getOperand(4).getReg()));
+    // Add 's' bit operand (always reg0 for this)
+    AddInst.addOperand(MCOperand::CreateReg(0));
     OutStreamer.EmitInstruction(AddInst);
+    return;
+  }
+  case ARM::PICSTR:
+  case ARM::PICSTRB:
+  case ARM::PICSTRH:
+  case ARM::PICLDR:
+  case ARM::PICLDRB:
+  case ARM::PICLDRH:
+  case ARM::PICLDRSB:
+  case ARM::PICLDRSH: {
+    // This is a pseudo op for a label + instruction sequence, which looks like:
+    // LPC0:
+    //     OP r0, [pc, r0]
+    // The LCP0 label is referenced by a constant pool entry in order to get
+    // a PC-relative address at the ldr instruction.
+
+    // Emit the label.
+    OutStreamer.EmitLabel(getPICLabel(MAI->getPrivateGlobalPrefix(),
+                          getFunctionNumber(), MI->getOperand(2).getImm(),
+                          OutContext));
+
+    // Form and emit the load
+    unsigned Opcode;
+    switch (MI->getOpcode()) {
+    default:
+      llvm_unreachable("Unexpected opcode!");
+    case ARM::PICSTR:   Opcode = ARM::STR; break;
+    case ARM::PICSTRB:  Opcode = ARM::STRB; break;
+    case ARM::PICSTRH:  Opcode = ARM::STRH; break;
+    case ARM::PICLDR:   Opcode = ARM::LDR; break;
+    case ARM::PICLDRB:  Opcode = ARM::LDRB; break;
+    case ARM::PICLDRH:  Opcode = ARM::LDRH; break;
+    case ARM::PICLDRSB: Opcode = ARM::LDRSB; break;
+    case ARM::PICLDRSH: Opcode = ARM::LDRSH; break;
+    }
+    MCInst LdStInst;
+    LdStInst.setOpcode(Opcode);
+    LdStInst.addOperand(MCOperand::CreateReg(MI->getOperand(0).getReg()));
+    LdStInst.addOperand(MCOperand::CreateReg(ARM::PC));
+    LdStInst.addOperand(MCOperand::CreateReg(MI->getOperand(1).getReg()));
+    LdStInst.addOperand(MCOperand::CreateImm(0));
+    // Add predicate operands.
+    LdStInst.addOperand(MCOperand::CreateImm(MI->getOperand(3).getImm()));
+    LdStInst.addOperand(MCOperand::CreateReg(MI->getOperand(4).getReg()));
+    OutStreamer.EmitInstruction(LdStInst);
+
     return;
   }
   case ARM::CONSTPOOL_ENTRY: { // FIXME: Remove asm string from td file.
@@ -1378,7 +1619,7 @@ void ARMAsmPrinter::printInstructionThroughMCStreamer(const MachineInstr *MI) {
       EmitMachineConstantPoolValue(MCPE.Val.MachineCPVal);
     else
       EmitGlobalConstant(MCPE.Val.ConstVal);
-    
+
     return;
   }
   case ARM::MOVi2pieces: { // FIXME: Remove asmstring from td file.
@@ -1388,13 +1629,13 @@ void ARMAsmPrinter::printInstructionThroughMCStreamer(const MachineInstr *MI) {
 
     unsigned SOImmValV1 = ARM_AM::getSOImmTwoPartFirst(ImmVal);
     unsigned SOImmValV2 = ARM_AM::getSOImmTwoPartSecond(ImmVal);
-    
+
     {
       MCInst TmpInst;
       TmpInst.setOpcode(ARM::MOVi);
       TmpInst.addOperand(MCOperand::CreateReg(DstReg));
       TmpInst.addOperand(MCOperand::CreateImm(SOImmValV1));
-      
+
       // Predicate.
       TmpInst.addOperand(MCOperand::CreateImm(MI->getOperand(2).getImm()));
       TmpInst.addOperand(MCOperand::CreateReg(MI->getOperand(3).getReg()));
@@ -1412,11 +1653,11 @@ void ARMAsmPrinter::printInstructionThroughMCStreamer(const MachineInstr *MI) {
       // Predicate.
       TmpInst.addOperand(MCOperand::CreateImm(MI->getOperand(2).getImm()));
       TmpInst.addOperand(MCOperand::CreateReg(MI->getOperand(3).getReg()));
-      
+
       TmpInst.addOperand(MCOperand::CreateReg(0));          // cc_out
       OutStreamer.EmitInstruction(TmpInst);
     }
-    return; 
+    return;
   }
   case ARM::MOVi32imm: { // FIXME: Remove asmstring from td file.
     // This is a hack that lowers as a two instruction sequence.
@@ -1428,7 +1669,7 @@ void ARMAsmPrinter::printInstructionThroughMCStreamer(const MachineInstr *MI) {
       V1 = MCOperand::CreateImm(ImmVal & 65535);
       V2 = MCOperand::CreateImm(ImmVal >> 16);
     } else if (MO.isGlobal()) {
-      MCSymbol *Symbol = MCInstLowering.GetGlobalAddressSymbol(MO);
+      MCSymbol *Symbol = MCInstLowering.GetGlobalAddressSymbol(MO.getGlobal());
       const MCSymbolRefExpr *SymRef1 =
         MCSymbolRefExpr::Create(Symbol,
                                 MCSymbolRefExpr::VK_ARM_LO16, OutContext);
@@ -1438,6 +1679,7 @@ void ARMAsmPrinter::printInstructionThroughMCStreamer(const MachineInstr *MI) {
       V1 = MCOperand::CreateExpr(SymRef1);
       V2 = MCOperand::CreateExpr(SymRef2);
     } else {
+      // FIXME: External symbol?
       MI->dump();
       llvm_unreachable("cannot handle this operand");
     }
@@ -1447,32 +1689,239 @@ void ARMAsmPrinter::printInstructionThroughMCStreamer(const MachineInstr *MI) {
       TmpInst.setOpcode(ARM::MOVi16);
       TmpInst.addOperand(MCOperand::CreateReg(DstReg));         // dstreg
       TmpInst.addOperand(V1); // lower16(imm)
-      
+
       // Predicate.
       TmpInst.addOperand(MCOperand::CreateImm(MI->getOperand(2).getImm()));
       TmpInst.addOperand(MCOperand::CreateReg(MI->getOperand(3).getReg()));
-      
+
       OutStreamer.EmitInstruction(TmpInst);
     }
-    
+
     {
       MCInst TmpInst;
       TmpInst.setOpcode(ARM::MOVTi16);
       TmpInst.addOperand(MCOperand::CreateReg(DstReg));         // dstreg
       TmpInst.addOperand(MCOperand::CreateReg(DstReg));         // srcreg
       TmpInst.addOperand(V2);   // upper16(imm)
-      
+
       // Predicate.
       TmpInst.addOperand(MCOperand::CreateImm(MI->getOperand(2).getImm()));
       TmpInst.addOperand(MCOperand::CreateReg(MI->getOperand(3).getReg()));
-      
+
       OutStreamer.EmitInstruction(TmpInst);
     }
-    
+
+    return;
+  }
+  case ARM::t2TBB:
+  case ARM::t2TBH:
+  case ARM::t2BR_JT: {
+    // Lower and emit the instruction itself, then the jump table following it.
+    MCInst TmpInst;
+    MCInstLowering.Lower(MI, TmpInst);
+    OutStreamer.EmitInstruction(TmpInst);
+    EmitJump2Table(MI);
+    return;
+  }
+  case ARM::tBR_JTr:
+  case ARM::BR_JTr:
+  case ARM::BR_JTm:
+  case ARM::BR_JTadd: {
+    // Lower and emit the instruction itself, then the jump table following it.
+    MCInst TmpInst;
+    MCInstLowering.Lower(MI, TmpInst);
+    OutStreamer.EmitInstruction(TmpInst);
+    EmitJumpTable(MI);
+    return;
+  }
+  case ARM::TRAP: {
+    // Non-Darwin binutils don't yet support the "trap" mnemonic.
+    // FIXME: Remove this special case when they do.
+    if (!Subtarget->isTargetDarwin()) {
+      //.long 0xe7ffdefe ${:comment} trap
+      uint32_t Val = 0xe7ffdefeUL;
+      OutStreamer.AddComment("trap");
+      OutStreamer.EmitIntValue(Val, 4);
+      return;
+    }
+    break;
+  }
+  case ARM::tTRAP: {
+    // Non-Darwin binutils don't yet support the "trap" mnemonic.
+    // FIXME: Remove this special case when they do.
+    if (!Subtarget->isTargetDarwin()) {
+      //.short 57086 ${:comment} trap
+      uint16_t Val = 0xdefe;
+      OutStreamer.AddComment("trap");
+      OutStreamer.EmitIntValue(Val, 2);
+      return;
+    }
+    break;
+  }
+  case ARM::t2Int_eh_sjlj_setjmp:
+  case ARM::t2Int_eh_sjlj_setjmp_nofp:
+  case ARM::tInt_eh_sjlj_setjmp: { // FIXME: Remove asmstring from td file.
+    // Two incoming args: GPR:$src, GPR:$val
+    // mov $val, pc
+    // adds $val, #7
+    // str $val, [$src, #4]
+    // movs r0, #0
+    // b 1f
+    // movs r0, #1
+    // 1:
+    unsigned SrcReg = MI->getOperand(0).getReg();
+    unsigned ValReg = MI->getOperand(1).getReg();
+    MCSymbol *Label = GetARMSJLJEHLabel();
+    {
+      MCInst TmpInst;
+      TmpInst.setOpcode(ARM::tMOVgpr2tgpr);
+      TmpInst.addOperand(MCOperand::CreateReg(ValReg));
+      TmpInst.addOperand(MCOperand::CreateReg(ARM::PC));
+      // 's' bit operand
+      TmpInst.addOperand(MCOperand::CreateReg(ARM::CPSR));
+      OutStreamer.AddComment("eh_setjmp begin");
+      OutStreamer.EmitInstruction(TmpInst);
+    }
+    {
+      MCInst TmpInst;
+      TmpInst.setOpcode(ARM::tADDi3);
+      TmpInst.addOperand(MCOperand::CreateReg(ValReg));
+      // 's' bit operand
+      TmpInst.addOperand(MCOperand::CreateReg(ARM::CPSR));
+      TmpInst.addOperand(MCOperand::CreateReg(ValReg));
+      TmpInst.addOperand(MCOperand::CreateImm(7));
+      // Predicate.
+      TmpInst.addOperand(MCOperand::CreateImm(ARMCC::AL));
+      TmpInst.addOperand(MCOperand::CreateReg(0));
+      OutStreamer.EmitInstruction(TmpInst);
+    }
+    {
+      MCInst TmpInst;
+      TmpInst.setOpcode(ARM::tSTR);
+      TmpInst.addOperand(MCOperand::CreateReg(ValReg));
+      TmpInst.addOperand(MCOperand::CreateReg(SrcReg));
+      // The offset immediate is #4. The operand value is scaled by 4 for the
+      // tSTR instruction.
+      TmpInst.addOperand(MCOperand::CreateImm(1));
+      TmpInst.addOperand(MCOperand::CreateReg(0));
+      // Predicate.
+      TmpInst.addOperand(MCOperand::CreateImm(ARMCC::AL));
+      TmpInst.addOperand(MCOperand::CreateReg(0));
+      OutStreamer.EmitInstruction(TmpInst);
+    }
+    {
+      MCInst TmpInst;
+      TmpInst.setOpcode(ARM::tMOVi8);
+      TmpInst.addOperand(MCOperand::CreateReg(ARM::R0));
+      TmpInst.addOperand(MCOperand::CreateReg(ARM::CPSR));
+      TmpInst.addOperand(MCOperand::CreateImm(0));
+      // Predicate.
+      TmpInst.addOperand(MCOperand::CreateImm(ARMCC::AL));
+      TmpInst.addOperand(MCOperand::CreateReg(0));
+      OutStreamer.EmitInstruction(TmpInst);
+    }
+    {
+      const MCExpr *SymbolExpr = MCSymbolRefExpr::Create(Label, OutContext);
+      MCInst TmpInst;
+      TmpInst.setOpcode(ARM::tB);
+      TmpInst.addOperand(MCOperand::CreateExpr(SymbolExpr));
+      OutStreamer.EmitInstruction(TmpInst);
+    }
+    {
+      MCInst TmpInst;
+      TmpInst.setOpcode(ARM::tMOVi8);
+      TmpInst.addOperand(MCOperand::CreateReg(ARM::R0));
+      TmpInst.addOperand(MCOperand::CreateReg(ARM::CPSR));
+      TmpInst.addOperand(MCOperand::CreateImm(1));
+      // Predicate.
+      TmpInst.addOperand(MCOperand::CreateImm(ARMCC::AL));
+      TmpInst.addOperand(MCOperand::CreateReg(0));
+      OutStreamer.AddComment("eh_setjmp end");
+      OutStreamer.EmitInstruction(TmpInst);
+    }
+    OutStreamer.EmitLabel(Label);
+    return;
+  }
+
+  case ARM::Int_eh_sjlj_setjmp_nofp:
+  case ARM::Int_eh_sjlj_setjmp: { // FIXME: Remove asmstring from td file.
+    // Two incoming args: GPR:$src, GPR:$val
+    // add $val, pc, #8
+    // str $val, [$src, #+4]
+    // mov r0, #0
+    // add pc, pc, #0
+    // mov r0, #1
+    unsigned SrcReg = MI->getOperand(0).getReg();
+    unsigned ValReg = MI->getOperand(1).getReg();
+
+    {
+      MCInst TmpInst;
+      TmpInst.setOpcode(ARM::ADDri);
+      TmpInst.addOperand(MCOperand::CreateReg(ValReg));
+      TmpInst.addOperand(MCOperand::CreateReg(ARM::PC));
+      TmpInst.addOperand(MCOperand::CreateImm(8));
+      // Predicate.
+      TmpInst.addOperand(MCOperand::CreateImm(ARMCC::AL));
+      TmpInst.addOperand(MCOperand::CreateReg(0));
+      // 's' bit operand (always reg0 for this).
+      TmpInst.addOperand(MCOperand::CreateReg(0));
+      OutStreamer.AddComment("eh_setjmp begin");
+      OutStreamer.EmitInstruction(TmpInst);
+    }
+    {
+      MCInst TmpInst;
+      TmpInst.setOpcode(ARM::STR);
+      TmpInst.addOperand(MCOperand::CreateReg(ValReg));
+      TmpInst.addOperand(MCOperand::CreateReg(SrcReg));
+      TmpInst.addOperand(MCOperand::CreateReg(0));
+      TmpInst.addOperand(MCOperand::CreateImm(4));
+      // Predicate.
+      TmpInst.addOperand(MCOperand::CreateImm(ARMCC::AL));
+      TmpInst.addOperand(MCOperand::CreateReg(0));
+      OutStreamer.EmitInstruction(TmpInst);
+    }
+    {
+      MCInst TmpInst;
+      TmpInst.setOpcode(ARM::MOVi);
+      TmpInst.addOperand(MCOperand::CreateReg(ARM::R0));
+      TmpInst.addOperand(MCOperand::CreateImm(0));
+      // Predicate.
+      TmpInst.addOperand(MCOperand::CreateImm(ARMCC::AL));
+      TmpInst.addOperand(MCOperand::CreateReg(0));
+      // 's' bit operand (always reg0 for this).
+      TmpInst.addOperand(MCOperand::CreateReg(0));
+      OutStreamer.EmitInstruction(TmpInst);
+    }
+    {
+      MCInst TmpInst;
+      TmpInst.setOpcode(ARM::ADDri);
+      TmpInst.addOperand(MCOperand::CreateReg(ARM::PC));
+      TmpInst.addOperand(MCOperand::CreateReg(ARM::PC));
+      TmpInst.addOperand(MCOperand::CreateImm(0));
+      // Predicate.
+      TmpInst.addOperand(MCOperand::CreateImm(ARMCC::AL));
+      TmpInst.addOperand(MCOperand::CreateReg(0));
+      // 's' bit operand (always reg0 for this).
+      TmpInst.addOperand(MCOperand::CreateReg(0));
+      OutStreamer.EmitInstruction(TmpInst);
+    }
+    {
+      MCInst TmpInst;
+      TmpInst.setOpcode(ARM::MOVi);
+      TmpInst.addOperand(MCOperand::CreateReg(ARM::R0));
+      TmpInst.addOperand(MCOperand::CreateImm(1));
+      // Predicate.
+      TmpInst.addOperand(MCOperand::CreateImm(ARMCC::AL));
+      TmpInst.addOperand(MCOperand::CreateReg(0));
+      // 's' bit operand (always reg0 for this).
+      TmpInst.addOperand(MCOperand::CreateReg(0));
+      OutStreamer.AddComment("eh_setjmp end");
+      OutStreamer.EmitInstruction(TmpInst);
+    }
     return;
   }
   }
-      
+
   MCInst TmpInst;
   MCInstLowering.Lower(MI, TmpInst);
   OutStreamer.EmitInstruction(TmpInst);
@@ -1486,7 +1935,7 @@ static MCInstPrinter *createARMMCInstPrinter(const Target &T,
                                              unsigned SyntaxVariant,
                                              const MCAsmInfo &MAI) {
   if (SyntaxVariant == 0)
-    return new ARMInstPrinter(MAI, false);
+    return new ARMInstPrinter(MAI);
   return 0;
 }
 

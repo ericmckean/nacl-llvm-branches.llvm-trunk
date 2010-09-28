@@ -605,6 +605,7 @@ private:
 
   unsigned RelaxAll : 1;
   unsigned SubsectionsViaSymbols : 1;
+  unsigned PadSectionToAlignment : 1;
 
 private:
   /// Evaluate a fixup to a relocatable expression and the value which should be
@@ -649,8 +650,7 @@ private:
 public:
   /// Find the symbol which defines the atom containing the given symbol, or
   /// null if there is no such symbol.
-  const MCSymbolData *getAtom(const MCAsmLayout &Layout,
-                              const MCSymbolData *Symbol) const;
+  const MCSymbolData *getAtom(const MCSymbolData *Symbol) const;
 
   /// Check whether a particular symbol is visible to the linker and is required
   /// in the symbol table, or whether it can be discarded by the assembler. This
@@ -676,7 +676,8 @@ public:
   // option is to make this abstract, and have targets provide concrete
   // implementations as we do with AsmParser.
   MCAssembler(MCContext &_Context, TargetAsmBackend &_Backend,
-              MCCodeEmitter &_Emitter, raw_ostream &OS);
+              MCCodeEmitter &_Emitter, bool _PadSectionToAlignment,
+              raw_ostream &OS);
   ~MCAssembler();
 
   MCContext &getContext() const { return Context; }

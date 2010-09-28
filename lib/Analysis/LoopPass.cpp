@@ -30,7 +30,6 @@ private:
 
 public:
   static char ID;
-  PrintLoopPass() : LoopPass(ID), Out(dbgs()) {}
   PrintLoopPass(const std::string &B, raw_ostream &o)
       : LoopPass(ID), Banner(B), Out(o) {}
 
@@ -332,7 +331,7 @@ void LPPassManager::dumpPassStructure(unsigned Offset) {
   errs().indent(Offset*2) << "Loop Pass Manager\n";
   for (unsigned Index = 0; Index < getNumContainedPasses(); ++Index) {
     Pass *P = getContainedPass(Index);
-    P->dumpPass(Offset + 1);
+    P->dumpPassStructure(Offset + 1);
     dumpLastUses(P, Offset+1);
   }
 }

@@ -73,11 +73,7 @@ def GetLo32XForm : SDNodeXForm<imm, [{
   return getI32Imm((unsigned)N->getZExtValue());
 }]>;
 
-def i64immSExt32  : PatLeaf<(i64 imm), [{
-  // i64immSExt32 predicate - True if the 64-bit immediate fits in a 32-bit
-  // sign extended field.
-  return (int64_t)N->getZExtValue() == (int32_t)N->getZExtValue();
-}]>;
+def i64immSExt32  : PatLeaf<(i64 imm), [{ return i64immSExt32(N); }]>;
 
 
 def i64immZExt32  : PatLeaf<(i64 imm), [{
@@ -121,7 +117,12 @@ def ADJCALLSTACKUP64   : I<0, Pseudo, (outs), (ins i32imm:$amt1, i32imm:$amt2),
 }
 
 // Interrupt Instructions
-def IRET64 : RI<0xcf, RawFrm, (outs), (ins), "iret{q}", []>;
+def IRET64 : RI<0xcf, RawFrm, (outs), (ins), "iretq", []>,
+             Requires<[In64BitMode]>;
+
+def SYSRETQ : RI<0x07, RawFrm,
+                 (outs), (ins), "sysretq", []>, TB, Requires<[In64BitMode]>;
+
 
 //===----------------------------------------------------------------------===//
 //  Call Instructions...
@@ -147,10 +148,10 @@ let isCall = 1 in
                         Requires<[In64BitMode, NotWin64]>;
     def CALL64r       : I<0xFF, MRM2r, (outs), (ins GR64:$dst, variable_ops),
                           "call{q}\t{*}$dst", [(X86call GR64:$dst)]>,
-                        Requires<[NotWin64]>;
+                        Requires<[In64BitMode, NotWin64]>;
     def CALL64m       : I<0xFF, MRM2m, (outs), (ins i64mem:$dst, variable_ops),
                           "call{q}\t{*}$dst", [(X86call (loadi64 addr:$dst))]>,
-                        Requires<[NotWin64]>;
+                        Requires<[In64BitMode, NotWin64]>;
                         
     def FARCALL64   : RI<0xFF, MRM3m, (outs), (ins opaque80mem:$dst),
                          "lcall{q}\t{*}$dst", []>;
@@ -1325,14 +1326,13 @@ def BT64mr : RI<0xA3, MRMDestMem, (outs), (ins i64mem:$src1, GR64:$src2),
                 []
                 >, TB;
 
-def BT64ri8 : Ii8<0xBA, MRM4r, (outs), (ins GR64:$src1, i64i8imm:$src2),
+def BT64ri8 : RIi8<0xBA, MRM4r, (outs), (ins GR64:$src1, i64i8imm:$src2),
                 "bt{q}\t{$src2, $src1|$src1, $src2}",
-                [(set EFLAGS, (X86bt GR64:$src1, i64immSExt8:$src2))]>, TB,
-		REX_W;
+                [(set EFLAGS, (X86bt GR64:$src1, i64immSExt8:$src2))]>, TB;
 // Note that these instructions don't need FastBTMem because that
 // only applies when the other operand is in a register. When it's
 // an immediate, bt is still fast.
-def BT64mi8 : Ii8<0xBA, MRM4m, (outs), (ins i64mem:$src1, i64i8imm:$src2),
+def BT64mi8 : RIi8<0xBA, MRM4m, (outs), (ins i64mem:$src1, i64i8imm:$src2),
                 "bt{q}\t{$src2, $src1|$src1, $src2}",
                 [(set EFLAGS, (X86bt (loadi64 addr:$src1),
                                      i64immSExt8:$src2))]>, TB;
@@ -1611,16 +1611,6 @@ def TLSCall_64 : I<0, Pseudo, (outs), (ins i64mem:$sym),
                   [(X86TLSCall addr:$sym)]>,
                   Requires<[In64BitMode]>;
 
-let AddedComplexity = 5, isCodeGenOnly = 1 in
-def MOV64GSrm : RI<0x8B, MRMSrcMem, (outs GR64:$dst), (ins i64mem:$src),
-                 "movq\t%gs:$src, $dst",
-                 [(set GR64:$dst, (gsload addr:$src))]>, SegGS;
-
-let AddedComplexity = 5, isCodeGenOnly = 1 in
-def MOV64FSrm : RI<0x8B, MRMSrcMem, (outs GR64:$dst), (ins i64mem:$src),
-                 "movq\t%fs:$src, $dst",
-                 [(set GR64:$dst, (fsload addr:$src))]>, SegFS;
-
 //===----------------------------------------------------------------------===//
 // Atomic Instructions
 //===----------------------------------------------------------------------===//
@@ -1631,7 +1621,7 @@ def Int_MemBarrierNoSSE64  : RI<0x09, MRM1r, (outs), (ins GR64:$zero),
                            "lock\n\t"
                            "or{q}\t{$zero, (%rsp)|(%rsp), $zero}",
                            [(X86MemBarrierNoSSE GR64:$zero)]>,
-													 Requires<[In64BitMode]>, LOCK;
+                           Requires<[In64BitMode]>, LOCK;
 
 let Defs = [RAX, EFLAGS], Uses = [RAX] in {
 def LCMPXCHG64 : RI<0xB1, MRMDestMem, (outs), (ins i64mem:$ptr, GR64:$swap),
@@ -1679,7 +1669,7 @@ def XCHG64ar : RI<0x90, AddRegFrm, (outs), (ins GR64:$src),
 // Optimized codegen when the non-memory output is not used.
 let Defs = [EFLAGS], mayLoad = 1, mayStore = 1 in {
 // FIXME: Use normal add / sub instructions and add lock prefix dynamically.
-def LOCK_ADD64mr : RI<0x03, MRMDestMem, (outs), (ins i64mem:$dst, GR64:$src2),
+def LOCK_ADD64mr : RI<0x01, MRMDestMem, (outs), (ins i64mem:$dst, GR64:$src2),
                       "lock\n\t"
                       "add{q}\t{$src2, $dst|$dst, $src2}", []>, LOCK;
 def LOCK_ADD64mi8 : RIi8<0x83, MRM0m, (outs),

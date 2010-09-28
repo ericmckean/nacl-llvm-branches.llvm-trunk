@@ -27,6 +27,7 @@
 #include "llvm/Target/TargetData.h"
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/SystemUtils.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/System/Path.h"
@@ -54,12 +55,18 @@ namespace {
 bool BugDriver::writeProgramToFile(const std::string &Filename,
                                    const Module *M) const {
   std::string ErrInfo;
-  raw_fd_ostream Out(Filename.c_str(), ErrInfo,
-                     raw_fd_ostream::F_Binary);
-  if (!ErrInfo.empty()) return true;
-  
-  WriteBitcodeToFile(M, Out);
-  return false;
+  tool_output_file Out(Filename.c_str(), ErrInfo,
+                       raw_fd_ostream::F_Binary);
+  if (ErrInfo.empty()) {
+    WriteBitcodeToFile(M, Out.os());
+    Out.os().close();
+    if (!Out.os().has_error()) {
+      Out.keep();
+      return false;
+    }
+  }
+  Out.os().clear_error();
+  return true;
 }
 
 
@@ -125,29 +132,27 @@ bool BugDriver::runPasses(Module *Program,
   }
   
   std::string ErrInfo;
-  raw_fd_ostream InFile(inputFilename.c_str(), ErrInfo,
-                        raw_fd_ostream::F_Binary);
+  tool_output_file InFile(inputFilename.c_str(), ErrInfo,
+                          raw_fd_ostream::F_Binary);
   
   
   if (!ErrInfo.empty()) {
     errs() << "Error opening bitcode file: " << inputFilename.str() << "\n";
     return 1;
   }
-  WriteBitcodeToFile(Program, InFile);
-  InFile.close();
+  WriteBitcodeToFile(Program, InFile.os());
+  InFile.os().close();
+  if (InFile.os().has_error()) {
+    errs() << "Error writing bitcode file: " << inputFilename.str() << "\n";
+    InFile.os().clear_error();
+    return 1;
+  }
+  InFile.keep();
 
   // setup the child process' arguments
   SmallVector<const char*, 8> Args;
-  std::string Opt;
-  llvm::StringRef TN(ToolName);
-  if (TN.find('/') == llvm::StringRef::npos) {
-    Opt = "opt";
-  } else {
-    std::pair<llvm::StringRef, llvm::StringRef> P = TN.rsplit('/');
-    Opt = P.first.str() + "/" + "opt";
-  }
-
-  sys::Path tool = sys::Program::FindProgramByName(Opt);
+  sys::Path tool = FindExecutable("opt", getToolName(), (void*)"opt");
+  std::string Opt = tool.str();
   if (UseValgrind) {
     Args.push_back("valgrind");
     Args.push_back("--error-exitcode=1");

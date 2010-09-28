@@ -140,9 +140,9 @@ namespace {
       }
     }
 
-    bool operator!=(const Expression &other) const {
+    /*bool operator!=(const Expression &other) const {
       return !(*this == other);
-    }
+    }*/
   };
 
   class ValueTable {
@@ -165,7 +165,6 @@ namespace {
       Expression create_expression(CastInst* C);
       Expression create_expression(GetElementPtrInst* G);
       Expression create_expression(CallInst* C);
-      Expression create_expression(Constant* C);
       Expression create_expression(ExtractValueInst* C);
       Expression create_expression(InsertValueInst* C);
       
@@ -177,7 +176,6 @@ namespace {
       void add(Value *V, uint32_t num);
       void clear();
       void erase(Value *v);
-      unsigned size();
       void setAliasAnalysis(AliasAnalysis* A) { AA = A; }
       AliasAnalysis *getAliasAnalysis() const { return AA; }
       void setMemDep(MemoryDependenceAnalysis* M) { MD = M; }
@@ -1311,7 +1309,7 @@ static Value *ConstructSSAForLoadSet(LoadInst *LI,
   // Otherwise, we have to construct SSA form.
   SmallVector<PHINode*, 8> NewPHIs;
   SSAUpdater SSAUpdate(&NewPHIs);
-  SSAUpdate.Initialize(LI);
+  SSAUpdate.Initialize(LI->getType(), LI->getName());
   
   const Type *LoadTy = LI->getType();
   
@@ -1534,8 +1532,14 @@ bool GVN::processNonLocalLoad(LoadInst *LI,
       return false;
     if (Blockers.count(TmpBB))
       return false;
+    
+    // If any of these blocks has more than one successor (i.e. if the edge we
+    // just traversed was critical), then there are other paths through this 
+    // block along which the load may not be anticipated.  Hoisting the load 
+    // above this block would be adding the load to execution paths along
+    // which it was not previously executed.
     if (TmpBB->getTerminator()->getNumSuccessors() != 1)
-      allSingleSucc = false;
+      return false;
   }
 
   assert(TmpBB);
