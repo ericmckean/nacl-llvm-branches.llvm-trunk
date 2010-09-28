@@ -18,7 +18,7 @@
 #include "ARMAddressingModes.h"
 #include "ARMMachineFunctionInfo.h"
 #include "ARMInstrInfo.h"
-#include "ARMSFIStack.h" // @LOCALMOD
+#include "ARMNaClRewritePass.h" // @LOCALMOD
 #include "Thumb2InstrInfo.h"
 #include "llvm/CodeGen/MachineConstantPool.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
@@ -53,7 +53,6 @@ STATISTIC(NumJTInserted, "Number of jump table intermediate blocks inserted");
 cl::opt<bool> FlagSfiCpDisableVerify("sfi-cp-disable-verify");
 cl::opt<bool> FlagSfiCpFudge("sfi-cp-fudge");
 cl::opt<int> FlagSfiCpFudgePercent("sfi-cp-fudge-percent", cl::init(85));
-extern cl::opt<bool> FlagSfiBranch;
 // @LOCALMOD-END
 
 static cl::opt<bool>

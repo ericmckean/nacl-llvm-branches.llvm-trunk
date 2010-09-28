@@ -47,12 +47,15 @@
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include <sstream>
-using namespace llvm;
 
 // @LOCALMOD-START
 #include "llvm/Support/CommandLine.h"
-extern cl::opt<bool> FlagSfiStore;
+namespace llvm {
+  extern cl::opt<bool> FlagSfiStore;
+}
 // @LOCALMOD-END
+
+using namespace llvm;
 
 STATISTIC(NumTailCalls, "Number of tail calls");
 

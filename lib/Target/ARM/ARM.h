@@ -133,9 +133,7 @@ FunctionPass *createThumb2ITBlockPass();
 FunctionPass *createThumb2SizeReductionPass();
 
 /* @LOCALMOD-START */
-FunctionPass *createARMSFIBranchPass();
-FunctionPass *createARMSFIPlacementPass();
-FunctionPass *createARMSFIStackPass();
+FunctionPass *createARMNaClRewritePass();
 /* @LOCALMOD-END */
 
 extern Target TheARMTarget, TheThumbTarget;

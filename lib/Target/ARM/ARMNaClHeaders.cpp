@@ -1,4 +1,4 @@
-//===-- ARMSFIHeaders.cpp - Print SFI headers to an ARM .s file -----------===//
+//===-- ARMNaClHeaders.cpp - Print SFI headers to an ARM .s file -----------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -13,18 +13,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Support/CommandLine.h"
+#include "ARMNaClRewritePass.h"
 #include <string>
 
-
 using namespace llvm;
-
-extern cl::opt<bool> FlagSfiZeroMask;
-extern cl::opt<bool> FlagSfiStore;
-extern cl::opt<bool> FlagSfiStack;
-extern cl::opt<bool> FlagSfiBranch;
-extern cl::opt<bool> FlagSfiData;
-
 
 void EmitSFIHeaders(raw_ostream &O) {
   O << " @ ========================================\n";

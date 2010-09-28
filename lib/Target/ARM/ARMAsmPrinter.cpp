@@ -66,13 +66,11 @@ namespace llvm {
   }
 }
 
-// @LOCALMOD
-cl::opt<bool> FlagSfiZeroMask("sfi-zero-mask");
-
-extern cl::opt<bool> FlagSfiBranch;
-cl::opt<bool> FlagSfiData("sfi-data",
-                          cl::desc("use illegal at data bundle beginning"));
-
+// @LOCALMOD-START
+namespace llvm {
+  extern cl::opt<bool> FlagSfiBranch;
+  extern cl::opt<bool> FlagSfiData;
+}
 // @LOCALMOD-END
 
 namespace {
