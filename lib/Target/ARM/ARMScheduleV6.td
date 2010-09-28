@@ -33,7 +33,10 @@ def ARMV6Itineraries : ProcessorItineraries<
   // Unary Instructions that produce a result
   InstrItinData<IIC_iUNAr    , [InstrStage<1, [V6_Pipe]>], [2, 2]>,
   InstrItinData<IIC_iUNAsi   , [InstrStage<1, [V6_Pipe]>], [2, 1]>,
-  InstrItinData<IIC_iUNAsr   , [InstrStage<2, [V6_Pipe]>], [3, 2, 1]>,
+  //
+  // Zero and sign extension instructions
+  InstrItinData<IIC_iEXTr    , [InstrStage<1, [V6_Pipe]>], [1, 1]>,
+  InstrItinData<IIC_iEXTAr   , [InstrStage<1, [V6_Pipe]>], [2, 2, 1]>,
   //
   // Compare instructions
   InstrItinData<IIC_iCMPi    , [InstrStage<1, [V6_Pipe]>], [2]>,
@@ -46,6 +49,8 @@ def ARMV6Itineraries : ProcessorItineraries<
   InstrItinData<IIC_iMOVr    , [InstrStage<1, [V6_Pipe]>], [2, 2]>,
   InstrItinData<IIC_iMOVsi   , [InstrStage<1, [V6_Pipe]>], [2, 1]>,
   InstrItinData<IIC_iMOVsr   , [InstrStage<2, [V6_Pipe]>], [3, 2, 1]>,
+  InstrItinData<IIC_iMOVix2  , [InstrStage<1, [V6_Pipe]>,
+                                InstrStage<1, [V6_Pipe]>], [2]>,
   //
   // Move instructions, conditional
   InstrItinData<IIC_iCMOVi   , [InstrStage<1, [V6_Pipe]>], [3]>,
@@ -85,6 +90,16 @@ def ARMV6Itineraries : ProcessorItineraries<
   //
   // Load multiple
   InstrItinData<IIC_iLoadm   , [InstrStage<3, [V6_Pipe]>]>,
+
+  //
+  // Load multiple plus branch
+  InstrItinData<IIC_iLoadmBr , [InstrStage<3, [V6_Pipe]>,
+                                InstrStage<1, [V6_Pipe]>]>,
+
+  //
+  // iLoadi + iALUr for t2LDRpci_pic.
+  InstrItinData<IIC_iLoadiALU, [InstrStage<1, [V6_Pipe]>,
+                                InstrStage<1, [V6_Pipe]>], [3, 1]>,
 
   // Integer store pipeline
   //

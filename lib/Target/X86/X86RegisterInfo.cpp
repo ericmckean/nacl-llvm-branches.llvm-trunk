@@ -159,46 +159,21 @@ unsigned X86RegisterInfo::getX86RegNum(unsigned RegNo) {
   case X86::YMM7: case X86::YMM15: case X86::MM7:
     return 7;
 
-  case X86::ES:
-    return 0;
-  case X86::CS:
-    return 1;
-  case X86::SS:
-    return 2;
-  case X86::DS:
-    return 3;
-  case X86::FS:
-    return 4;
-  case X86::GS:
-    return 5;
+  case X86::ES: return 0;
+  case X86::CS: return 1;
+  case X86::SS: return 2;
+  case X86::DS: return 3;
+  case X86::FS: return 4;
+  case X86::GS: return 5;
 
-  case X86::CR0:
-    return 0;
-  case X86::CR1:
-    return 1;
-  case X86::CR2:
-    return 2;
-  case X86::CR3:
-    return 3;
-  case X86::CR4:
-    return 4;
-
-  case X86::DR0:
-    return 0;
-  case X86::DR1:
-    return 1;
-  case X86::DR2:
-    return 2;
-  case X86::DR3:
-    return 3;
-  case X86::DR4:
-    return 4;
-  case X86::DR5:
-    return 5;
-  case X86::DR6:
-    return 6;
-  case X86::DR7:
-    return 7;
+  case X86::CR0: case X86::CR8 : case X86::DR0: return 0;
+  case X86::CR1: case X86::CR9 : case X86::DR1: return 1;
+  case X86::CR2: case X86::CR10: case X86::DR2: return 2;
+  case X86::CR3: case X86::CR11: case X86::DR3: return 3;
+  case X86::CR4: case X86::CR12: case X86::DR4: return 4;
+  case X86::CR5: case X86::CR13: case X86::DR5: return 5;
+  case X86::CR6: case X86::CR14: case X86::DR6: return 6;
+  case X86::CR7: case X86::CR15: case X86::DR7: return 7;
 
   // Pseudo index registers are equivalent to a "none"
   // scaled index (See Intel Manual 2A, table 2-3)
@@ -626,10 +601,9 @@ eliminateCallFramePseudoInstr(MachineFunction &MF, MachineBasicBlock &MBB,
   MBB.erase(I);
 }
 
-unsigned
+void
 X86RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
-                                     int SPAdj, FrameIndexValue *Value,
-                                     RegScavenger *RS) const{
+                                     int SPAdj, RegScavenger *RS) const{
   assert(SPAdj == 0 && "Unexpected");
 
   unsigned i = 0;
@@ -676,7 +650,6 @@ X86RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
     uint64_t Offset = FIOffset + (uint64_t)MI.getOperand(i+3).getOffset();
     MI.getOperand(i+3).setOffset(Offset);
   }
-  return 0;
 }
 
 void
@@ -766,7 +739,7 @@ void mergeSPUpdatesUp(MachineBasicBlock &MBB, MachineBasicBlock::iterator &MBBI,
   }
 }
 
-/// mergeSPUpdatesUp - Merge two stack-manipulating instructions lower iterator.
+/// mergeSPUpdatesDown - Merge two stack-manipulating instructions lower iterator.
 static
 void mergeSPUpdatesDown(MachineBasicBlock &MBB,
                         MachineBasicBlock::iterator &MBBI,
@@ -1089,7 +1062,17 @@ void X86RegisterInfo::emitPrologue(MachineFunction &MF) const {
   DL = MBB.findDebugLoc(MBBI);
 
   // Adjust stack pointer: ESP -= numbytes.
-  if (NumBytes >= 4096 && Subtarget->isTargetCygMing()) {
+
+  // Windows and cygwin/mingw require a prologue helper routine when allocating
+  // more than 4K bytes on the stack.  Windows uses __chkstk and cygwin/mingw
+  // uses __alloca.  __alloca and the 32-bit version of __chkstk will probe
+  // the stack and adjust the stack pointer in one go.  The 64-bit version
+  // of __chkstk is only responsible for probing the stack.  The 64-bit
+  // prologue is responsible for adjusting the stack pointer.  Touching the
+  // stack at 4K increments is necessary to ensure that the guard pages used
+  // by the OS virtual memory manager are allocated in correct sequence.
+  if (NumBytes >= 4096 &&
+     (Subtarget->isTargetCygMing() || Subtarget->isTargetWin32())) {
     // Check, whether EAX is livein for this function.
     bool isEAXAlive = false;
     for (MachineRegisterInfo::livein_iterator
@@ -1100,16 +1083,17 @@ void X86RegisterInfo::emitPrologue(MachineFunction &MF) const {
                     Reg == X86::AH || Reg == X86::AL);
     }
 
-    // Function prologue calls _alloca to probe the stack when allocating more
-    // than 4k bytes in one go. Touching the stack at 4K increments is necessary
-    // to ensure that the guard pages used by the OS virtual memory manager are
-    // allocated in correct sequence.
+
+    const char *StackProbeSymbol =
+      Subtarget->isTargetWindows() ? "_chkstk" : "_alloca";
+    unsigned CallOp = Is64Bit ? X86::CALL64pcrel32 : X86::CALLpcrel32;
     if (!isEAXAlive) {
       BuildMI(MBB, MBBI, DL, TII.get(X86::MOV32ri), X86::EAX)
         .addImm(NumBytes);
-      BuildMI(MBB, MBBI, DL, TII.get(X86::CALLpcrel32))
-        .addExternalSymbol("_alloca")
-        .addReg(StackPtr, RegState::Define | RegState::Implicit);
+      BuildMI(MBB, MBBI, DL, TII.get(CallOp))
+        .addExternalSymbol(StackProbeSymbol)
+        .addReg(StackPtr,    RegState::Define | RegState::Implicit)
+        .addReg(X86::EFLAGS, RegState::Define | RegState::Implicit);
     } else {
       // Save EAX
       BuildMI(MBB, MBBI, DL, TII.get(X86::PUSH32r))
@@ -1119,9 +1103,10 @@ void X86RegisterInfo::emitPrologue(MachineFunction &MF) const {
       // allocated bytes for EAX.
       BuildMI(MBB, MBBI, DL, TII.get(X86::MOV32ri), X86::EAX)
         .addImm(NumBytes - 4);
-      BuildMI(MBB, MBBI, DL, TII.get(X86::CALLpcrel32))
-        .addExternalSymbol("_alloca")
-        .addReg(StackPtr, RegState::Define | RegState::Implicit);
+      BuildMI(MBB, MBBI, DL, TII.get(CallOp))
+        .addExternalSymbol(StackProbeSymbol)
+        .addReg(StackPtr,    RegState::Define | RegState::Implicit)
+        .addReg(X86::EFLAGS, RegState::Define | RegState::Implicit);
 
       // Restore EAX
       MachineInstr *MI = addRegOffset(BuildMI(MF, DL, TII.get(X86::MOV32rm),

@@ -275,13 +275,31 @@ ARMBaseInstrInfo::AnalyzeBranch(MachineBasicBlock &MBB,MachineBasicBlock *&TBB,
 
   // Get the instruction before it if it is a terminator.
   MachineInstr *SecondLastInst = I;
+  unsigned SecondLastOpc = SecondLastInst->getOpcode();
+
+  // If AllowModify is true and the block ends with two or more unconditional
+  // branches, delete all but the first unconditional branch.
+  if (AllowModify && isUncondBranchOpcode(LastOpc)) {
+    while (isUncondBranchOpcode(SecondLastOpc)) {
+      LastInst->eraseFromParent();
+      LastInst = SecondLastInst;
+      LastOpc = LastInst->getOpcode();
+      if (I == MBB.begin() || !isUnpredicatedTerminator(--I)) {
+        // Return now the only terminator is an unconditional branch.
+        TBB = LastInst->getOperand(0).getMBB();
+        return false;
+      } else {
+        SecondLastInst = I;
+        SecondLastOpc = SecondLastInst->getOpcode();
+      }
+    }
+  }
 
   // If there are three terminators, we don't know what sort of block this is.
   if (SecondLastInst && I != MBB.begin() && isUnpredicatedTerminator(--I))
     return true;
 
   // If the block ends with a B and a Bcc, handle it.
-  unsigned SecondLastOpc = SecondLastInst->getOpcode();
   if (isCondBranchOpcode(SecondLastOpc) && isUncondBranchOpcode(LastOpc)) {
     TBB =  SecondLastInst->getOperand(0).getMBB();
     Cond.push_back(SecondLastInst->getOperand(1));
@@ -573,84 +591,6 @@ unsigned ARMBaseInstrInfo::GetInstSizeInBytes(const MachineInstr *MI) const {
   return 0; // Not reached
 }
 
-unsigned
-ARMBaseInstrInfo::isLoadFromStackSlot(const MachineInstr *MI,
-                                      int &FrameIndex) const {
-  switch (MI->getOpcode()) {
-  default: break;
-  case ARM::LDR:
-  case ARM::t2LDRs:  // FIXME: don't use t2LDRs to access frame.
-    if (MI->getOperand(1).isFI() &&
-        MI->getOperand(2).isReg() &&
-        MI->getOperand(3).isImm() &&
-        MI->getOperand(2).getReg() == 0 &&
-        MI->getOperand(3).getImm() == 0) {
-      FrameIndex = MI->getOperand(1).getIndex();
-      return MI->getOperand(0).getReg();
-    }
-    break;
-  case ARM::t2LDRi12:
-  case ARM::tRestore:
-    if (MI->getOperand(1).isFI() &&
-        MI->getOperand(2).isImm() &&
-        MI->getOperand(2).getImm() == 0) {
-      FrameIndex = MI->getOperand(1).getIndex();
-      return MI->getOperand(0).getReg();
-    }
-    break;
-  case ARM::VLDRD:
-  case ARM::VLDRS:
-    if (MI->getOperand(1).isFI() &&
-        MI->getOperand(2).isImm() &&
-        MI->getOperand(2).getImm() == 0) {
-      FrameIndex = MI->getOperand(1).getIndex();
-      return MI->getOperand(0).getReg();
-    }
-    break;
-  }
-
-  return 0;
-}
-
-unsigned
-ARMBaseInstrInfo::isStoreToStackSlot(const MachineInstr *MI,
-                                     int &FrameIndex) const {
-  switch (MI->getOpcode()) {
-  default: break;
-  case ARM::STR:
-  case ARM::t2STRs: // FIXME: don't use t2STRs to access frame.
-    if (MI->getOperand(1).isFI() &&
-        MI->getOperand(2).isReg() &&
-        MI->getOperand(3).isImm() &&
-        MI->getOperand(2).getReg() == 0 &&
-        MI->getOperand(3).getImm() == 0) {
-      FrameIndex = MI->getOperand(1).getIndex();
-      return MI->getOperand(0).getReg();
-    }
-    break;
-  case ARM::t2STRi12:
-  case ARM::tSpill:
-    if (MI->getOperand(1).isFI() &&
-        MI->getOperand(2).isImm() &&
-        MI->getOperand(2).getImm() == 0) {
-      FrameIndex = MI->getOperand(1).getIndex();
-      return MI->getOperand(0).getReg();
-    }
-    break;
-  case ARM::VSTRD:
-  case ARM::VSTRS:
-    if (MI->getOperand(1).isFI() &&
-        MI->getOperand(2).isImm() &&
-        MI->getOperand(2).getImm() == 0) {
-      FrameIndex = MI->getOperand(1).getIndex();
-      return MI->getOperand(0).getReg();
-    }
-    break;
-  }
-
-  return 0;
-}
-
 void ARMBaseInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
                                    MachineBasicBlock::iterator I, DebugLoc DL,
                                    unsigned DestReg, unsigned SrcReg,
@@ -715,8 +655,9 @@ storeRegToStackSlot(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
   unsigned Align = MFI.getObjectAlignment(FI);
 
   MachineMemOperand *MMO =
-    MF.getMachineMemOperand(PseudoSourceValue::getFixedStack(FI),
-                            MachineMemOperand::MOStore, 0,
+    MF.getMachineMemOperand(MachinePointerInfo(
+                                         PseudoSourceValue::getFixedStack(FI)),
+                            MachineMemOperand::MOStore,
                             MFI.getObjectSize(FI),
                             Align);
 
@@ -747,9 +688,8 @@ storeRegToStackSlot(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
   case ARM::QPRRegClassID:
   case ARM::QPR_VFP2RegClassID:
   case ARM::QPR_8RegClassID:
-    // FIXME: Neon instructions should support predicates
-    if (Align >= 16 && getRegisterInfo().canRealignStack(MF)) {
-      AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::VST1q))
+    if (Align >= 16 && getRegisterInfo().needsStackRealignment(MF)) {
+      AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::VST1q64Pseudo))
                      .addFrameIndex(FI).addImm(16)
                      .addReg(SrcReg, getKillRegState(isKill))
                      .addMemOperand(MMO));
@@ -757,7 +697,7 @@ storeRegToStackSlot(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
       AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::VSTMQ))
                      .addReg(SrcReg, getKillRegState(isKill))
                      .addFrameIndex(FI)
-                     .addImm(ARM_AM::getAM5Opc(ARM_AM::ia, 4))
+                     .addImm(ARM_AM::getAM4ModeImm(ARM_AM::ia))
                      .addMemOperand(MMO));
     }
     break;
@@ -766,18 +706,15 @@ storeRegToStackSlot(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
     if (Align >= 16 && getRegisterInfo().canRealignStack(MF)) {
       // FIXME: It's possible to only store part of the QQ register if the
       // spilled def has a sub-register index.
-      MachineInstrBuilder MIB = BuildMI(MBB, I, DL, get(ARM::VST1d64Q))
-        .addFrameIndex(FI).addImm(16);
-      MIB = AddDReg(MIB, SrcReg, ARM::dsub_0, getKillRegState(isKill), TRI);
-      MIB = AddDReg(MIB, SrcReg, ARM::dsub_1, 0, TRI);
-      MIB = AddDReg(MIB, SrcReg, ARM::dsub_2, 0, TRI);
-      MIB = AddDReg(MIB, SrcReg, ARM::dsub_3, 0, TRI);
-      AddDefaultPred(MIB.addMemOperand(MMO));
+      AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::VST1d64QPseudo))
+                     .addFrameIndex(FI).addImm(16)
+                     .addReg(SrcReg, getKillRegState(isKill))
+                     .addMemOperand(MMO));
     } else {
       MachineInstrBuilder MIB =
         AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::VSTMD))
                        .addFrameIndex(FI)
-                       .addImm(ARM_AM::getAM5Opc(ARM_AM::ia, 4)))
+                       .addImm(ARM_AM::getAM4ModeImm(ARM_AM::ia)))
         .addMemOperand(MMO);
       MIB = AddDReg(MIB, SrcReg, ARM::dsub_0, getKillRegState(isKill), TRI);
       MIB = AddDReg(MIB, SrcReg, ARM::dsub_1, 0, TRI);
@@ -789,7 +726,7 @@ storeRegToStackSlot(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
     MachineInstrBuilder MIB =
       AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::VSTMD))
                      .addFrameIndex(FI)
-                     .addImm(ARM_AM::getAM5Opc(ARM_AM::ia, 4)))
+                     .addImm(ARM_AM::getAM4ModeImm(ARM_AM::ia)))
       .addMemOperand(MMO);
     MIB = AddDReg(MIB, SrcReg, ARM::dsub_0, getKillRegState(isKill), TRI);
     MIB = AddDReg(MIB, SrcReg, ARM::dsub_1, 0, TRI);
@@ -806,6 +743,54 @@ storeRegToStackSlot(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
   }
 }
 
+unsigned
+ARMBaseInstrInfo::isStoreToStackSlot(const MachineInstr *MI,
+                                     int &FrameIndex) const {
+  switch (MI->getOpcode()) {
+  default: break;
+  case ARM::STR:
+  case ARM::t2STRs: // FIXME: don't use t2STRs to access frame.
+    if (MI->getOperand(1).isFI() &&
+        MI->getOperand(2).isReg() &&
+        MI->getOperand(3).isImm() &&
+        MI->getOperand(2).getReg() == 0 &&
+        MI->getOperand(3).getImm() == 0) {
+      FrameIndex = MI->getOperand(1).getIndex();
+      return MI->getOperand(0).getReg();
+    }
+    break;
+  case ARM::t2STRi12:
+  case ARM::tSpill:
+  case ARM::VSTRD:
+  case ARM::VSTRS:
+    if (MI->getOperand(1).isFI() &&
+        MI->getOperand(2).isImm() &&
+        MI->getOperand(2).getImm() == 0) {
+      FrameIndex = MI->getOperand(1).getIndex();
+      return MI->getOperand(0).getReg();
+    }
+    break;
+  case ARM::VST1q64Pseudo:
+    if (MI->getOperand(0).isFI() &&
+        MI->getOperand(2).getSubReg() == 0) {
+      FrameIndex = MI->getOperand(0).getIndex();
+      return MI->getOperand(2).getReg();
+    }
+    break;
+  case ARM::VSTMQ:
+    if (MI->getOperand(1).isFI() &&
+        MI->getOperand(2).isImm() &&
+        MI->getOperand(2).getImm() == ARM_AM::getAM4ModeImm(ARM_AM::ia) &&
+        MI->getOperand(0).getSubReg() == 0) {
+      FrameIndex = MI->getOperand(1).getIndex();
+      return MI->getOperand(0).getReg();
+    }
+    break;
+  }
+
+  return 0;
+}
+
 void ARMBaseInstrInfo::
 loadRegFromStackSlot(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
                      unsigned DestReg, int FI,
@@ -817,8 +802,9 @@ loadRegFromStackSlot(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
   MachineFrameInfo &MFI = *MF.getFrameInfo();
   unsigned Align = MFI.getObjectAlignment(FI);
   MachineMemOperand *MMO =
-    MF.getMachineMemOperand(PseudoSourceValue::getFixedStack(FI),
-                            MachineMemOperand::MOLoad, 0,
+    MF.getMachineMemOperand(
+                    MachinePointerInfo(PseudoSourceValue::getFixedStack(FI)),
+                            MachineMemOperand::MOLoad,
                             MFI.getObjectSize(FI),
                             Align);
 
@@ -846,31 +832,28 @@ loadRegFromStackSlot(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
   case ARM::QPRRegClassID:
   case ARM::QPR_VFP2RegClassID:
   case ARM::QPR_8RegClassID:
-    if (Align >= 16 && getRegisterInfo().canRealignStack(MF)) {
-      AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::VLD1q), DestReg)
+    if (Align >= 16 && getRegisterInfo().needsStackRealignment(MF)) {
+      AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::VLD1q64Pseudo), DestReg)
                      .addFrameIndex(FI).addImm(16)
                      .addMemOperand(MMO));
     } else {
       AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::VLDMQ), DestReg)
                      .addFrameIndex(FI)
-                     .addImm(ARM_AM::getAM5Opc(ARM_AM::ia, 4))
+                     .addImm(ARM_AM::getAM4ModeImm(ARM_AM::ia))
                      .addMemOperand(MMO));
     }
     break;
   case ARM::QQPRRegClassID:
   case ARM::QQPR_VFP2RegClassID:
     if (Align >= 16 && getRegisterInfo().canRealignStack(MF)) {
-      MachineInstrBuilder MIB = BuildMI(MBB, I, DL, get(ARM::VLD1d64Q));
-      MIB = AddDReg(MIB, DestReg, ARM::dsub_0, RegState::Define, TRI);
-      MIB = AddDReg(MIB, DestReg, ARM::dsub_1, RegState::Define, TRI);
-      MIB = AddDReg(MIB, DestReg, ARM::dsub_2, RegState::Define, TRI);
-      MIB = AddDReg(MIB, DestReg, ARM::dsub_3, RegState::Define, TRI);
-      AddDefaultPred(MIB.addFrameIndex(FI).addImm(16).addMemOperand(MMO));
+      AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::VLD1d64QPseudo), DestReg)
+                     .addFrameIndex(FI).addImm(16)
+                     .addMemOperand(MMO));
     } else {
       MachineInstrBuilder MIB =
         AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::VLDMD))
                        .addFrameIndex(FI)
-                       .addImm(ARM_AM::getAM5Opc(ARM_AM::ia, 4)))
+                       .addImm(ARM_AM::getAM4ModeImm(ARM_AM::ia)))
         .addMemOperand(MMO);
       MIB = AddDReg(MIB, DestReg, ARM::dsub_0, RegState::Define, TRI);
       MIB = AddDReg(MIB, DestReg, ARM::dsub_1, RegState::Define, TRI);
@@ -882,7 +865,7 @@ loadRegFromStackSlot(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
     MachineInstrBuilder MIB =
       AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::VLDMD))
                      .addFrameIndex(FI)
-                     .addImm(ARM_AM::getAM5Opc(ARM_AM::ia, 4)))
+                     .addImm(ARM_AM::getAM4ModeImm(ARM_AM::ia)))
       .addMemOperand(MMO);
     MIB = AddDReg(MIB, DestReg, ARM::dsub_0, RegState::Define, TRI);
     MIB = AddDReg(MIB, DestReg, ARM::dsub_1, RegState::Define, TRI);
@@ -897,6 +880,54 @@ loadRegFromStackSlot(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
   default:
     llvm_unreachable("Unknown regclass!");
   }
+}
+
+unsigned
+ARMBaseInstrInfo::isLoadFromStackSlot(const MachineInstr *MI,
+                                      int &FrameIndex) const {
+  switch (MI->getOpcode()) {
+  default: break;
+  case ARM::LDR:
+  case ARM::t2LDRs:  // FIXME: don't use t2LDRs to access frame.
+    if (MI->getOperand(1).isFI() &&
+        MI->getOperand(2).isReg() &&
+        MI->getOperand(3).isImm() &&
+        MI->getOperand(2).getReg() == 0 &&
+        MI->getOperand(3).getImm() == 0) {
+      FrameIndex = MI->getOperand(1).getIndex();
+      return MI->getOperand(0).getReg();
+    }
+    break;
+  case ARM::t2LDRi12:
+  case ARM::tRestore:
+  case ARM::VLDRD:
+  case ARM::VLDRS:
+    if (MI->getOperand(1).isFI() &&
+        MI->getOperand(2).isImm() &&
+        MI->getOperand(2).getImm() == 0) {
+      FrameIndex = MI->getOperand(1).getIndex();
+      return MI->getOperand(0).getReg();
+    }
+    break;
+  case ARM::VLD1q64Pseudo:
+    if (MI->getOperand(1).isFI() &&
+        MI->getOperand(0).getSubReg() == 0) {
+      FrameIndex = MI->getOperand(1).getIndex();
+      return MI->getOperand(0).getReg();
+    }
+    break;
+  case ARM::VLDMQ:
+    if (MI->getOperand(1).isFI() &&
+        MI->getOperand(2).isImm() &&
+        MI->getOperand(2).getImm() == ARM_AM::getAM4ModeImm(ARM_AM::ia) &&
+        MI->getOperand(0).getSubReg() == 0) {
+      FrameIndex = MI->getOperand(1).getIndex();
+      return MI->getOperand(0).getReg();
+    }
+    break;
+  }
+
+  return 0;
 }
 
 MachineInstr*
@@ -923,6 +954,11 @@ static unsigned duplicateCPV(MachineFunction &MF, unsigned &CPI) {
 
   unsigned PCLabelId = AFI->createConstPoolEntryUId();
   ARMConstantPoolValue *NewCPV = 0;
+  // FIXME: The below assumes PIC relocation model and that the function
+  // is Thumb mode (t1 or t2). PCAdjustment would be 8 for ARM mode PIC, and
+  // zero for non-PIC in ARM or Thumb. The callers are all of thumb LDR
+  // instructions, so that's probably OK, but is PIC always correct when
+  // we get here?
   if (ACPV->isGlobalValue())
     NewCPV = new ARMConstantPoolValue(ACPV->getGV(), PCLabelId,
                                       ARMCP::CPValue, 4);
@@ -932,6 +968,9 @@ static unsigned duplicateCPV(MachineFunction &MF, unsigned &CPI) {
   else if (ACPV->isBlockAddress())
     NewCPV = new ARMConstantPoolValue(ACPV->getBlockAddress(), PCLabelId,
                                       ARMCP::CPBlockAddress, 4);
+  else if (ACPV->isLSDA())
+    NewCPV = new ARMConstantPoolValue(MF.getFunction(), PCLabelId,
+                                      ARMCP::CPLSDA, 4);
   else
     llvm_unreachable("Unexpected ARM constantpool value type!!");
   CPI = MCP->getConstantPoolIndex(NewCPV, MCPE.getAlignment());
@@ -1355,7 +1394,7 @@ bool llvm::rewriteARMFrameIndex(MachineInstr &MI, unsigned FrameRegIdx,
 }
 
 bool ARMBaseInstrInfo::
-AnalyzeCompare(const MachineInstr *MI, unsigned &SrcReg, int &CmpValue) const {
+AnalyzeCompare(const MachineInstr *MI, unsigned &SrcReg, int &CmpMask, int &CmpValue) const {
   switch (MI->getOpcode()) {
   default: break;
   case ARM::CMPri:
@@ -1363,17 +1402,70 @@ AnalyzeCompare(const MachineInstr *MI, unsigned &SrcReg, int &CmpValue) const {
   case ARM::t2CMPri:
   case ARM::t2CMPzri:
     SrcReg = MI->getOperand(0).getReg();
+    CmpMask = ~0;
     CmpValue = MI->getOperand(1).getImm();
+    return true;
+  case ARM::TSTri:
+  case ARM::t2TSTri:
+    SrcReg = MI->getOperand(0).getReg();
+    CmpMask = MI->getOperand(1).getImm();
+    CmpValue = 0;
     return true;
   }
 
   return false;
 }
 
-/// ConvertToSetZeroFlag - Convert the instruction to set the "zero" flag so
-/// that we can remove a "comparison with zero".
+static bool isSuitableForMask(const MachineInstr &MI, unsigned SrcReg,
+                              int CmpMask, bool CommonUse) {
+  switch (MI.getOpcode()) {
+    case ARM::ANDri:
+    case ARM::t2ANDri:
+      if (CmpMask != MI.getOperand(2).getImm())
+        return false;
+      if (SrcReg == MI.getOperand(CommonUse ? 1 : 0).getReg())
+        return true;
+      break;
+  }
+
+  return false;
+}
+
+/// OptimizeCompareInstr - Convert the instruction supplying the argument to the
+/// comparison into one that sets the zero bit in the flags register. Update the
+/// iterator *only* if a transformation took place.
 bool ARMBaseInstrInfo::
-ConvertToSetZeroFlag(MachineInstr *MI, MachineInstr *CmpInstr) const {
+OptimizeCompareInstr(MachineInstr *CmpInstr, unsigned SrcReg, int CmpMask,
+                     int CmpValue, MachineBasicBlock::iterator &MII) const {
+  if (CmpValue != 0)
+    return false;
+
+  MachineRegisterInfo &MRI = CmpInstr->getParent()->getParent()->getRegInfo();
+  MachineRegisterInfo::def_iterator DI = MRI.def_begin(SrcReg);
+  if (llvm::next(DI) != MRI.def_end())
+    // Only support one definition.
+    return false;
+
+  MachineInstr *MI = &*DI;
+
+  // Masked compares sometimes use the same register as the corresponding 'and'.
+  if (CmpMask != ~0) {
+      if (!isSuitableForMask(*MI, SrcReg, CmpMask, false)) {
+      MI = 0;
+      for (MachineRegisterInfo::use_iterator UI = MRI.use_begin(SrcReg),
+           UE = MRI.use_end(); UI != UE; ++UI) {
+        if (UI->getParent() != CmpInstr->getParent()) continue;
+        MachineInstr &PotentialAND = *UI;
+        if (!isSuitableForMask(PotentialAND, SrcReg, CmpMask, true))
+          continue;
+        SrcReg = PotentialAND.getOperand(0).getReg();
+        MI = &PotentialAND;
+        break;
+      }
+      if (!MI) return false;
+    }
+  }
+
   // Conservatively refuse to convert an instruction which isn't in the same BB
   // as the comparison.
   if (MI->getParent() != CmpInstr->getParent())
@@ -1381,7 +1473,8 @@ ConvertToSetZeroFlag(MachineInstr *MI, MachineInstr *CmpInstr) const {
 
   // Check that CPSR isn't set between the comparison instruction and the one we
   // want to change.
-  MachineBasicBlock::const_iterator I = CmpInstr, E = MI;
+  MachineBasicBlock::const_iterator I = CmpInstr, E = MI,
+    B = MI->getParent()->begin();
   --I;
   for (; I != E; --I) {
     const MachineInstr &Instr = *I;
@@ -1395,22 +1488,107 @@ ConvertToSetZeroFlag(MachineInstr *MI, MachineInstr *CmpInstr) const {
       if (MO.getReg() == ARM::CPSR)
         return false;
     }
+
+    if (I == B)
+      // The 'and' is below the comparison instruction.
+      return false;
   }
 
   // Set the "zero" bit in CPSR.
   switch (MI->getOpcode()) {
   default: break;
   case ARM::ADDri:
+  case ARM::ANDri:
+  case ARM::t2ANDri:
   case ARM::SUBri:
   case ARM::t2ADDri:
-  case ARM::t2SUBri: {
+  case ARM::t2SUBri:
     MI->RemoveOperand(5);
-    MachineInstrBuilder MB(MI);
-    MB.addReg(ARM::CPSR, RegState::Define | RegState::Implicit);
+    MachineInstrBuilder(MI)
+      .addReg(ARM::CPSR, RegState::Define | RegState::Implicit);
+    MII = llvm::next(MachineBasicBlock::iterator(CmpInstr));
     CmpInstr->eraseFromParent();
     return true;
   }
-  }
 
   return false;
+}
+
+unsigned
+ARMBaseInstrInfo::getNumMicroOps(const MachineInstr *MI,
+                                 const InstrItineraryData *ItinData) const {
+  if (!ItinData || ItinData->isEmpty())
+    return 1;
+
+  const TargetInstrDesc &Desc = MI->getDesc();
+  unsigned Class = Desc.getSchedClass();
+  unsigned UOps = ItinData->Itineraries[Class].NumMicroOps;
+  if (UOps)
+    return UOps;
+
+  unsigned Opc = MI->getOpcode();
+  switch (Opc) {
+  default:
+    llvm_unreachable("Unexpected multi-uops instruction!");
+    break;
+  case ARM::VLDMQ:
+  case ARM::VSTMQ:
+    return 2;
+
+  // The number of uOps for load / store multiple are determined by the number
+  // registers.
+  // On Cortex-A8, each pair of register loads / stores can be scheduled on the
+  // same cycle. The scheduling for the first load / store must be done
+  // separately by assuming the the address is not 64-bit aligned.
+  // On Cortex-A9, the formula is simply (#reg / 2) + (#reg % 2). If the address
+  // is not 64-bit aligned, then AGU would take an extra cycle.
+  // For VFP / NEON load / store multiple, the formula is
+  // (#reg / 2) + (#reg % 2) + 1.
+  case ARM::VLDMD:
+  case ARM::VLDMS:
+  case ARM::VLDMD_UPD:
+  case ARM::VLDMS_UPD:
+  case ARM::VSTMD:
+  case ARM::VSTMS:
+  case ARM::VSTMD_UPD:
+  case ARM::VSTMS_UPD: {
+    unsigned NumRegs = MI->getNumOperands() - Desc.getNumOperands();
+    return (NumRegs / 2) + (NumRegs % 2) + 1;
+  }
+  case ARM::LDM_RET:
+  case ARM::LDM:
+  case ARM::LDM_UPD:
+  case ARM::STM:
+  case ARM::STM_UPD:
+  case ARM::tLDM:
+  case ARM::tLDM_UPD:
+  case ARM::tSTM_UPD:
+  case ARM::tPOP_RET:
+  case ARM::tPOP:
+  case ARM::tPUSH:
+  case ARM::t2LDM_RET:
+  case ARM::t2LDM:
+  case ARM::t2LDM_UPD:
+  case ARM::t2STM:
+  case ARM::t2STM_UPD: {
+    unsigned NumRegs = MI->getNumOperands() - Desc.getNumOperands() + 1;
+    if (Subtarget.isCortexA8()) {
+      // 4 registers would be issued: 1, 2, 1.
+      // 5 registers would be issued: 1, 2, 2.
+      return 1 + (NumRegs / 2);
+    } else if (Subtarget.isCortexA9()) {
+      UOps = (NumRegs / 2);
+      // If there are odd number of registers or if it's not 64-bit aligned,
+      // then it takes an extra AGU (Address Generation Unit) cycle.
+      if ((NumRegs % 2) ||
+          !MI->hasOneMemOperand() ||
+          (*MI->memoperands_begin())->getAlignment() < 8)
+        ++UOps;
+      return UOps;
+    } else {
+      // Assume the worst.
+      return NumRegs;
+    }      
+  }
+  }
 }

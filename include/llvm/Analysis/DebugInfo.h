@@ -160,8 +160,8 @@ namespace llvm {
     /// module does not contain any main compile unit then the code generator
     /// will emit multiple compile units in the output object file.
 
-    bool isMain() const                { return getUnsignedField(6); }
-    bool isOptimized() const           { return getUnsignedField(7); }
+    bool isMain() const                { return getUnsignedField(6) != 0; }
+    bool isOptimized() const           { return getUnsignedField(7) != 0; }
     StringRef getFlags() const       { return getStringField(8);   }
     unsigned getRunTimeVersion() const { return getUnsignedField(9); }
 
@@ -272,6 +272,10 @@ namespace llvm {
     StringRef getFilename() const    { return getCompileUnit().getFilename();}
     StringRef getDirectory() const   { return getCompileUnit().getDirectory();}
 
+    /// replaceAllUsesWith - Replace all uses of debug info referenced by
+    /// this descriptor.
+    void replaceAllUsesWith(DIDescriptor &D);
+
     /// print - print type.
     void print(raw_ostream &OS) const;
 
@@ -285,6 +289,9 @@ namespace llvm {
     explicit DIBasicType(const MDNode *N = 0) : DIType(N) {}
 
     unsigned getEncoding() const { return getUnsignedField(9); }
+
+    /// Verify - Verify that a basic type descriptor is well formed.
+    bool Verify() const;
 
     /// print - print basic type.
     void print(raw_ostream &OS) const;
@@ -309,15 +316,14 @@ namespace llvm {
     /// return base type size.
     uint64_t getOriginalTypeSize() const;
 
+    /// Verify - Verify that a derived type descriptor is well formed.
+    bool Verify() const;
+
     /// print - print derived type.
     void print(raw_ostream &OS) const;
 
     /// dump - print derived type to dbgs() with a newline.
     void dump() const;
-
-    /// replaceAllUsesWith - Replace all uses of debug info referenced by
-    /// this descriptor.
-    void replaceAllUsesWith(DIDescriptor &D);
   };
 
   /// DICompositeType - This descriptor holds a type that can refer to multiple
@@ -654,6 +660,9 @@ namespace llvm {
                                         unsigned RunTimeLang = 0,
                                         MDNode *ContainingType = 0);
 
+    /// CreateTemporaryType - Create a temporary forward-declared type.
+    DIType CreateTemporaryType();
+
     /// CreateArtificialType - Create a new DIType with "artificial" flag set.
     DIType CreateArtificialType(DIType Ty);
 
@@ -717,10 +726,9 @@ namespace llvm {
     /// CreateComplexVariable - Create a new descriptor for the specified
     /// variable which has a complex address expression for its address.
     DIVariable CreateComplexVariable(unsigned Tag, DIDescriptor Context,
-                                     const std::string &Name,
-                                     DIFile F, unsigned LineNo,
-                                     DIType Ty,
-                                     SmallVector<Value *, 9> &addr);
+                                     StringRef Name, DIFile F, unsigned LineNo,
+                                     DIType Ty, Value *const *Addr,
+                                     unsigned NumAddr);
 
     /// CreateLexicalBlock - This creates a descriptor for a lexical block
     /// with the specified parent context.

@@ -312,6 +312,17 @@ namespace X86II {
     MRM_F8 = 41,
     MRM_F9 = 42,
 
+    /// RawFrmImm8 - This is used for the ENTER instruction, which has two
+    /// immediates, the first of which is a 16-bit immediate (specified by
+    /// the imm encoding) and the second is a 8-bit fixed value.
+    RawFrmImm8 = 43,
+    
+    /// RawFrmImm16 - This is used for CALL FAR instructions, which have two
+    /// immediates, the first of which is a 16 or 32-bit immediate (specified by
+    /// the imm encoding) and the second is a 16-bit fixed value.  In the AMD
+    /// manual, this operand is described as pntr16:32 and pntr16:16
+    RawFrmImm16 = 44,
+
     FormMask       = 63,
 
     //===------------------------------------------------------------------===//
@@ -439,27 +450,27 @@ namespace X86II {
 
     //===------------------------------------------------------------------===//
     // VEX - The opcode prefix used by AVX instructions
-    VEX         = 1ULL << 32,
+    VEX         = 1U << 0,
 
     // VEX_W - Has a opcode specific functionality, but is used in the same
     // way as REX_W is for regular SSE instructions.
-    VEX_W       = 1ULL << 33,
+    VEX_W       = 1U << 1,
 
     // VEX_4V - Used to specify an additional AVX/SSE register. Several 2
     // address instructions in SSE are represented as 3 address ones in AVX
     // and the additional register is encoded in VEX_VVVV prefix.
-    VEX_4V      = 1ULL << 34,
+    VEX_4V      = 1U << 2,
 
     // VEX_I8IMM - Specifies that the last register used in a AVX instruction,
     // must be encoded in the i8 immediate field. This usually happens in
     // instructions with 4 operands.
-    VEX_I8IMM   = 1ULL << 35,
+    VEX_I8IMM   = 1U << 3,
 
     // VEX_L - Stands for a bit in the VEX opcode prefix meaning the current
     // instruction uses 256-bit wide registers. This is usually auto detected if
     // a VR256 register is used, but some AVX instructions also have this field
     // marked when using a f256 memory references.
-    VEX_L       = 1ULL << 36
+    VEX_L       = 1U << 4
   };
   
   // getBaseOpcodeFor - This function returns the "base" X86 opcode for the
@@ -522,11 +533,13 @@ namespace X86II {
     case X86II::AddRegFrm:
     case X86II::MRMDestReg:
     case X86II::MRMSrcReg:
+    case X86II::RawFrmImm8:
+    case X86II::RawFrmImm16:
        return -1;
     case X86II::MRMDestMem:
       return 0;
     case X86II::MRMSrcMem: {
-      bool HasVEX_4V = TSFlags & X86II::VEX_4V;
+      bool HasVEX_4V = (TSFlags >> 32) & X86II::VEX_4V;
       unsigned FirstMemOp = 1;
       if (HasVEX_4V)
         ++FirstMemOp;// Skip the register source (which is encoded in VEX_VVVV).
@@ -838,17 +851,17 @@ public:
   /// SetSSEDomain - Set the SSEDomain of MI.
   void SetSSEDomain(MachineInstr *MI, unsigned Domain) const;
 
+  MachineInstr* foldMemoryOperandImpl(MachineFunction &MF,
+                                      MachineInstr* MI,
+                                      unsigned OpNum,
+                                      const SmallVectorImpl<MachineOperand> &MOs,
+                                      unsigned Size, unsigned Alignment) const;
+  
 private:
   MachineInstr * convertToThreeAddressWithLEA(unsigned MIOpc,
                                               MachineFunction::iterator &MFI,
                                               MachineBasicBlock::iterator &MBBI,
                                               LiveVariables *LV) const;
-
-  MachineInstr* foldMemoryOperandImpl(MachineFunction &MF,
-                                     MachineInstr* MI,
-                                     unsigned OpNum,
-                                     const SmallVectorImpl<MachineOperand> &MOs,
-                                     unsigned Size, unsigned Alignment) const;
 
   /// isFrameOperand - Return true and the FrameIndex if the specified
   /// operand and follow operands form a reference to the stack frame.

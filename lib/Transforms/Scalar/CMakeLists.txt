@@ -1,9 +1,9 @@
 add_llvm_library(LLVMScalarOpts
-  ABCD.cpp
   ADCE.cpp
   BasicBlockPlacement.cpp
   CodeGenPrepare.cpp
   ConstantProp.cpp
+  CorrelatedValuePropagation.cpp
   DCE.cpp
   DeadStoreElimination.cpp
   GEPSplitter.cpp

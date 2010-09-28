@@ -177,7 +177,7 @@ void CriticalAntiDepBreaker::PrescanInstruction(MachineInstr *MI) {
   // that have special allocation requirements. Also assume all registers
   // used in a call must not be changed (ABI).
   // FIXME: The issue with predicated instruction is more complex. We are being
-  // conservatively here because the kill markers cannot be trusted after
+  // conservative here because the kill markers cannot be trusted after
   // if-conversion:
   // %R6<def> = LDR %SP, %reg0, 92, pred:14, pred:%reg0; mem:LD4[FixedStack14]
   // ...
@@ -330,6 +330,8 @@ CriticalAntiDepBreaker::findSuitableFreeRegister(MachineInstr *MI,
   for (TargetRegisterClass::iterator R = RC->allocation_order_begin(MF),
        RE = RC->allocation_order_end(MF); R != RE; ++R) {
     unsigned NewReg = *R;
+    // Don't consider non-allocatable registers
+    if (!AllocatableSet.test(NewReg)) continue;
     // Don't replace a register with itself.
     if (NewReg == AntiDepReg) continue;
     // Don't replace a register with one that was recently used to repair

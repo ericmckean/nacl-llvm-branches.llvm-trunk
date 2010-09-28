@@ -32,6 +32,8 @@ def CortexA9Itineraries : ProcessorItineraries<
   //
   // Move instructions, unconditional
   InstrItinData<IIC_iMOVi   , [InstrStage<1, [A9_Pipe0, A9_Pipe1]>], [1]>,
+  InstrItinData<IIC_iMOVix2 , [InstrStage<1, [A9_Pipe0, A9_Pipe1]>,
+                               InstrStage<1, [A9_Pipe0, A9_Pipe1]>], [2]>,
   InstrItinData<IIC_iMOVr   , [InstrStage<1, [A9_Pipe0, A9_Pipe1]>], [1, 1]>,
   InstrItinData<IIC_iMOVsi  , [InstrStage<1, [A9_Pipe0, A9_Pipe1]>], [1, 1]>,
   InstrItinData<IIC_iMOVsr  , [InstrStage<2, [A9_Pipe0, A9_Pipe1]>], [2, 2, 1]>,
@@ -48,7 +50,10 @@ def CortexA9Itineraries : ProcessorItineraries<
   // Unary Instructions that produce a result
   InstrItinData<IIC_iUNAr   , [InstrStage<1, [A9_Pipe0, A9_Pipe1]>], [2, 2]>,
   InstrItinData<IIC_iUNAsi  , [InstrStage<2, [A9_Pipe0, A9_Pipe1]>], [2, 1]>,
-  InstrItinData<IIC_iUNAsr  , [InstrStage<3, [A9_Pipe0, A9_Pipe1]>], [2, 1, 1]>,
+  //
+  // Zero and sign extension instructions
+  InstrItinData<IIC_iEXTr , [InstrStage<1, [A9_Pipe0, A9_Pipe1]>], [2, 1]>,
+  InstrItinData<IIC_iEXTAr, [InstrStage<2, [A9_Pipe0, A9_Pipe1]>], [3, 1, 1]>,
   //
   // Compare instructions
   InstrItinData<IIC_iCMPi   , [InstrStage<1, [A9_Pipe0, A9_Pipe1]>], [2]>,
@@ -106,6 +111,18 @@ def CortexA9Itineraries : ProcessorItineraries<
   // Load multiple
   InstrItinData<IIC_iLoadm   , [InstrStage<1, [A9_Pipe1]>,
                                 InstrStage<1, [A9_LSPipe]>]>,
+
+  //
+  // Load multiple plus branch
+  InstrItinData<IIC_iLoadmBr , [InstrStage<1, [A9_Pipe1]>,
+                                InstrStage<1, [A9_LSPipe]>,
+                                InstrStage<1, [A9_Pipe0, A9_Pipe1]>]>,
+
+  //
+  // iLoadi + iALUr for t2LDRpci_pic.
+  InstrItinData<IIC_iLoadiALU, [InstrStage<1, [A9_Pipe1]>,
+                                InstrStage<1, [A9_LSPipe]>,
+                                InstrStage<1, [A9_Pipe0, A9_Pipe1]>], [4, 1]>,
 
   // Integer store pipeline
   ///
