@@ -34,12 +34,15 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 
-using namespace llvm;
-
 // @LOCALMOD-START
 #include "llvm/Support/CommandLine.h"
-extern cl::opt<bool> FlagSfiStore;
+namespace llvm {
+  extern cl::opt<bool> FlagSfiStore;
+}
 // @LOCALMOD-END
+
+using namespace llvm;
+
 
 static cl::opt<bool>
 DisableShifterOp("disable-shifter-op", cl::Hidden,
