@@ -155,8 +155,8 @@ bool LTOCodeGenerator::writeMergedModules(const char *path,
 
   // create output file
   std::string ErrInfo;
-  raw_fd_ostream Out(path, ErrInfo,
-                     raw_fd_ostream::F_Binary);
+  tool_output_file Out(path, ErrInfo,
+                       raw_fd_ostream::F_Binary);
   if (!ErrInfo.empty()) {
     errMsg = "could not open bitcode file for writing: ";
     errMsg += path;
@@ -164,16 +164,17 @@ bool LTOCodeGenerator::writeMergedModules(const char *path,
   }
     
   // write bitcode to it
-  WriteBitcodeToFile(_linker.getModule(), Out);
-  Out.close();
+  WriteBitcodeToFile(_linker.getModule(), Out.os());
+  Out.os().close();
 
-  if (Out.has_error()) {
+  if (Out.os().has_error()) {
     errMsg = "could not write bitcode file: ";
     errMsg += path;
-    Out.clear_error();
+    Out.os().clear_error();
     return true;
   }
   
+  Out.keep();
   return false;
 }
 
@@ -189,11 +190,16 @@ const void* LTOCodeGenerator::compile(size_t* length, std::string& errMsg)
     // generate assembly code
     bool genResult = false;
     {
-      raw_fd_ostream asmFD(uniqueAsmPath.c_str(), errMsg);
-      formatted_raw_ostream asmFile(asmFD);
+      tool_output_file asmFile(uniqueAsmPath.c_str(), errMsg);
       if (!errMsg.empty())
         return NULL;
-      genResult = this->generateAssemblyCode(asmFile, errMsg);
+      genResult = this->generateAssemblyCode(asmFile.os(), errMsg);
+      asmFile.os().close();
+      if (asmFile.os().has_error()) {
+        asmFile.os().clear_error();
+        return NULL;
+      }
+      asmFile.keep();
     }
     if ( genResult ) {
         uniqueAsmPath.eraseFromDisk();
@@ -361,7 +367,7 @@ void LTOCodeGenerator::applyScopeRestrictions() {
 }
 
 /// Optimize merged modules using various IPO passes
-bool LTOCodeGenerator::generateAssemblyCode(formatted_raw_ostream& out,
+bool LTOCodeGenerator::generateAssemblyCode(raw_ostream& out,
                                             std::string& errMsg)
 {
     if ( this->determineTarget(errMsg) ) 
@@ -396,7 +402,9 @@ bool LTOCodeGenerator::generateAssemblyCode(formatted_raw_ostream& out,
 
     codeGenPasses->add(new TargetData(*_target->getTargetData()));
 
-    if (_target->addPassesToEmitFile(*codeGenPasses, out,
+    formatted_raw_ostream Out(out);
+
+    if (_target->addPassesToEmitFile(*codeGenPasses, Out,
                                      TargetMachine::CGFT_AssemblyFile,
                                      CodeGenOpt::Aggressive)) {
       errMsg = "target file type not supported";

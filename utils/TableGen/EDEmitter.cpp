@@ -84,34 +84,6 @@ namespace {
     }
   };
 
-  class StructEmitter {
-  private:
-    std::string Name;
-    typedef std::pair<const char*, const char*> member;
-    std::vector< member > Members;
-  public:
-    StructEmitter(const char *N) : Name(N) {
-    }
-    void addMember(const char *t, const char *n) {
-      member m(t, n);
-      Members.push_back(m);
-    }
-    void emit(raw_ostream &o, unsigned int &i) {
-      o.indent(i) << "struct " << Name.c_str() << " {" << "\n";
-      i += 2;
-      
-      unsigned int index = 0;
-      unsigned int numMembers = Members.size();
-      for (index = 0; index < numMembers; ++index) {
-        o.indent(i) << Members[index].first << " ";
-        o.indent(i) << Members[index].second << ";" << "\n";
-      }
-      
-      i -= 2;
-      o.indent(i) << "};" << "\n";
-    }
-  };
-  
   class ConstantEmitter {
   public:
     virtual ~ConstantEmitter() { }
@@ -126,10 +98,6 @@ namespace {
       const char* String;
     };
   public:
-    LiteralConstantEmitter(const char *string) : 
-      IsNumber(false),
-      String(string) {
-    }
     LiteralConstantEmitter(int number = 0) : 
       IsNumber(true),
       Number(number) {
@@ -138,11 +106,6 @@ namespace {
       IsNumber = false;
       Number = 0;
       String = string;
-    }
-    void set(int number) {
-      IsNumber = true;
-      String = NULL;
-      Number = number;
     }
     bool is(const char *string) {
       return !strcmp(String, string);
@@ -500,8 +463,12 @@ static void X86ExtractSemantics(
   }
   
   if (name.find("PUSH") != name.npos) {
-    if (name.find("FS") != name.npos ||
-        name.find("GS") != name.npos) {
+    if (name.find("CS") != name.npos ||
+        name.find("DS") != name.npos ||
+        name.find("ES") != name.npos ||
+        name.find("FS") != name.npos ||
+        name.find("GS") != name.npos ||
+        name.find("SS") != name.npos) {
       instType.set("kInstructionTypePush");
       // TODO add support for fixed operands
     } else if (name.find("F") != name.npos) {
@@ -520,8 +487,12 @@ static void X86ExtractSemantics(
   if (name.find("POP") != name.npos) {
     if (name.find("POPCNT") != name.npos) {
       // ignore (not a real pop)
-    } else if (name.find("FS") != name.npos ||
-             name.find("GS") != name.npos) {
+    } else if (name.find("CS") != name.npos ||
+               name.find("DS") != name.npos ||
+               name.find("ES") != name.npos ||
+               name.find("FS") != name.npos ||
+               name.find("GS") != name.npos ||
+               name.find("SS") != name.npos) {
       instType.set("kInstructionTypePop");
       // TODO add support for fixed operands
     } else if (name.find("F") != name.npos) {

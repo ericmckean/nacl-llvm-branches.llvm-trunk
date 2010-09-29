@@ -22,6 +22,7 @@
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Dwarf.h"
 #include "llvm/Support/raw_ostream.h"
@@ -134,6 +135,7 @@ bool DIDescriptor::isDerivedType() const {
   case dwarf::DW_TAG_restrict_type:
   case dwarf::DW_TAG_member:
   case dwarf::DW_TAG_inheritance:
+  case dwarf::DW_TAG_friend:
     return true;
   default:
     // CompositeTypes are currently modelled as DerivedTypes.
@@ -260,7 +262,7 @@ unsigned DIArray::getNumElements() const {
 
 /// replaceAllUsesWith - Replace all uses of debug info referenced by
 /// this descriptor.
-void DIDerivedType::replaceAllUsesWith(DIDescriptor &D) {
+void DIType::replaceAllUsesWith(DIDescriptor &D) {
   if (!DbgNode)
     return;
 
@@ -274,6 +276,7 @@ void DIDerivedType::replaceAllUsesWith(DIDescriptor &D) {
     const MDNode *DN = D;
     const Value *V = cast_or_null<Value>(DN);
     Node->replaceAllUsesWith(const_cast<Value*>(V));
+    MDNode::deleteTemporary(Node);
   }
 }
 
@@ -299,6 +302,16 @@ bool DIType::Verify() const {
   if (!CU.Verify())
     return false;
   return true;
+}
+
+/// Verify - Verify that a basic type descriptor is well formed.
+bool DIBasicType::Verify() const {
+  return isBasicType();
+}
+
+/// Verify - Verify that a derived type descriptor is well formed.
+bool DIDerivedType::Verify() const {
+  return isDerivedType();
 }
 
 /// Verify - Verify that a composite type descriptor is well formed.
@@ -688,15 +701,13 @@ Constant *DIFactory::GetTagConstant(unsigned TAG) {
 /// GetOrCreateArray - Create an descriptor for an array of descriptors.
 /// This implicitly uniques the arrays created.
 DIArray DIFactory::GetOrCreateArray(DIDescriptor *Tys, unsigned NumTys) {
-  SmallVector<Value*, 16> Elts;
+  if (NumTys == 0) {
+    Value *Null = llvm::Constant::getNullValue(Type::getInt32Ty(VMContext));
+    return DIArray(MDNode::get(VMContext, &Null, 1));
+  }
 
-  if (NumTys == 0)
-    Elts.push_back(llvm::Constant::getNullValue(Type::getInt32Ty(VMContext)));
-  else
-    for (unsigned i = 0; i != NumTys; ++i)
-      Elts.push_back(Tys[i]);
-
-  return DIArray(MDNode::get(VMContext,Elts.data(), Elts.size()));
+  SmallVector<Value *, 16> Elts(Tys, Tys+NumTys);
+  return DIArray(MDNode::get(VMContext, Elts.data(), Elts.size()));
 }
 
 /// GetOrCreateSubrange - Create a descriptor for a value range.  This
@@ -934,6 +945,18 @@ DICompositeType DIFactory::CreateCompositeType(unsigned Tag,
 }
 
 
+/// CreateTemporaryType - Create a temporary forward-declared type.
+DIType DIFactory::CreateTemporaryType() {
+  // Give the temporary MDNode a tag. It doesn't matter what tag we
+  // use here as long as DIType accepts it.
+  Value *Elts[] = {
+    GetTagConstant(DW_TAG_base_type)
+  };
+  MDNode *Node = MDNode::getTemporary(VMContext, Elts, array_lengthof(Elts));
+  return DIType(Node);
+}
+
+
 /// CreateCompositeType - Create a composite type like array, struct, etc.
 DICompositeType DIFactory::CreateCompositeTypeEx(unsigned Tag,
                                                  DIDescriptor Context,
@@ -1156,21 +1179,20 @@ DIVariable DIFactory::CreateVariable(unsigned Tag, DIDescriptor Context,
 /// CreateComplexVariable - Create a new descriptor for the specified variable
 /// which has a complex address expression for its address.
 DIVariable DIFactory::CreateComplexVariable(unsigned Tag, DIDescriptor Context,
-                                            const std::string &Name,
-                                            DIFile F,
+                                            StringRef Name, DIFile F,
                                             unsigned LineNo,
-                                            DIType Ty,
-                                            SmallVector<Value *, 9> &addr) {
-  SmallVector<Value *, 9> Elts;
+                                            DIType Ty, Value *const *Addr,
+                                            unsigned NumAddr) {
+  SmallVector<Value *, 15> Elts;
   Elts.push_back(GetTagConstant(Tag));
   Elts.push_back(Context);
   Elts.push_back(MDString::get(VMContext, Name));
   Elts.push_back(F);
   Elts.push_back(ConstantInt::get(Type::getInt32Ty(VMContext), LineNo));
   Elts.push_back(Ty);
-  Elts.insert(Elts.end(), addr.begin(), addr.end());
+  Elts.append(Addr, Addr+NumAddr);
 
-  return DIVariable(MDNode::get(VMContext, &Elts[0], 6+addr.size()));
+  return DIVariable(MDNode::get(VMContext, Elts.data(), Elts.size()));
 }
 
 

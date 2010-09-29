@@ -69,7 +69,6 @@ namespace {
   struct CFGPrinter : public FunctionPass {
     static char ID; // Pass identification, replacement for typeid
     CFGPrinter() : FunctionPass(ID) {}
-    explicit CFGPrinter(char &pid) : FunctionPass(pid) {}
 
     virtual bool runOnFunction(Function &F) {
       std::string Filename = "cfg." + F.getNameStr() + ".dot";
@@ -95,14 +94,13 @@ namespace {
 }
 
 char CFGPrinter::ID = 0;
-static RegisterPass<CFGPrinter>
-P1("dot-cfg", "Print CFG of function to 'dot' file", false, true);
+INITIALIZE_PASS(CFGPrinter, "dot-cfg", "Print CFG of function to 'dot' file", 
+                false, true);
 
 namespace {
   struct CFGOnlyPrinter : public FunctionPass {
     static char ID; // Pass identification, replacement for typeid
     CFGOnlyPrinter() : FunctionPass(ID) {}
-    explicit CFGOnlyPrinter(char &pid) : FunctionPass(pid) {}
     virtual bool runOnFunction(Function &F) {
       std::string Filename = "cfg." + F.getNameStr() + ".dot";
       errs() << "Writing '" << Filename << "'...";
@@ -126,9 +124,9 @@ namespace {
 }
 
 char CFGOnlyPrinter::ID = 0;
-static RegisterPass<CFGOnlyPrinter>
-P2("dot-cfg-only",
-   "Print CFG of function to 'dot' file (with no function bodies)", false, true);
+INITIALIZE_PASS(CFGOnlyPrinter, "dot-cfg-only",
+   "Print CFG of function to 'dot' file (with no function bodies)",
+   false, true);
 
 /// viewCFG - This function is meant for use from the debugger.  You can just
 /// say 'call F->viewCFG()' and a ghostview window should pop up from the

@@ -193,6 +193,10 @@ public:
     return Is64Bit && (isTargetMingw() || isTargetWindows());
   }
 
+  bool isTargetWin32() const {
+    return !Is64Bit && (isTargetMingw() || isTargetWindows());
+  }
+
   std::string getDataLayout() const {
     const char *p;
     if (isTargetNaCl64())  // @LOCALMOD
@@ -203,7 +207,7 @@ public:
       p = "e-p:64:64-s:64-f64:64:64-i64:64:64-f80:128:128-n8:16:32:64";
     else if (isTargetDarwin())
       p = "e-p:32:32-f64:32:64-i64:32:64-f80:128:128-n8:16:32";
-    else if (isTargetMingw() || isTargetWindows())
+    else if (isTargetCygMing() || isTargetWindows())
       p = "e-p:32:32-f64:64:64-i64:64:64-f80:32:32-n8:16:32";
     else
       p = "e-p:32:32-f64:32:64-i64:32:64-f80:32:32-n8:16:32";

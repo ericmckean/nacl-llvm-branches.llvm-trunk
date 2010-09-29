@@ -50,7 +50,7 @@ namespace COFF {
 
   enum MachineTypes {
     IMAGE_FILE_MACHINE_I386 = 0x14C,
-    IMAGINE_FILE_MACHINE_AMD64 = 0x8664
+    IMAGE_FILE_MACHINE_AMD64 = 0x8664
   };
 
   struct symbol {
@@ -70,6 +70,12 @@ namespace COFF {
     SF_ClassShift = 16,
 
     SF_WeakReference = 0x01000000
+  };
+
+  enum SymbolSectionNumber {
+    IMAGE_SYM_DEBUG     = -2,
+    IMAGE_SYM_ABSOLUTE  = -1,
+    IMAGE_SYM_UNDEFINED = 0
   };
 
   /// Storage class tells where and what the symbol represents
@@ -133,7 +139,7 @@ namespace COFF {
     IMAGE_SYM_DTYPE_ARRAY    = 3, ///< An array of base type.
     
     /// Type is formed as (base + (derived << SCT_COMPLEX_TYPE_SHIFT))
-    SCT_COMPLEX_TYPE_SHIFT   = 4
+    SCT_COMPLEX_TYPE_SHIFT   = 8
   };
 
   struct section {

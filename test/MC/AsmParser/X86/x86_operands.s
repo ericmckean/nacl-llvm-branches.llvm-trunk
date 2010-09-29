@@ -1,5 +1,3 @@
-// FIXME: Actually test that we get the expected results.
-        
 // RUN: llvm-mc -triple i386-unknown-unknown %s | FileCheck %s
 
 # Immediates
@@ -48,11 +46,11 @@
         addl $1, 1(,%ebx,(2+2))
 
 # '*'
-# CHECK: call a
+# CHECK: calll a
         call a
-# CHECK: call *%eax
+# CHECK: calll *%eax
         call *%eax
-# CHECK: call *4(%eax)
+# CHECK: calll *4(%eax)
         call *4(%eax)
 
 # CHECK: movl	%gs:8, %eax

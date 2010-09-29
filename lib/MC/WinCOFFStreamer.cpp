@@ -48,6 +48,7 @@ public:
 
   // MCStreamer interface
 
+  virtual void InitSections();
   virtual void EmitLabel(MCSymbol *Symbol);
   virtual void EmitAssemblerFlag(MCAssemblerFlag Flag);
   virtual void EmitAssignment(MCSymbol *Symbol, const MCExpr *Value);
@@ -85,7 +86,7 @@ WinCOFFStreamer::WinCOFFStreamer(MCContext &Context,
                                  TargetAsmBackend &TAB,
                                  MCCodeEmitter &CE,
                                  raw_ostream &OS)
-    : MCObjectStreamer(Context, TAB, OS, &CE)
+    : MCObjectStreamer(Context, TAB, OS, &CE, true)
     , CurSymbol(NULL) {
 }
 
@@ -126,6 +127,9 @@ void WinCOFFStreamer::AddCommonSymbol(MCSymbol *Symbol, uint64_t Size,
 
 // MCStreamer interface
 
+void WinCOFFStreamer::InitSections() {
+}
+
 void WinCOFFStreamer::EmitLabel(MCSymbol *Symbol) {
   // TODO: This is copied almost exactly from the MachOStreamer. Consider
   // merging into MCObjectStreamer?
@@ -141,10 +145,11 @@ void WinCOFFStreamer::EmitLabel(MCSymbol *Symbol) {
   // fragment. Instead, we should mark the symbol as pointing into the data
   // fragment if it exists, otherwise we should just queue the label and set its
   // fragment pointer when we emit the next fragment.
-  MCDataFragment *F = getOrCreateDataFragment();
+  MCDataFragment *DF = getOrCreateDataFragment();
+
   assert(!SD.getFragment() && "Unexpected fragment on symbol data!");
-  SD.setFragment(F);
-  SD.setOffset(F->getContents().size());
+  SD.setFragment(DF);
+  SD.setOffset(DF->getContents().size());
 }
 
 void WinCOFFStreamer::EmitAssemblerFlag(MCAssemblerFlag Flag) {

@@ -140,13 +140,13 @@ def t2addrmode_imm8 : Operand<i32>,
 }
 
 def t2am_imm8_offset : Operand<i32>,
-                       ComplexPattern<i32, 1, "SelectT2AddrModeImm8Offset", []>{
+                       ComplexPattern<i32, 1, "SelectT2AddrModeImm8Offset",
+                                      [], [SDNPWantRoot]> {
   let PrintMethod = "printT2AddrModeImm8OffsetOperand";
 }
 
 // t2addrmode_imm8s4  := reg +/- (imm8 << 2)
-def t2addrmode_imm8s4 : Operand<i32>,
-                        ComplexPattern<i32, 2, "SelectT2AddrModeImm8s4", []> {
+def t2addrmode_imm8s4 : Operand<i32> {
   let PrintMethod = "printT2AddrModeImm8s4Operand";
   let MIOperandInfo = (ops GPR:$base, i32imm:$offsimm);
 }
@@ -214,7 +214,7 @@ multiclass T2I_un_irs<bits<4> opcod, string opc, PatFrag opnode,
 /// binary operation that produces a value. These are predicable and can be
 /// changed to modify CPSR.
 multiclass T2I_bin_irs<bits<4> opcod, string opc, PatFrag opnode,
-                       bit Commutable = 0, string wide =""> {
+                       bit Commutable = 0, string wide = ""> {
    // shifted imm
    def ri : T2sI<(outs rGPR:$dst), (ins rGPR:$lhs, t2_so_imm:$rhs), IIC_iALUi,
                  opc, "\t$dst, $lhs, $rhs",
@@ -337,6 +337,9 @@ multiclass T2I_bin_s_irs<bits<4> opcod, string opc, PatFrag opnode,
 multiclass T2I_bin_ii12rs<bits<3> op23_21, string opc, PatFrag opnode,
                           bit Commutable = 0> {
    // shifted imm
+   // The register-immediate version is re-materializable. This is useful
+   // in particular for taking the address of a local.
+   let isReMaterializable = 1 in {
    def ri : T2sI<(outs rGPR:$dst), (ins GPR:$lhs, t2_so_imm:$rhs), IIC_iALUi,
                  opc, ".w\t$dst, $lhs, $rhs",
                  [(set rGPR:$dst, (opnode GPR:$lhs, t2_so_imm:$rhs))]> {
@@ -346,6 +349,7 @@ multiclass T2I_bin_ii12rs<bits<3> op23_21, string opc, PatFrag opnode,
      let Inst{23-21} = op23_21;
      let Inst{20} = 0; // The S bit.
      let Inst{15} = 0;
+   }
    }
    // 12-bit imm
    def ri12 : T2I<(outs rGPR:$dst), (ins GPR:$lhs, imm0_4095:$rhs), IIC_iALUi,
@@ -523,7 +527,7 @@ multiclass T2I_sh_ir<bits<2> opcod, string opc, PatFrag opnode> {
 /// T2I_cmp_irs - Defines a set of (op r, {so_imm|r|so_reg}) cmp / test
 /// patterns. Similar to T2I_bin_irs except the instruction does not produce
 /// a explicit result, only implicitly set CPSR.
-let Defs = [CPSR] in {
+let isCompare = 1, Defs = [CPSR] in {
 multiclass T2I_cmp_irs<bits<4> opcod, string opc, PatFrag opnode> {
    // shifted imm
    def ri : T2I<(outs), (ins GPR:$lhs, t2_so_imm:$rhs), IIC_iCMPi,
@@ -1631,6 +1635,9 @@ defm t2EOR  : T2I_bin_w_irs<0b0100, "eor",
 defm t2BIC  : T2I_bin_w_irs<0b0001, "bic",
                             BinOpFrag<(and node:$LHS, (not node:$RHS))>>;
 
+defm t2ANDS : T2I_bin_s_irs<0b0000, "and",
+                            BinOpFrag<(ARMand node:$LHS, node:$RHS)>, 1>;
+
 let Constraints = "$src = $dst" in
 def t2BFC : T2I<(outs rGPR:$dst), (ins rGPR:$src, bf_inv_mask_imm:$imm),
                 IIC_iUNAsi, "bfc", "\t$dst, $imm",
@@ -1672,7 +1679,7 @@ def t2BFI : T2I<(outs rGPR:$dst),
 }
 
 defm t2ORN  : T2I_bin_irs<0b0011, "orn", BinOpFrag<(or  node:$LHS,
-                          (not node:$RHS))>>;
+                          (not node:$RHS))>, 0, "">;
 
 // Prefer over of t2EORri ra, rb, -1 because mvn has 16-bit version
 let AddedComplexity = 1 in
@@ -2136,12 +2143,10 @@ def : T2Pat<(or (and rGPR:$src1, 0xFFFF0000),
 //===----------------------------------------------------------------------===//
 //  Comparison Instructions...
 //
-let isCompare = 1 in {
 defm t2CMP  : T2I_cmp_irs<0b1101, "cmp",
                           BinOpFrag<(ARMcmp node:$LHS, node:$RHS)>>;
 defm t2CMPz : T2I_cmp_irs<0b1101, "cmp",
                           BinOpFrag<(ARMcmpZ node:$LHS, node:$RHS)>>;
-}
 
 //FIXME: Disable CMN, as CCodes are backwards from compare expectations
 //       Compare-to-zero still works out, just not the relationals
@@ -2409,7 +2414,7 @@ let Defs =
     D1,  D2,  D3,  D4,  D5,  D6,  D7,  D8,  D9,  D10, D11, D12, D13, D14, D15,
     D16, D17, D18, D19, D20, D21, D22, D23, D24, D25, D26, D27, D28, D29, D30,
     D31 ], hasSideEffects = 1, isBarrier = 1 in {
-  def t2Int_eh_sjlj_setjmp : Thumb2XI<(outs), (ins GPR:$src, tGPR:$val),
+  def t2Int_eh_sjlj_setjmp : Thumb2XI<(outs), (ins tGPR:$src, tGPR:$val),
                                AddrModeNone, SizeSpecial, NoItinerary,
                                "mov\t$val, pc\t${:comment} begin eh.setjmp\n\t"
                                "adds\t$val, #7\n\t"
@@ -2418,14 +2423,14 @@ let Defs =
                                "b\t1f\n\t"
                                "movs\tr0, #1\t${:comment} end eh.setjmp\n\t"
                                "1:", "",
-                          [(set R0, (ARMeh_sjlj_setjmp GPR:$src, tGPR:$val))]>,
+                          [(set R0, (ARMeh_sjlj_setjmp tGPR:$src, tGPR:$val))]>,
                              Requires<[IsThumb2, HasVFP2]>;
 }
 
 let Defs =
   [ R0,  R1,  R2,  R3,  R4,  R5,  R6,  R7,  R8,  R9,  R10, R11, R12, LR ],
   hasSideEffects = 1, isBarrier = 1 in {
-  def t2Int_eh_sjlj_setjmp_nofp : Thumb2XI<(outs), (ins GPR:$src, tGPR:$val),
+  def t2Int_eh_sjlj_setjmp_nofp : Thumb2XI<(outs), (ins tGPR:$src, tGPR:$val),
                                AddrModeNone, SizeSpecial, NoItinerary,
                                "mov\t$val, pc\t${:comment} begin eh.setjmp\n\t"
                                "adds\t$val, #7\n\t"
@@ -2434,7 +2439,7 @@ let Defs =
                                "b\t1f\n\t"
                                "movs\tr0, #1\t${:comment} end eh.setjmp\n\t"
                                "1:", "",
-                          [(set R0, (ARMeh_sjlj_setjmp GPR:$src, tGPR:$val))]>,
+                          [(set R0, (ARMeh_sjlj_setjmp tGPR:$src, tGPR:$val))]>,
                                   Requires<[IsThumb2, NoVFP]>;
 }
 
@@ -2450,7 +2455,8 @@ let Defs =
 let isReturn = 1, isTerminator = 1, isBarrier = 1, mayLoad = 1,
     hasExtraDefRegAllocReq = 1 in
   def t2LDM_RET : T2XIt<(outs GPR:$wb), (ins addrmode4:$addr, pred:$p,
-                                         reglist:$dsts, variable_ops), IIC_Br,
+                                         reglist:$dsts, variable_ops),
+                        IIC_iLoadmBr,
                         "ldm${addr:submode}${p}${addr:wide}\t$addr!, $dsts",
                         "$addr.addr = $wb", []> {
   let Inst{31-27} = 0b11101;
@@ -2683,10 +2689,10 @@ def : T2Pat<(add rGPR:$LHS, t2_so_neg_imm2part:$RHS),
                     (t2_so_neg_imm2part_2 imm:$RHS))>;
 
 // 32-bit immediate using movw + movt.
-// This is a single pseudo instruction to make it re-materializable. Remove
-// when we can do generalized remat.
+// This is a single pseudo instruction to make it re-materializable.
+// FIXME: Remove this when we can do generalized remat.
 let isReMaterializable = 1 in
-def t2MOVi32imm : T2Ix2<(outs rGPR:$dst), (ins i32imm:$src), IIC_iMOVi,
+def t2MOVi32imm : T2Ix2<(outs rGPR:$dst), (ins i32imm:$src), IIC_iMOVix2,
                    "movw", "\t$dst, ${src:lo16}\n\tmovt${p}\t$dst, ${src:hi16}",
                      [(set rGPR:$dst, (i32 imm:$src))]>;
 
@@ -2705,7 +2711,7 @@ def : T2Pat<(ARMWrapperJT tjumptable:$dst, imm:$id),
 // scheduling.
 let canFoldAsLoad = 1, isReMaterializable = 1 in
 def t2LDRpci_pic : PseudoInst<(outs GPR:$dst), (ins i32imm:$addr, pclabel:$cp),
-                   NoItinerary,
+                   IIC_iLoadiALU,
                    "${:comment} ldr.w\t$dst, $addr\n$cp:\n\tadd\t$dst, pc",
                [(set GPR:$dst, (ARMpic_add (load (ARMWrapper tconstpool:$addr)),
                                            imm:$cp))]>,

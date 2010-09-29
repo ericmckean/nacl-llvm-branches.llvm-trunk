@@ -59,11 +59,14 @@ DisableCrossClassJoin("disable-cross-class-join",
                cl::desc("Avoid coalescing cross register class copies"),
                cl::init(false), cl::Hidden);
 
-static RegisterPass<SimpleRegisterCoalescing>
-X("simple-register-coalescing", "Simple Register Coalescing");
+static cl::opt<bool>
+DisablePhysicalJoin("disable-physical-join",
+               cl::desc("Avoid coalescing physical register copies"),
+               cl::init(false), cl::Hidden);
 
-// Declare that we implement the RegisterCoalescer interface
-static RegisterAnalysisGroup<RegisterCoalescer, true/*The Default*/> V(X);
+INITIALIZE_AG_PASS(SimpleRegisterCoalescing, RegisterCoalescer,
+                "simple-register-coalescing", "Simple Register Coalescing", 
+                false, false, true);
 
 char &llvm::SimpleRegisterCoalescingID = SimpleRegisterCoalescing::ID;
 
@@ -121,7 +124,7 @@ bool SimpleRegisterCoalescing::AdjustCopiesBackFrom(const CoalescerPair &CP,
   // Get the location that B is defined at.  Two options: either this value has
   // an unknown definition point or it is defined at CopyIdx.  If unknown, we
   // can't process it.
-  if (!BValNo->getCopy()) return false;
+  if (!BValNo->isDefByCopy()) return false;
   assert(BValNo->def == CopyIdx && "Copy doesn't define the value?");
 
   // AValNo is the value number in A that defines the copy, A3 in the example.
@@ -215,7 +218,7 @@ bool SimpleRegisterCoalescing::AdjustCopiesBackFrom(const CoalescerPair &CP,
         continue;
       LiveInterval &SRLI = li_->getInterval(*SR);
       SRLI.addRange(LiveRange(FillerStart, FillerEnd,
-                              SRLI.getNextValue(FillerStart, 0, true,
+                              SRLI.getNextValue(FillerStart, 0,
                                                 li_->getVNInfoAllocator())));
     }
   }
@@ -262,9 +265,6 @@ bool SimpleRegisterCoalescing::HasOtherReachingDefs(LiveInterval &IntA,
       --BI;
     for (; BI != IntB.ranges.end() && AI->end >= BI->start; ++BI) {
       if (BI->valno == BValNo)
-        continue;
-      // When BValNo is null, we're looking for a dummy clobber-value for a subreg.
-      if (!BValNo && !BI->valno->isDefAccurate() && !BI->valno->getCopy())
         continue;
       if (BI->start <= AI->start && BI->end > AI->start)
         return true;
@@ -338,7 +338,7 @@ bool SimpleRegisterCoalescing::RemoveCopyByCommutingDef(const CoalescerPair &CP,
   // Get the location that B is defined at.  Two options: either this value has
   // an unknown definition point or it is defined at CopyIdx.  If unknown, we
   // can't process it.
-  if (!BValNo->getCopy()) return false;
+  if (!BValNo->isDefByCopy()) return false;
   assert(BValNo->def == CopyIdx && "Copy doesn't define the value?");
 
   // AValNo is the value number in A that defines the copy, A3 in the example.
@@ -348,10 +348,8 @@ bool SimpleRegisterCoalescing::RemoveCopyByCommutingDef(const CoalescerPair &CP,
   assert(ALR != IntA.end() && "Live range not found!");
   VNInfo *AValNo = ALR->valno;
   // If other defs can reach uses of this def, then it's not safe to perform
-  // the optimization. FIXME: Do isPHIDef and isDefAccurate both need to be
-  // tested?
-  if (AValNo->isPHIDef() || !AValNo->isDefAccurate() ||
-      AValNo->isUnused() || AValNo->hasPHIKill())
+  // the optimization.
+  if (AValNo->isPHIDef() || AValNo->isUnused() || AValNo->hasPHIKill())
     return false;
   MachineInstr *DefMI = li_->getInstructionFromIndex(AValNo->def);
   if (!DefMI)
@@ -386,16 +384,12 @@ bool SimpleRegisterCoalescing::RemoveCopyByCommutingDef(const CoalescerPair &CP,
   if (HasOtherReachingDefs(IntA, IntB, AValNo, BValNo))
     return false;
 
-  bool BHasSubRegs = false;
-  if (TargetRegisterInfo::isPhysicalRegister(IntB.reg))
-    BHasSubRegs = *tri_->getSubRegisters(IntB.reg);
-
-  // Abort if the subregisters of IntB.reg have values that are not simply the
+  // Abort if the aliases of IntB.reg have values that are not simply the
   // clobbers from the superreg.
-  if (BHasSubRegs)
-    for (const unsigned *SR = tri_->getSubRegisters(IntB.reg); *SR; ++SR)
-      if (li_->hasInterval(*SR) &&
-          HasOtherReachingDefs(IntA, li_->getInterval(*SR), AValNo, 0))
+  if (TargetRegisterInfo::isPhysicalRegister(IntB.reg))
+    for (const unsigned *AS = tri_->getAliasSet(IntB.reg); *AS; ++AS)
+      if (li_->hasInterval(*AS) &&
+          HasOtherReachingDefs(IntA, li_->getInterval(*AS), AValNo, 0))
         return false;
 
   // If some of the uses of IntA.reg is already coalesced away, return false.
@@ -411,6 +405,8 @@ bool SimpleRegisterCoalescing::RemoveCopyByCommutingDef(const CoalescerPair &CP,
     if (ULR->valno == AValNo && JoinedCopies.count(UseMI))
       return false;
   }
+
+  DEBUG(dbgs() << "\tRemoveCopyByCommutingDef: " << *DefMI);
 
   // At this point we have decided that it is legal to do this
   // transformation.  Start by commuting the instruction.
@@ -475,7 +471,7 @@ bool SimpleRegisterCoalescing::RemoveCopyByCommutingDef(const CoalescerPair &CP,
     if (UseMI->getOperand(0).getReg() != IntB.reg ||
         UseMI->getOperand(0).getSubReg())
       continue;
-        
+
     // This copy will become a noop. If it's defining a new val#,
     // remove that val# as well. However this live range is being
     // extended to the end of the existing live range defined by the copy.
@@ -500,13 +496,13 @@ bool SimpleRegisterCoalescing::RemoveCopyByCommutingDef(const CoalescerPair &CP,
   // Remove val#'s defined by copies that will be coalesced away.
   for (unsigned i = 0, e = BDeadValNos.size(); i != e; ++i) {
     VNInfo *DeadVNI = BDeadValNos[i];
-    if (BHasSubRegs) {
-      for (const unsigned *SR = tri_->getSubRegisters(IntB.reg); *SR; ++SR) {
-        if (!li_->hasInterval(*SR))
+    if (TargetRegisterInfo::isPhysicalRegister(IntB.reg)) {
+      for (const unsigned *AS = tri_->getAliasSet(IntB.reg); *AS; ++AS) {
+        if (!li_->hasInterval(*AS))
           continue;
-        LiveInterval &SRLI = li_->getInterval(*SR);
-        if (const LiveRange *SRLR = SRLI.getLiveRangeContaining(DeadVNI->def))
-          SRLI.removeValNo(SRLR->valno);
+        LiveInterval &ASLI = li_->getInterval(*AS);
+        if (const LiveRange *ASLR = ASLI.getLiveRangeContaining(DeadVNI->def))
+          ASLI.removeValNo(ASLR->valno);
       }
     }
     IntB.removeValNo(BDeadValNos[i]);
@@ -651,12 +647,12 @@ bool SimpleRegisterCoalescing::ReMaterializeTrivialDef(LiveInterval &SrcInt,
   assert(SrcLR != SrcInt.end() && "Live range not found!");
   VNInfo *ValNo = SrcLR->valno;
   // If other defs can reach uses of this def, then it's not safe to perform
-  // the optimization. FIXME: Do isPHIDef and isDefAccurate both need to be
-  // tested?
-  if (ValNo->isPHIDef() || !ValNo->isDefAccurate() ||
-      ValNo->isUnused() || ValNo->hasPHIKill())
+  // the optimization.
+  if (ValNo->isPHIDef() || ValNo->isUnused() || ValNo->hasPHIKill())
     return false;
   MachineInstr *DefMI = li_->getInstructionFromIndex(ValNo->def);
+  if (!DefMI)
+    return false;
   assert(DefMI && "Defining instruction disappeared");
   const TargetInstrDesc &TID = DefMI->getDesc();
   if (!TID.isAsCheapAsAMove())
@@ -873,7 +869,7 @@ void SimpleRegisterCoalescing::RemoveCopyFlag(unsigned DstReg,
   if (li_->hasInterval(DstReg)) {
     LiveInterval &LI = li_->getInterval(DstReg);
     if (const LiveRange *LR = LI.getLiveRangeContaining(DefIdx))
-      if (LR->valno->getCopy() == CopyMI)
+      if (LR->valno->def == DefIdx)
         LR->valno->setCopy(0);
   }
   if (!TargetRegisterInfo::isPhysicalRegister(DstReg))
@@ -883,7 +879,7 @@ void SimpleRegisterCoalescing::RemoveCopyFlag(unsigned DstReg,
       continue;
     LiveInterval &LI = li_->getInterval(*AS);
     if (const LiveRange *LR = LI.getLiveRangeContaining(DefIdx))
-      if (LR->valno->getCopy() == CopyMI)
+      if (LR->valno->def == DefIdx)
         LR->valno->setCopy(0);
   }
 }
@@ -1036,6 +1032,11 @@ bool SimpleRegisterCoalescing::JoinCopy(CopyRec &TheCopy, bool &Again) {
   if (CP.getSrcReg() == CP.getDstReg()) {
     DEBUG(dbgs() << "\tCopy already coalesced.\n");
     return false;  // Not coalescable.
+  }
+
+  if (DisablePhysicalJoin && CP.isPhys()) {
+    DEBUG(dbgs() << "\tPhysical joins disabled.\n");
+    return false;
   }
 
   DEBUG(dbgs() << "\tConsidering merging %reg" << CP.getSrcReg());
@@ -1311,7 +1312,7 @@ bool SimpleRegisterCoalescing::JoinIntervals(CoalescerPair &CP) {
   for (LiveInterval::vni_iterator i = LHS.vni_begin(), e = LHS.vni_end();
        i != e; ++i) {
     VNInfo *VNI = *i;
-    if (VNI->isUnused() || VNI->getCopy() == 0)  // Src not defined by a copy?
+    if (VNI->isUnused() || !VNI->isDefByCopy())  // Src not defined by a copy?
       continue;
 
     // Never join with a register that has EarlyClobber redefs.
@@ -1335,7 +1336,7 @@ bool SimpleRegisterCoalescing::JoinIntervals(CoalescerPair &CP) {
   for (LiveInterval::vni_iterator i = RHS.vni_begin(), e = RHS.vni_end();
        i != e; ++i) {
     VNInfo *VNI = *i;
-    if (VNI->isUnused() || VNI->getCopy() == 0)  // Src not defined by a copy?
+    if (VNI->isUnused() || !VNI->isDefByCopy())  // Src not defined by a copy?
       continue;
 
     // Never join with a register that has EarlyClobber redefs.

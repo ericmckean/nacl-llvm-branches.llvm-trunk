@@ -221,9 +221,11 @@ MCSymbolData::MCSymbolData(const MCSymbol &_Symbol, MCFragment *_Fragment,
 /* *** */
 
 MCAssembler::MCAssembler(MCContext &_Context, TargetAsmBackend &_Backend,
-                         MCCodeEmitter &_Emitter, raw_ostream &_OS)
+                         MCCodeEmitter &_Emitter, bool _PadSectionToAlignment,
+                         raw_ostream &_OS)
   : Context(_Context), Backend(_Backend), Emitter(_Emitter),
-    OS(_OS), RelaxAll(false), SubsectionsViaSymbols(false)
+    OS(_OS), RelaxAll(false), SubsectionsViaSymbols(false),
+    PadSectionToAlignment(_PadSectionToAlignment)
 {
 }
 
@@ -289,7 +291,7 @@ static bool isScatteredFixupFullyResolved(const MCAssembler &Asm,
     if (A->getKind() != MCSymbolRefExpr::VK_None)
       return false;
 
-    A_Base = Asm.getAtom(Layout, &Asm.getSymbolData(A->getSymbol()));
+    A_Base = Asm.getAtom(&Asm.getSymbolData(A->getSymbol()));
     if (!A_Base)
       return false;
   }
@@ -299,7 +301,7 @@ static bool isScatteredFixupFullyResolved(const MCAssembler &Asm,
     if (B->getKind() != MCSymbolRefExpr::VK_None)
       return false;
 
-    B_Base = Asm.getAtom(Layout, &Asm.getSymbolData(B->getSymbol()));
+    B_Base = Asm.getAtom(&Asm.getSymbolData(B->getSymbol()));
     if (!B_Base)
       return false;
   }
@@ -326,8 +328,7 @@ bool MCAssembler::isSymbolLinkerVisible(const MCSymbol &Symbol) const {
   return getBackend().doesSectionRequireSymbols(Symbol.getSection());
 }
 
-const MCSymbolData *MCAssembler::getAtom(const MCAsmLayout &Layout,
-                                         const MCSymbolData *SD) const {
+const MCSymbolData *MCAssembler::getAtom(const MCSymbolData *SD) const {
   // Linker visible symbols define atoms.
   if (isSymbolLinkerVisible(SD->getSymbol()))
     return SD;
@@ -447,9 +448,9 @@ uint64_t MCAssembler::ComputeFragmentSize(MCAsmLayout &Layout,
 
     // FIXME: We need a way to communicate this error.
     int64_t Offset = TargetLocation - FragmentOffset;
-    if (Offset < 0)
+    if (Offset < 0 || Offset >= 0x40000000)
       report_fatal_error("invalid .org offset '" + Twine(TargetLocation) +
-                         "' (at offset '" + Twine(FragmentOffset) + "'");
+                         "' (at offset '" + Twine(FragmentOffset) + "')");
 
     return Offset;
   }
@@ -628,8 +629,23 @@ void MCAssembler::WriteSectionData(const MCSectionData *SD,
       switch (it->getKind()) {
       default:
         assert(0 && "Invalid fragment in virtual section!");
+      case MCFragment::FT_Data: {
+        // Check that we aren't trying to write a non-zero contents (or fixups)
+        // into a virtual section. This is to support clients which use standard
+        // directives to fill the contents of virtual sections.
+        MCDataFragment &DF = cast<MCDataFragment>(*it);
+        assert(DF.fixup_begin() == DF.fixup_end() &&
+               "Cannot have fixups in virtual section!");
+        for (unsigned i = 0, e = DF.getContents().size(); i != e; ++i)
+          assert(DF.getContents()[i] == 0 &&
+                 "Invalid data value for virtual section!");
+        break;
+      }
       case MCFragment::FT_Align:
-        assert(!cast<MCAlignFragment>(it)->getValueSize() &&
+        // Check that we aren't trying to write a non-zero value into a virtual
+        // section.
+        assert((!cast<MCAlignFragment>(it)->getValueSize() ||
+                !cast<MCAlignFragment>(it)->getValue()) &&
                "Invalid align in virtual section!");
         break;
       case MCFragment::FT_Fill:
@@ -697,25 +713,25 @@ void MCAssembler::Finish(MCObjectWriter *Writer) {
   // Insert additional align fragments for concrete sections to explicitly pad
   // the previous section to match their alignment requirements. This is for
   // 'gas' compatibility, it shouldn't strictly be necessary.
-  //
-  // FIXME: This may be Mach-O specific.
-  for (unsigned i = 1, e = Layout.getSectionOrder().size(); i < e; ++i) {
-    MCSectionData *SD = Layout.getSectionOrder()[i];
+  if (PadSectionToAlignment) {
+    for (unsigned i = 1, e = Layout.getSectionOrder().size(); i < e; ++i) {
+      MCSectionData *SD = Layout.getSectionOrder()[i];
 
-    // Ignore sections without alignment requirements.
-    unsigned Align = SD->getAlignment();
-    if (Align <= 1)
-      continue;
+      // Ignore sections without alignment requirements.
+      unsigned Align = SD->getAlignment();
+      if (Align <= 1)
+        continue;
 
-    // Ignore virtual sections, they don't cause file size modifications.
-    if (getBackend().isVirtualSection(SD->getSection()))
-      continue;
+      // Ignore virtual sections, they don't cause file size modifications.
+      if (getBackend().isVirtualSection(SD->getSection()))
+        continue;
 
-    // Otherwise, create a new align fragment at the end of the previous
-    // section.
-    MCAlignFragment *AF = new MCAlignFragment(Align, 0, 1, Align,
-                                              Layout.getSectionOrder()[i - 1]);
-    AF->setOnlyAlignAddress(true);
+      // Otherwise, create a new align fragment at the end of the previous
+      // section.
+      MCAlignFragment *AF = new MCAlignFragment(Align, 0, 1, Align,
+                                                Layout.getSectionOrder()[i - 1]);
+      AF->setOnlyAlignAddress(true);
+    }
   }
 
   // Create dummy fragments and assign section ordinals.
@@ -724,7 +740,7 @@ void MCAssembler::Finish(MCObjectWriter *Writer) {
     // Create dummy fragments to eliminate any empty sections, this simplifies
     // layout.
     if (it->getFragmentList().empty())
-      new MCFillFragment(0, 1, 0, it);
+      new MCDataFragment(it);
 
     it->setOrdinal(SectionIndex++);
   }

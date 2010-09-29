@@ -114,19 +114,6 @@ def : Pat<(X86tcret (i32 texternalsym:$dst), imm:$off),
           (NACL_TCRETURNdi texternalsym:$dst, imm:$off)>,
 	  Requires<[IsNaCl32]>;
 
-let AddedComplexity = 5, isCodeGenOnly = 1 in
-def NACL_GS_MOV32rm : I<0x8B, MRMSrcMem, (outs GR32:$dst), (ins i32mem:$src),
-                   "movl\t%gs:$src, $dst",
-                   [(set GR32:$dst, (gsload addr:$src))]>, SegGS,
-                   Requires<[IsNaCl32]>; // @LOCALMOD
-
-let AddedComplexity = 5, isCodeGenOnly = 1 in
-def NACL_FS_MOV32rm : I<0x8B, MRMSrcMem, (outs GR32:$dst), (ins i32mem:$src),
-                   "movl\t%fs:$src, $dst",
-                   [(set GR32:$dst, (fsload addr:$src))]>, SegFS,
-                   Requires<[IsNaCl32]>; // @LOCALMOD
-
-
 //===----------------------------------------------------------------------===//
 //
 // Native Client 64-bit
