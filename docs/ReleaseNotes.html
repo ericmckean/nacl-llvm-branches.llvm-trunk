@@ -67,9 +67,7 @@ Almost dead code.
   include/llvm/Analysis/LiveValues.h => Dan
   lib/Transforms/IPO/MergeFunctions.cpp => consider for 2.8.
   llvm/Analysis/PointerTracking.h => Edwin wants this, consider for 2.8.
-  ABCD, GEPSplitterPass
-  MSIL backend?
-  lib/Transforms/Utils/SSI.cpp  -> ABCD depends on it.
+  GEPSplitterPass
 -->
  
    
@@ -78,6 +76,7 @@ Almost dead code.
   strong phi elim
   llvm.dbg.value: variable debug info for optimized code
   loop dependence analysis
+  TBAA
  -->
 
  <!-- for announcement email:
@@ -296,7 +295,11 @@ organization changes have happened:
 <p>LLVM 2.8 includes several major new capabilities:</p>
 
 <ul>
-<li>.</li>
+<li>atomic lowering pass.</li>
+<li>RegionInfo pass: opt -regions analyze" or "opt -view-regions". 
+<!-- Tobias Grosser --></li>
+<li>ARMGlobalMerge: <!-- Anton --> </li>
+<li>llvm-diff</li>
 </ul>
 
 </div>
@@ -348,6 +351,11 @@ expose new optimization opportunities:</p>
 <li>
   SMDiagnostic takes different parameters now. //FIXME: how to upgrade?
 </li>
+<li>
+  The constructor for the Triple class no longer tries to understand odd triple
+  specifications.  Frontends should ensure that they only pass valid triples to
+  LLVM.  The Triple::normalize utility method has been added to help front-ends
+  deal with funky triples.
 <li>
   Some APIs got renamed:
   <ul>
@@ -438,11 +446,51 @@ it run faster:</p>
 
 <ul>
 
-<li></li>
+<li>
+  All of the NEON load and store intrinsics (llvm.arm.neon.vld* and
+  llvm.arm.neon.vst*) take an extra parameter to specify the alignment in bytes
+  of the memory being accessed.
+</li>
+<li>
+  The llvm.arm.neon.vaba intrinsic (vector absolute difference and
+  accumulate) has been removed.  This operation is now represented using
+  the llvm.arm.neon.vabd intrinsic (vector absolute difference) followed by a
+  vector add.
+</li>
+<li>
+  The llvm.arm.neon.vabdl and llvm.arm.neon.vabal intrinsics (lengthening
+  vector absolute difference with and without accumlation) have been removed.
+  They are represented using the llvm.arm.neon.vabd intrinsic (vector absolute
+  difference) followed by a vector zero-extend operation, and for vabal,
+  a vector add.
+</li>
+<li>
+  The llvm.arm.neon.vmovn intrinsic has been removed.  Calls of this intrinsic
+  are now replaced by vector truncate operations.
+</li>
+<li>
+  The llvm.arm.neon.vmovls and llvm.arm.neon.vmovlu intrinsics have been
+  removed.  They are now represented as vector sign-extend (vmovls) and
+  zero-extend (vmovlu) operations.
+</li>
+<li>
+  The llvm.arm.neon.vaddl*, llvm.arm.neon.vaddw*, llvm.arm.neon.vsubl*, and
+  llvm.arm.neon.vsubw* intrinsics (lengthening vector add and subtract) have
+  been removed.  They are replaced by vector add and vector subtract operations
+  where one (vaddw, vsubw) or both (vaddl, vsubl) of the operands are either
+  sign-extended or zero-extended.
+</li>
+<li>
+  The llvm.arm.neon.vmulls, llvm.arm.neon.vmullu, llvm.arm.neon.vmlal*, and
+  llvm.arm.neon.vmlsl* intrinsics (lengthening vector multiply with and without
+  accumulation and subtraction) have been removed.  These operations are now
+  represented as vector multiplications where the operands are either
+  sign-extended or zero-extended, followed by a vector add for vmlal or a
+  vector subtract for vmlsl.  Note that the polynomial vector multiply
+  intrinsic, llvm.arm.neon.vmullp, remains unchanged.
+</li>
 
 </ul>
-
-
 </div>
 
 <!--=========================================================================-->
@@ -490,8 +538,11 @@ on LLVM 2.7, this section lists some "gotchas" that you may run into upgrading
 from the previous release.</p>
 
 <ul>
-
-<li>.</li>
+<li>.ll file doesn't produce #uses comments anymore, to get them, run a .bc file
+   through "llvm-dis --show-annotations".</li>
+<li>MSIL Backend removed.</li>
+<li>ABCD and SSI passes removed.</li>
+<li>'Union' LLVM IR feature removed.</li>
 </ul>
 
 <p>In addition, many APIs have changed in this release.  Some of the major LLVM
@@ -576,7 +627,7 @@ components, please contact us on the <a
 href="http://lists.cs.uiuc.edu/mailman/listinfo/llvmdev">LLVMdev list</a>.</p>
 
 <ul>
-<li>The MSIL, Alpha, SPU, MIPS, PIC16, Blackfin, MSP430, SystemZ and MicroBlaze
+<li>The Alpha, SPU, MIPS, PIC16, Blackfin, MSP430, SystemZ and MicroBlaze
     backends are experimental.</li>
 <li><tt>llc</tt> "<tt>-filetype=asm</tt>" (the default) is the only
     supported value for this option.  XXX Update me</li>
@@ -799,7 +850,7 @@ lists</a>.</p>
   src="http://www.w3.org/Icons/valid-html401-blue" alt="Valid HTML 4.01"></a>
 
   <a href="http://llvm.org/">LLVM Compiler Infrastructure</a><br>
-  Last modified: $Date: 2010-08-05 13:38:39 -0700 (Thu, 05 Aug 2010) $
+  Last modified: $Date: 2010-09-13 10:39:35 -0700 (Mon, 13 Sep 2010) $
 </address>
 
 </body>

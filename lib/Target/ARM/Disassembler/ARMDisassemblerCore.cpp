@@ -79,22 +79,9 @@ const char *ARMUtils::OpcodeName(unsigned Opcode) {
 }
 
 // Return the register enum Based on RegClass and the raw register number.
-// For DRegPair, see comments below.
 // FIXME: Auto-gened?
-static unsigned getRegisterEnum(BO B, unsigned RegClassID, unsigned RawRegister,
-                                bool DRegPair = false) {
-
-  if (DRegPair && RegClassID == ARM::QPRRegClassID) {
-    // LLVM expects { Dd, Dd+1 } to form a super register; this is not specified
-    // in the ARM Architecture Manual as far as I understand it (A8.6.307).
-    // Therefore, we morph the RegClassID to be the sub register class and don't
-    // subsequently transform the RawRegister encoding when calculating RegNum.
-    //
-    // See also ARMinstPrinter::printOperand() wrt "dregpair" modifier part
-    // where this workaround is meant for.
-    RegClassID = ARM::DPRRegClassID;
-  }
-
+static unsigned
+getRegisterEnum(BO B, unsigned RegClassID, unsigned RawRegister) {
   // For this purpose, we can treat rGPR as if it were GPR.
   if (RegClassID == ARM::rGPRRegClassID) RegClassID = ARM::GPRRegClassID;
 
@@ -1586,8 +1573,7 @@ static unsigned decodeVFPRm(uint32_t insn, bool isSPVFP) {
 }
 
 // A7.5.1
-#if 0
-static uint64_t VFPExpandImm(unsigned char byte, unsigned N) {
+static APInt VFPExpandImm(unsigned char byte, unsigned N) {
   assert(N == 32 || N == 64);
 
   uint64_t Result;
@@ -1602,13 +1588,12 @@ static uint64_t VFPExpandImm(unsigned char byte, unsigned N) {
     Result = (uint64_t)slice(byte, 7, 7) << 63 |
              (uint64_t)slice(byte, 5, 0) << 48;
     if (bit6)
-      Result |= 0xffL << 54;
+      Result |= 0xffULL << 54;
     else
-      Result |= 0x1L << 62;
+      Result |= 0x1ULL << 62;
   }
-  return Result;
+  return APInt(N, Result);
 }
-#endif
 
 // VFP Unary Format Instructions:
 //
@@ -1863,7 +1848,7 @@ static bool DisassembleVFPLdStFrm(MCInst &MI, unsigned Opcode, uint32_t insn,
 
   assert(NumOps >= 3 && "VFPLdStFrm expects NumOps >= 3");
 
-  bool isSPVFP = (Opcode == ARM::VLDRS || Opcode == ARM::VSTRS) ? true : false;
+  bool isSPVFP = (Opcode == ARM::VLDRS || Opcode == ARM::VSTRS);
   unsigned RegClassID = isSPVFP ? ARM::SPRRegClassID : ARM::DPRRegClassID;
 
   // Extract Dd/Sd for operand 0.
@@ -1886,7 +1871,7 @@ static bool DisassembleVFPLdStFrm(MCInst &MI, unsigned Opcode, uint32_t insn,
 
 // VFP Load/Store Multiple Instructions.
 // This is similar to the algorithm for LDM/STM in that operand 0 (the base) and
-// operand 1 (the AM5 mode imm) is followed by two predicate operands.  It is
+// operand 1 (the AM4 mode imm) is followed by two predicate operands.  It is
 // followed by a reglist of either DPR(s) or SPR(s).
 //
 // VLDMD[_UPD], VLDMS[_UPD], VSTMD[_UPD], VSTMS[_UPD]
@@ -1910,16 +1895,14 @@ static bool DisassembleVFPLdStMulFrm(MCInst &MI, unsigned Opcode, uint32_t insn,
 
   MI.addOperand(MCOperand::CreateReg(Base));
 
-  // Next comes the AM5 Opcode.
+  // Next comes the AM4 Opcode.
   ARM_AM::AMSubMode SubMode = getAMSubModeForBits(getPUBits(insn));
   // Must be either "ia" or "db" submode.
   if (SubMode != ARM_AM::ia && SubMode != ARM_AM::db) {
-    DEBUG(errs() << "Illegal addressing mode 5 sub-mode!\n");
+    DEBUG(errs() << "Illegal addressing mode 4 sub-mode!\n");
     return false;
   }
-
-  unsigned char Imm8 = insn & 0xFF;
-  MI.addOperand(MCOperand::CreateImm(ARM_AM::getAM5Opc(SubMode, Imm8)));
+  MI.addOperand(MCOperand::CreateImm(ARM_AM::getAM4ModeImm(SubMode)));
 
   // Handling the two predicate operands before the reglist.
   int64_t CondVal = insn >> ARMII::CondShift;
@@ -1929,13 +1912,14 @@ static bool DisassembleVFPLdStMulFrm(MCInst &MI, unsigned Opcode, uint32_t insn,
   OpIdx += 4;
 
   bool isSPVFP = (Opcode == ARM::VLDMS || Opcode == ARM::VLDMS_UPD ||
-     Opcode == ARM::VSTMS || Opcode == ARM::VSTMS_UPD) ? true : false;
+                  Opcode == ARM::VSTMS || Opcode == ARM::VSTMS_UPD);
   unsigned RegClassID = isSPVFP ? ARM::SPRRegClassID : ARM::DPRRegClassID;
 
   // Extract Dd/Sd.
   unsigned RegD = decodeVFPRd(insn, isSPVFP);
 
   // Fill the variadic part of reglist.
+  unsigned char Imm8 = insn & 0xFF;
   unsigned Regs = isSPVFP ? Imm8 : Imm8/2;
   for (unsigned i = 0; i < Regs; ++i) {
     MI.addOperand(MCOperand::CreateReg(getRegisterEnum(B, RegClassID,
@@ -1986,10 +1970,14 @@ static bool DisassembleVFPMiscFrm(MCInst &MI, unsigned Opcode, uint32_t insn,
   // Extract/decode the f64/f32 immediate.
   if (OpIdx < NumOps && OpInfo[OpIdx].RegClass < 0
         && !OpInfo[OpIdx].isPredicate() && !OpInfo[OpIdx].isOptionalDef()) {
-    // The asm syntax specifies the before-expanded <imm>.
-    // Not VFPExpandImm(slice(insn,19,16) << 4 | slice(insn, 3, 0),
-    //                  Opcode == ARM::FCONSTD ? 64 : 32)
-    MI.addOperand(MCOperand::CreateImm(slice(insn,19,16)<<4 | slice(insn,3,0)));
+    // The asm syntax specifies the floating point value, not the 8-bit literal.
+    APInt immRaw = VFPExpandImm(slice(insn,19,16) << 4 | slice(insn, 3, 0),
+                             Opcode == ARM::FCONSTD ? 64 : 32);
+    APFloat immFP = APFloat(immRaw, true);
+    double imm = Opcode == ARM::FCONSTD ? immFP.convertToDouble() :
+      immFP.convertToFloat();
+    MI.addOperand(MCOperand::CreateFPImm(imm));
+
     ++OpIdx;
   }
 
@@ -2202,22 +2190,6 @@ static unsigned decodeN3VImm(uint32_t insn) {
   return (insn >> 8) & 0xF;
 }
 
-static bool UseDRegPair(unsigned Opcode) {
-  switch (Opcode) {
-  default:
-    return false;
-  case ARM::VLD1q8_UPD:
-  case ARM::VLD1q16_UPD:
-  case ARM::VLD1q32_UPD:
-  case ARM::VLD1q64_UPD:
-  case ARM::VST1q8_UPD:
-  case ARM::VST1q16_UPD:
-  case ARM::VST1q32_UPD:
-  case ARM::VST1q64_UPD:
-    return true;
-  }
-}
-
 // VLD*
 //   D[d] D[d2] ... Rn [TIED_TO Rn] align [Rm]
 // VLD*LN*
@@ -2244,10 +2216,9 @@ static bool DisassembleNLdSt0(MCInst &MI, unsigned Opcode, uint32_t insn,
 
   // We have homogeneous NEON registers for Load/Store.
   unsigned RegClass = 0;
-  bool DRegPair = UseDRegPair(Opcode);
 
   // Double-spaced registers have increments of 2.
-  unsigned Inc = (DblSpaced || DRegPair) ? 2 : 1;
+  unsigned Inc = DblSpaced ? 2 : 1;
 
   unsigned Rn = decodeRn(insn);
   unsigned Rm = decodeRm(insn);
@@ -2293,7 +2264,7 @@ static bool DisassembleNLdSt0(MCInst &MI, unsigned Opcode, uint32_t insn,
     RegClass = OpInfo[OpIdx].RegClass;
     while (OpIdx < NumOps && (unsigned)OpInfo[OpIdx].RegClass == RegClass) {
       MI.addOperand(MCOperand::CreateReg(
-                      getRegisterEnum(B, RegClass, Rd, DRegPair)));
+                      getRegisterEnum(B, RegClass, Rd)));
       Rd += Inc;
       ++OpIdx;
     }
@@ -2312,7 +2283,7 @@ static bool DisassembleNLdSt0(MCInst &MI, unsigned Opcode, uint32_t insn,
 
     while (OpIdx < NumOps && (unsigned)OpInfo[OpIdx].RegClass == RegClass) {
       MI.addOperand(MCOperand::CreateReg(
-                      getRegisterEnum(B, RegClass, Rd, DRegPair)));
+                      getRegisterEnum(B, RegClass, Rd)));
       Rd += Inc;
       ++OpIdx;
     }

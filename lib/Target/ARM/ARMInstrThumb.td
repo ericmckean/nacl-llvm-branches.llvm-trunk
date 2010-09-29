@@ -221,9 +221,13 @@ def tADDrPCi : T1I<(outs tGPR:$dst), (ins t_imm_s4:$rhs), IIC_iALUi,
                T1Encoding<{1,0,1,0,0,?}>; // A6.2 & A8.6.10
 
 // ADD rd, sp, #imm8
+// This is rematerializable, which is particularly useful for taking the
+// address of locals.
+let isReMaterializable = 1 in {
 def tADDrSPi : T1I<(outs tGPR:$dst), (ins GPR:$sp, t_imm_s4:$rhs), IIC_iALUi,
                   "add\t$dst, $sp, $rhs", []>,
                T1Encoding<{1,0,1,0,1,?}>; // A6.2 & A8.6.8
+}
 
 // ADD sp, sp, #imm7
 def tADDspi : TIt<(outs GPR:$dst), (ins GPR:$lhs, t_imm_s4:$rhs), IIC_iALUi,
@@ -278,7 +282,8 @@ let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
 // FIXME: remove when we have a way to marking a MI with these properties.
 let isReturn = 1, isTerminator = 1, isBarrier = 1, mayLoad = 1,
     hasExtraDefRegAllocReq = 1 in
-def tPOP_RET : T1I<(outs), (ins pred:$p, reglist:$dsts, variable_ops), IIC_Br,
+def tPOP_RET : T1I<(outs), (ins pred:$p, reglist:$dsts, variable_ops),
+                   IIC_iLoadmBr,
                    "pop${p}\t$dsts", []>,
                T1Misc<{1,1,0,?,?,?,?}>;
 
@@ -406,11 +411,9 @@ def tSVC : T1pI<(outs), (ins i32imm:$svc), IIC_Br, "svc", "\t$svc", []>,
 
 // A8.6.16 B: Encoding T1
 // If Inst{11-8} == 0b1110 then UNDEFINED
-// FIXME: Temporary emitted as raw bytes until this pseudo-op will be added to
-// binutils
 let isBarrier = 1, isTerminator = 1 in
 def tTRAP : TI<(outs), (ins), IIC_Br, 
-               ".short 0xdefe ${:comment} trap", [(trap)]>, Encoding16 {
+               "trap", [(trap)]>, Encoding16 {
   let Inst{15-12} = 0b1101;
   let Inst{11-8} = 0b1110;
 }
@@ -531,7 +534,7 @@ def tSpill : T1pIs<(outs), (ins tGPR:$src, t_addrmode_sp:$addr), IIC_iStorei,
 //  Load / store multiple Instructions.
 //
 
-// These requires base address to be written back or one of the loaded regs.
+// These require base address to be written back or one of the loaded regs.
 let mayLoad = 1, neverHasSideEffects = 1, hasExtraDefRegAllocReq = 1 in {
 def tLDM : T1I<(outs),
                (ins addrmode4:$addr, pred:$p, reglist:$dsts, variable_ops),
@@ -556,12 +559,12 @@ def tSTM_UPD : T1It<(outs tGPR:$wb),
            T1Encoding<{1,1,0,0,0,?}>; // A6.2 & A8.6.189
 
 let mayLoad = 1, Uses = [SP], Defs = [SP], hasExtraDefRegAllocReq = 1 in
-def tPOP : T1I<(outs), (ins pred:$p, reglist:$dsts, variable_ops), IIC_Br,
+def tPOP : T1I<(outs), (ins pred:$p, reglist:$dsts, variable_ops), IIC_iLoadmBr,
                "pop${p}\t$dsts", []>,
            T1Misc<{1,1,0,?,?,?,?}>;
 
 let mayStore = 1, Uses = [SP], Defs = [SP], hasExtraSrcRegAllocReq = 1 in
-def tPUSH : T1I<(outs), (ins pred:$p, reglist:$srcs, variable_ops), IIC_Br,
+def tPUSH : T1I<(outs), (ins pred:$p, reglist:$srcs, variable_ops), IIC_iStorem,
                 "push${p}\t$srcs", []>,
             T1Misc<{0,1,0,?,?,?,?}>;
 
@@ -625,7 +628,7 @@ def tBIC : T1sIt<(outs tGPR:$dst), (ins tGPR:$lhs, tGPR:$rhs), IIC_iALUr,
            T1DataProcessing<0b1110>;
 
 // CMN register
-let Defs = [CPSR] in {
+let isCompare = 1, Defs = [CPSR] in {
 //FIXME: Disable CMN, as CCodes are backwards from compare expectations
 //       Compare-to-zero still works out, just not the relationals
 //def tCMN : T1pI<(outs), (ins tGPR:$lhs, tGPR:$rhs), IIC_iCMPr,
@@ -639,7 +642,7 @@ def tCMNz : T1pI<(outs), (ins tGPR:$lhs, tGPR:$rhs), IIC_iCMPr,
 }
 
 // CMP immediate
-let Defs = [CPSR] in {
+let isCompare = 1, Defs = [CPSR] in {
 def tCMPi8 : T1pI<(outs), (ins tGPR:$lhs, i32imm:$rhs), IIC_iCMPi,
                   "cmp", "\t$lhs, $rhs",
                   [(ARMcmp tGPR:$lhs, imm0_255:$rhs)]>,
@@ -651,7 +654,7 @@ def tCMPzi8 : T1pI<(outs), (ins tGPR:$lhs, i32imm:$rhs), IIC_iCMPi,
 }
 
 // CMP register
-let Defs = [CPSR] in {
+let isCompare = 1, Defs = [CPSR] in {
 def tCMPr : T1pI<(outs), (ins tGPR:$lhs, tGPR:$rhs), IIC_iCMPr,
                  "cmp", "\t$lhs, $rhs",
                  [(ARMcmp tGPR:$lhs, tGPR:$rhs)]>,
@@ -832,7 +835,7 @@ def tSXTH  : T1pI<(outs tGPR:$dst), (ins tGPR:$src), IIC_iUNAr,
              T1Misc<{0,0,1,0,0,0,?}>;
 
 // test
-let isCommutable = 1, Defs = [CPSR] in
+let isCompare = 1, isCommutable = 1, Defs = [CPSR] in
 def tTST  : T1pI<(outs), (ins tGPR:$lhs, tGPR:$rhs), IIC_iCMPr,
                  "tst", "\t$lhs, $rhs",
                  [(ARMcmpZ (and tGPR:$lhs, tGPR:$rhs), 0)]>,

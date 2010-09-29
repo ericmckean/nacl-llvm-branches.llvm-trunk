@@ -17,12 +17,14 @@ def IIC_iALUsi     : InstrItinClass;
 def IIC_iALUsr     : InstrItinClass;
 def IIC_iUNAr      : InstrItinClass;
 def IIC_iUNAsi     : InstrItinClass;
-def IIC_iUNAsr     : InstrItinClass;
+def IIC_iEXTr      : InstrItinClass;
+def IIC_iEXTAr     : InstrItinClass;
 def IIC_iCMPi      : InstrItinClass;
 def IIC_iCMPr      : InstrItinClass;
 def IIC_iCMPsi     : InstrItinClass;
 def IIC_iCMPsr     : InstrItinClass;
 def IIC_iMOVi      : InstrItinClass;
+def IIC_iMOVix2    : InstrItinClass;
 def IIC_iMOVr      : InstrItinClass;
 def IIC_iMOVsi     : InstrItinClass;
 def IIC_iMOVsr     : InstrItinClass;
@@ -42,14 +44,16 @@ def IIC_iLoadsi    : InstrItinClass;
 def IIC_iLoadiu    : InstrItinClass;
 def IIC_iLoadru    : InstrItinClass;
 def IIC_iLoadsiu   : InstrItinClass;
-def IIC_iLoadm     : InstrItinClass;
+def IIC_iLoadm     : InstrItinClass<0>;  // micro-coded
+def IIC_iLoadmBr   : InstrItinClass<0>;  // micro-coded
+def IIC_iLoadiALU  : InstrItinClass;
 def IIC_iStorei    : InstrItinClass;
 def IIC_iStorer    : InstrItinClass;
 def IIC_iStoresi   : InstrItinClass;
 def IIC_iStoreiu   : InstrItinClass;
 def IIC_iStoreru   : InstrItinClass;
 def IIC_iStoresiu  : InstrItinClass;
-def IIC_iStorem    : InstrItinClass;
+def IIC_iStorem    : InstrItinClass<0>;  // micro-coded
 def IIC_Br         : InstrItinClass;
 def IIC_fpSTAT     : InstrItinClass;
 def IIC_fpUNA32    : InstrItinClass;
@@ -80,10 +84,10 @@ def IIC_fpSQRT32   : InstrItinClass;
 def IIC_fpSQRT64   : InstrItinClass;
 def IIC_fpLoad32   : InstrItinClass;
 def IIC_fpLoad64   : InstrItinClass;
-def IIC_fpLoadm    : InstrItinClass;
+def IIC_fpLoadm    : InstrItinClass<0>;  // micro-coded
 def IIC_fpStore32  : InstrItinClass;
 def IIC_fpStore64  : InstrItinClass;
-def IIC_fpStorem   : InstrItinClass;
+def IIC_fpStorem   : InstrItinClass<0>;  // micro-coded
 def IIC_VLD1       : InstrItinClass;
 def IIC_VLD2       : InstrItinClass;
 def IIC_VLD3       : InstrItinClass;

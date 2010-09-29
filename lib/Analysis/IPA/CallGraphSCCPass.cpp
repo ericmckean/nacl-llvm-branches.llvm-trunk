@@ -73,7 +73,7 @@ public:
     errs().indent(Offset*2) << "Call Graph SCC Pass Manager\n";
     for (unsigned Index = 0; Index < getNumContainedPasses(); ++Index) {
       Pass *P = getContainedPass(Index);
-      P->dumpPass(Offset + 1);
+      P->dumpPassStructure(Offset + 1);
       dumpLastUses(P, Offset+1);
     }
   }
@@ -582,7 +582,6 @@ namespace {
     
   public:
     static char ID;
-    PrintCallGraphPass() : CallGraphSCCPass(ID), Out(dbgs()) {}
     PrintCallGraphPass(const std::string &B, raw_ostream &o)
       : CallGraphSCCPass(ID), Banner(B), Out(o) {}
     

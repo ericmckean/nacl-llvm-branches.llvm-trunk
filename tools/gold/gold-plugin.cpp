@@ -453,15 +453,22 @@ static ld_plugin_status all_symbols_read_hook(void) {
     (*message)(LDPL_ERROR, "%s", ErrMsg.c_str());
     return LDPS_ERR;
   }
-  raw_fd_ostream objFile(uniqueObjPath.c_str(), ErrMsg,
-                         raw_fd_ostream::F_Binary);
+  tool_output_file objFile(uniqueObjPath.c_str(), ErrMsg,
+                           raw_fd_ostream::F_Binary);
   if (!ErrMsg.empty()) {
     (*message)(LDPL_ERROR, "%s", ErrMsg.c_str());
     return LDPS_ERR;
   }
 
-  objFile.write(buffer, bufsize);
-  objFile.close();
+  objFile.os().write(buffer, bufsize);
+  objFile.os().close();
+  if (objFile.os().has_error()) {
+    (*message)(LDPL_ERROR, "Error writing output file '%s'",
+               uniqueObjPath.c_str());
+    objFile.os().clear_error();
+    return LDPS_ERR;
+  }
+  objFile.keep();
 
   lto_codegen_dispose(cg);
 

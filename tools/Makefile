@@ -24,7 +24,7 @@ PARALLEL_DIRS := opt llvm-as llvm-dis \
                  llvm-prof llvm-link \
                  lli llvm-extract llvm-mc \
                  bugpoint llvm-bcanalyzer llvm-stub \
-                 llvmc
+                 llvmc llvm-diff
 
 # Let users override the set of tools to build from the command line.
 ifdef ONLY_TOOLS
