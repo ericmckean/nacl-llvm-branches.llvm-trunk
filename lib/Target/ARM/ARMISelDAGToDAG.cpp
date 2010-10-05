@@ -46,6 +46,12 @@ DisableShifterOp("disable-shifter-op", cl::Hidden,
 /// instructions for SelectionDAG operations.
 ///
 namespace {
+
+enum AddrMode2Type {
+  AM2_BASE, // Simple AM2 (+-imm12)
+  AM2_SHOP  // Shifter-op AM2
+};
+
 class ARMDAGToDAGISel : public SelectionDAGISel {
   ARMBaseTargetMachine &TM;
 
@@ -74,8 +80,25 @@ public:
 
   bool SelectShifterOperandReg(SDValue N, SDValue &A,
                                SDValue &B, SDValue &C);
-  bool SelectAddrMode2(SDValue N, SDValue &Base,
-                       SDValue &Offset, SDValue &Opc);
+  AddrMode2Type SelectAddrMode2Worker(SDValue N, SDValue &Base,
+                                      SDValue &Offset, SDValue &Opc);
+  bool SelectAddrMode2Base(SDValue N, SDValue &Base, SDValue &Offset,
+                           SDValue &Opc) {
+    return SelectAddrMode2Worker(N, Base, Offset, Opc) == AM2_BASE;
+  }
+
+  bool SelectAddrMode2ShOp(SDValue N, SDValue &Base, SDValue &Offset,
+                           SDValue &Opc) {
+    return SelectAddrMode2Worker(N, Base, Offset, Opc) == AM2_SHOP;
+  }
+
+  bool SelectAddrMode2(SDValue N, SDValue &Base, SDValue &Offset,
+                       SDValue &Opc) {
+    SelectAddrMode2Worker(N, Base, Offset, Opc);
+    // This always matches one way or another.
+    return true;
+  }
+
   bool SelectAddrMode2Offset(SDNode *Op, SDValue N,
                              SDValue &Offset, SDValue &Opc);
   bool SelectAddrMode3(SDValue N, SDValue &Base,
@@ -245,9 +268,10 @@ bool ARMDAGToDAGISel::SelectShifterOperandReg(SDValue N,
   return true;
 }
 
-bool ARMDAGToDAGISel::SelectAddrMode2(SDValue N,
-                                      SDValue &Base, SDValue &Offset,
-                                      SDValue &Opc) {
+AddrMode2Type ARMDAGToDAGISel::SelectAddrMode2Worker(SDValue N,
+                                                     SDValue &Base,
+                                                     SDValue &Offset,
+                                                     SDValue &Opc) {
   if (N.getOpcode() == ISD::MUL) {
     if (ConstantSDNode *RHS = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
       // X * [3,5,9] -> X + X * [2,4,8] etc.
@@ -265,7 +289,7 @@ bool ARMDAGToDAGISel::SelectAddrMode2(SDValue N,
           Opc = CurDAG->getTargetConstant(ARM_AM::getAM2Opc(AddSub, ShAmt,
                                                             ARM_AM::lsl),
                                           MVT::i32);
-          return true;
+          return AM2_SHOP;
         }
       }
     }
@@ -285,11 +309,11 @@ bool ARMDAGToDAGISel::SelectAddrMode2(SDValue N,
     Opc = CurDAG->getTargetConstant(ARM_AM::getAM2Opc(ARM_AM::add, 0,
                                                       ARM_AM::no_shift),
                                     MVT::i32);
-    return true;
+    return AM2_BASE;
   }
 
   // Match simple R +/- imm12 operands.
-  if (N.getOpcode() == ISD::ADD)
+  if (N.getOpcode() == ISD::ADD) {
     if (ConstantSDNode *RHS = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
       int RHSC = (int)RHS->getZExtValue();
       if ((RHSC >= 0 && RHSC < 0x1000) ||
@@ -309,9 +333,10 @@ bool ARMDAGToDAGISel::SelectAddrMode2(SDValue N,
         Opc = CurDAG->getTargetConstant(ARM_AM::getAM2Opc(AddSub, RHSC,
                                                           ARM_AM::no_shift),
                                         MVT::i32);
-        return true;
+        return AM2_BASE;
       }
     }
+  }
 
   // Otherwise this is R +/- [possibly shifted] R.
   ARM_AM::AddrOpc AddSub = N.getOpcode() == ISD::ADD ? ARM_AM::add:ARM_AM::sub;
@@ -352,7 +377,7 @@ bool ARMDAGToDAGISel::SelectAddrMode2(SDValue N,
 
   Opc = CurDAG->getTargetConstant(ARM_AM::getAM2Opc(AddSub, ShAmt, ShOpcVal),
                                   MVT::i32);
-  return true;
+  return AM2_SHOP;
 }
 
 bool ARMDAGToDAGISel::SelectAddrMode2Offset(SDNode *Op, SDValue N,

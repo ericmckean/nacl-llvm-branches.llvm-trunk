@@ -1131,7 +1131,6 @@ bool LLParser::ParseInstructionMetadata(Instruction *Inst,
     Lex.Lex();
 
     MDNode *Node;
-    unsigned NodeID;
     SMLoc Loc = Lex.getLoc();
 
     if (ParseToken(lltok::exclaim, "expected '!' here"))
@@ -1148,6 +1147,7 @@ bool LLParser::ParseInstructionMetadata(Instruction *Inst,
       assert(ID.Kind == ValID::t_MDNode);
       Inst->setMetadata(MDK, ID.MDNodeVal);
     } else {
+      unsigned NodeID = 0;
       if (ParseMDNodeID(Node, NodeID))
         return true;
       if (Node) {
@@ -1248,7 +1248,7 @@ bool LLParser::ParseIndexList(SmallVectorImpl<unsigned> &Indices,
       AteExtraComma = true;
       return false;
     }
-    unsigned Idx;
+    unsigned Idx = 0;
     if (ParseUInt32(Idx)) return true;
     Indices.push_back(Idx);
   }

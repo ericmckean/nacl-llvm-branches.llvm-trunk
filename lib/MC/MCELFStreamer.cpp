@@ -111,6 +111,13 @@ public:
   virtual void Finish();
 
 private:
+  struct LocalCommon {
+    MCSymbolData *SD;
+    uint64_t Size;
+    unsigned ByteAlignment;
+  };
+  std::vector<LocalCommon> LocalCommons;
+
   SmallPtrSet<MCSymbol *, 16> BindingExplicitlySet;
   /// @}
   void SetSection(StringRef Section, unsigned Type, unsigned Flags,
@@ -190,6 +197,7 @@ void MCELFStreamer::EmitLabel(MCSymbol *Symbol) {
 
 void MCELFStreamer::EmitAssemblerFlag(MCAssemblerFlag Flag) {
   switch (Flag) {
+  case MCAF_SyntaxUnified:  return; // no-op here?
   case MCAF_SubsectionsViaSymbols:
     getAssembler().setSubsectionsViaSymbols(true);
     return;
@@ -343,17 +351,10 @@ void MCELFStreamer::EmitCommonSymbol(MCSymbol *Symbol, uint64_t Size,
                                                                     MCSectionELF::SHF_WRITE |
                                                                     MCSectionELF::SHF_ALLOC,
                                                                     SectionKind::getBSS());
-
-    MCSectionData &SectData = getAssembler().getOrCreateSectionData(*Section);
-    new MCAlignFragment(ByteAlignment, 0, 1, ByteAlignment, &SectData);
-
-    MCFragment *F = new MCFillFragment(0, 0, Size, &SectData);
-    SD.setFragment(F);
     Symbol->setSection(*Section);
 
-    // Update the maximum alignment of the section if necessary.
-    if (ByteAlignment > SectData.getAlignment())
-      SectData.setAlignment(ByteAlignment);
+    struct LocalCommon L = {&SD, Size, ByteAlignment};
+    LocalCommons.push_back(L);
   } else {
     SD.setCommon(Size, ByteAlignment);
   }
@@ -499,6 +500,26 @@ void MCELFStreamer::EmitInstruction(const MCInst &Inst) {
 }
 
 void MCELFStreamer::Finish() {
+  for (std::vector<LocalCommon>::const_iterator i = LocalCommons.begin(),
+                                                e = LocalCommons.end();
+       i != e; ++i) {
+    MCSymbolData *SD = i->SD;
+    uint64_t Size = i->Size;
+    unsigned ByteAlignment = i->ByteAlignment;
+    const MCSymbol &Symbol = SD->getSymbol();
+    const MCSection &Section = Symbol.getSection();
+
+    MCSectionData &SectData = getAssembler().getOrCreateSectionData(Section);
+    new MCAlignFragment(ByteAlignment, 0, 1, ByteAlignment, &SectData);
+
+    MCFragment *F = new MCFillFragment(0, 0, Size, &SectData);
+    SD->setFragment(F);
+
+    // Update the maximum alignment of the section if necessary.
+    if (ByteAlignment > SectData.getAlignment())
+      SectData.setAlignment(ByteAlignment);
+  }
+
   // FIXME: We create more atoms than it is necessary. Some relocations to
   // merge sections can be implemented with section address + offset,
   // figure out which ones and why.
