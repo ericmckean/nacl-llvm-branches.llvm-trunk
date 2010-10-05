@@ -40,6 +40,10 @@ static cl::opt<bool>
 EnableARM3Addr("enable-arm-3-addr-conv", cl::Hidden,
                cl::desc("Enable ARM 2-addr to 3-addr conv"));
 
+static cl::opt<bool>
+OldARMIfCvt("old-arm-ifcvt", cl::Hidden,
+             cl::desc("Use old-style ARM if-conversion heuristics"));
+
 ARMBaseInstrInfo::ARMBaseInstrInfo(const ARMSubtarget& STI)
   : TargetInstrInfoImpl(ARMInsts, array_lengthof(ARMInsts)),
     Subtarget(STI) {
@@ -226,7 +230,7 @@ ARMBaseInstrInfo::spillCalleeSavedRegisters(MachineBasicBlock &MBB,
       MBB.addLiveIn(Reg);
 
     // Insert the spill to the stack frame. The register is killed at the spill
-    // 
+    //
     const TargetRegisterClass *RC = TRI->getMinimalPhysRegClass(Reg);
     storeRegToStackSlot(MBB, MI, Reg, isKill,
                         CSI[i].getFrameIdx(), RC, TRI);
@@ -1195,22 +1199,54 @@ bool ARMBaseInstrInfo::isSchedulingBoundary(const MachineInstr *MI,
   return false;
 }
 
-bool ARMBaseInstrInfo::
-isProfitableToIfCvt(MachineBasicBlock &MBB, unsigned NumInstrs) const {
+bool ARMBaseInstrInfo::isProfitableToIfCvt(MachineBasicBlock &MBB,
+                                           unsigned NumInstrs,
+                                           float Probability,
+                                           float Confidence) const {
   if (!NumInstrs)
     return false;
-  if (Subtarget.getCPUString() == "generic")
-    // Generic (and overly aggressive) if-conversion limits for testing.
-    return NumInstrs <= 10;
-  else if (Subtarget.hasV7Ops())
-    return NumInstrs <= 3;
-  return NumInstrs <= 2;
+
+  // Use old-style heuristics
+  if (OldARMIfCvt) {
+    if (Subtarget.getCPUString() == "generic")
+      // Generic (and overly aggressive) if-conversion limits for testing.
+      return NumInstrs <= 10;
+    if (Subtarget.hasV7Ops())
+      return NumInstrs <= 3;
+    return NumInstrs <= 2;
+  }
+
+  // Attempt to estimate the relative costs of predication versus branching.
+  float UnpredCost = Probability * NumInstrs;
+  UnpredCost += 1.0; // The branch itself
+  UnpredCost += (1.0 - Confidence) * Subtarget.getMispredictionPenalty();
+
+  float PredCost = NumInstrs;
+
+  return PredCost < UnpredCost;
+
 }
-  
+
 bool ARMBaseInstrInfo::
 isProfitableToIfCvt(MachineBasicBlock &TMBB, unsigned NumT,
-                    MachineBasicBlock &FMBB, unsigned NumF) const {
-  return NumT && NumF && NumT <= 2 && NumF <= 2;
+                    MachineBasicBlock &FMBB, unsigned NumF,
+                    float Probability, float Confidence) const {
+  // Use old-style if-conversion heuristics
+  if (OldARMIfCvt) {
+    return NumT && NumF && NumT <= 2 && NumF <= 2;
+  }
+
+  if (!NumT || !NumF)
+    return false;
+
+  // Attempt to estimate the relative costs of predication versus branching.
+  float UnpredCost = Probability * NumT + (1.0 - Probability) * NumF;
+  UnpredCost += 1.0; // The branch itself
+  UnpredCost += (1.0 - Confidence) * Subtarget.getMispredictionPenalty();
+
+  float PredCost = NumT + NumF;
+
+  return PredCost < UnpredCost;
 }
 
 /// getInstrPredicate - If instruction is predicated, returns its predicate
@@ -1394,7 +1430,8 @@ bool llvm::rewriteARMFrameIndex(MachineInstr &MI, unsigned FrameRegIdx,
 }
 
 bool ARMBaseInstrInfo::
-AnalyzeCompare(const MachineInstr *MI, unsigned &SrcReg, int &CmpMask, int &CmpValue) const {
+AnalyzeCompare(const MachineInstr *MI, unsigned &SrcReg, int &CmpMask,
+               int &CmpValue) const {
   switch (MI->getOpcode()) {
   default: break;
   case ARM::CMPri:
@@ -1416,16 +1453,30 @@ AnalyzeCompare(const MachineInstr *MI, unsigned &SrcReg, int &CmpMask, int &CmpV
   return false;
 }
 
-static bool isSuitableForMask(const MachineInstr &MI, unsigned SrcReg,
+/// isSuitableForMask - Identify a suitable 'and' instruction that
+/// operates on the given source register and applies the same mask
+/// as a 'tst' instruction. Provide a limited look-through for copies.
+/// When successful, MI will hold the found instruction.
+static bool isSuitableForMask(MachineInstr *&MI, unsigned SrcReg,
                               int CmpMask, bool CommonUse) {
-  switch (MI.getOpcode()) {
+  switch (MI->getOpcode()) {
     case ARM::ANDri:
     case ARM::t2ANDri:
-      if (CmpMask != MI.getOperand(2).getImm())
+      if (CmpMask != MI->getOperand(2).getImm())
         return false;
-      if (SrcReg == MI.getOperand(CommonUse ? 1 : 0).getReg())
+      if (SrcReg == MI->getOperand(CommonUse ? 1 : 0).getReg())
         return true;
       break;
+    case ARM::COPY: {
+      // Walk down one instruction which is potentially an 'and'.
+      const MachineInstr &Copy = *MI;
+      MachineBasicBlock::iterator AND(
+        llvm::next(MachineBasicBlock::iterator(MI)));
+      if (AND == MI->getParent()->end()) return false;
+      MI = AND;
+      return isSuitableForMask(MI, Copy.getOperand(0).getReg(),
+                               CmpMask, true);
+    }
   }
 
   return false;
@@ -1450,16 +1501,15 @@ OptimizeCompareInstr(MachineInstr *CmpInstr, unsigned SrcReg, int CmpMask,
 
   // Masked compares sometimes use the same register as the corresponding 'and'.
   if (CmpMask != ~0) {
-      if (!isSuitableForMask(*MI, SrcReg, CmpMask, false)) {
+    if (!isSuitableForMask(MI, SrcReg, CmpMask, false)) {
       MI = 0;
       for (MachineRegisterInfo::use_iterator UI = MRI.use_begin(SrcReg),
            UE = MRI.use_end(); UI != UE; ++UI) {
         if (UI->getParent() != CmpInstr->getParent()) continue;
-        MachineInstr &PotentialAND = *UI;
+        MachineInstr *PotentialAND = &*UI;
         if (!isSuitableForMask(PotentialAND, SrcReg, CmpMask, true))
           continue;
-        SrcReg = PotentialAND.getOperand(0).getReg();
-        MI = &PotentialAND;
+        MI = PotentialAND;
         break;
       }
       if (!MI) return false;
@@ -1588,7 +1638,7 @@ ARMBaseInstrInfo::getNumMicroOps(const MachineInstr *MI,
     } else {
       // Assume the worst.
       return NumRegs;
-    }      
+    }
   }
   }
 }

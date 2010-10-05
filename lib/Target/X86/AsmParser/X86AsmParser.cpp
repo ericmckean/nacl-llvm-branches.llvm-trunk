@@ -36,7 +36,7 @@ class X86ATTAsmParser : public TargetAsmParser {
 
 protected:
   unsigned Is64Bit : 1;
-
+  
 private:
   MCAsmParser &getParser() const { return Parser; }
 
@@ -51,9 +51,9 @@ private:
 
   bool ParseDirectiveWord(unsigned Size, SMLoc L);
 
-  bool MatchInstruction(SMLoc IDLoc,
-                        const SmallVectorImpl<MCParsedAsmOperand*> &Operands,
-                        MCInst &Inst);
+  bool MatchAndEmitInstruction(SMLoc IDLoc,
+                               SmallVectorImpl<MCParsedAsmOperand*> &Operands,
+                               MCStreamer &Out);
 
   /// @name Auto-generated Matcher Functions
   /// {
@@ -66,7 +66,7 @@ private:
 public:
   X86ATTAsmParser(const Target &T, MCAsmParser &_Parser, TargetMachine &TM)
     : TargetAsmParser(T), Parser(_Parser), TM(TM) {
-
+      
     // Initialize the set of available features.
     setAvailableFeatures(ComputeAvailableFeatures(
                            &TM.getSubtarget<X86Subtarget>()));
@@ -921,8 +921,10 @@ ParseInstruction(StringRef Name, SMLoc NameLoc,
   }
   
   // FIXME: Hack to handle "f{mulp,addp} st(0), $op" the same as
-  // "f{mulp,addp} $op", since they commute.
-  if ((Name == "fmulp" || Name == "faddp") && Operands.size() == 3 &&
+  // "f{mulp,addp} $op", since they commute.  We also allow fdivrp/fsubrp even
+  // though they don't commute, solely because gas does support this.
+  if ((Name=="fmulp" || Name=="faddp" || Name=="fsubrp" || Name=="fdivrp") &&
+      Operands.size() == 3 &&
       static_cast<X86Operand*>(Operands[1])->isReg() &&
       static_cast<X86Operand*>(Operands[1])->getReg() == X86::ST0) {
     delete Operands[1];
@@ -1108,17 +1110,44 @@ bool X86ATTAsmParser::ParseDirectiveWord(unsigned Size, SMLoc L) {
 
 
 bool X86ATTAsmParser::
-MatchInstruction(SMLoc IDLoc,
-                 const SmallVectorImpl<MCParsedAsmOperand*> &Operands,
-                 MCInst &Inst) {
+MatchAndEmitInstruction(SMLoc IDLoc,
+                        SmallVectorImpl<MCParsedAsmOperand*> &Operands,
+                        MCStreamer &Out) {
   assert(!Operands.empty() && "Unexpect empty operand list!");
+  X86Operand *Op = static_cast<X86Operand*>(Operands[0]);
+  assert(Op->isToken() && "Leading operand should always be a mnemonic!");
 
+  // First, handle aliases that expand to multiple instructions.
+  // FIXME: This should be replaced with a real .td file alias mechanism.
+  if (Op->getToken() == "fstsw" || Op->getToken() == "fstcw" ||
+      Op->getToken() == "finit" || Op->getToken() == "fsave" ||
+      Op->getToken() == "fstenv") {
+    MCInst Inst;
+    Inst.setOpcode(X86::WAIT);
+    Out.EmitInstruction(Inst);
+
+    const char *Repl =
+      StringSwitch<const char*>(Op->getToken())
+        .Case("finit", "fninit")
+        .Case("fsave", "fnsave")
+        .Case("fstcw", "fnstcw")
+        .Case("fstenv", "fnstenv")
+        .Case("fstsw", "fnstsw")
+        .Default(0);
+    assert(Repl && "Unknown wait-prefixed instruction");
+    delete Operands[0];
+    Operands[0] = X86Operand::CreateToken(Repl, IDLoc);
+  }
+  
+  
   bool WasOriginallyInvalidOperand = false;
   unsigned OrigErrorInfo;
+  MCInst Inst;
   
   // First, try a direct match.
   switch (MatchInstructionImpl(Operands, Inst, OrigErrorInfo)) {
   case Match_Success:
+    Out.EmitInstruction(Inst);
     return false;
   case Match_MissingFeature:
     Error(IDLoc, "instruction requires a CPU feature not currently enabled");
@@ -1134,9 +1163,6 @@ MatchInstruction(SMLoc IDLoc,
   // valid prefixes, and we could just infer the right unambiguous
   // type. However, that requires substantially more matcher support than the
   // following hack.
-
-  X86Operand *Op = static_cast<X86Operand*>(Operands[0]);
-  assert(Op->isToken() && "Leading operand should always be a mnemonic!");
   
   // Change the operand to point to a temporary token.
   StringRef Base = Op->getToken();
@@ -1165,8 +1191,10 @@ MatchInstruction(SMLoc IDLoc,
   unsigned NumSuccessfulMatches =
     (MatchB == Match_Success) + (MatchW == Match_Success) +
     (MatchL == Match_Success) + (MatchQ == Match_Success);
-  if (NumSuccessfulMatches == 1)
+  if (NumSuccessfulMatches == 1) {
+    Out.EmitInstruction(Inst);
     return false;
+  }
 
   // Otherwise, the match failed, try to produce a decent error message.
 
