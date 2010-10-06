@@ -16,7 +16,9 @@
 
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetData.h"
+#include "llvm/MC/MCStreamer.h"
 #include "ARMInstrInfo.h"
+#include "ARMELFWriterInfo.h"
 #include "ARMFrameInfo.h"
 #include "ARMJITInfo.h"
 #include "ARMSubtarget.h"
@@ -64,6 +66,7 @@ public:
 class ARMTargetMachine : public ARMBaseTargetMachine {
   ARMInstrInfo        InstrInfo;
   const TargetData    DataLayout;       // Calculates type size & alignment
+  ARMELFWriterInfo    ELFWriterInfo;
   ARMTargetLowering   TLInfo;
   ARMSelectionDAGInfo TSInfo;
 public:
@@ -84,6 +87,9 @@ public:
 
   virtual const ARMInstrInfo     *getInstrInfo() const { return &InstrInfo; }
   virtual const TargetData       *getTargetData() const { return &DataLayout; }
+  virtual const ARMELFWriterInfo *getELFWriterInfo() const {
+    return Subtarget.isTargetELF() ? &ELFWriterInfo : 0;
+  }
 };
 
 /// ThumbTargetMachine - Thumb target machine.
@@ -94,6 +100,7 @@ class ThumbTargetMachine : public ARMBaseTargetMachine {
   // Either Thumb1InstrInfo or Thumb2InstrInfo.
   OwningPtr<ARMBaseInstrInfo> InstrInfo;
   const TargetData    DataLayout;   // Calculates type size & alignment
+  ARMELFWriterInfo    ELFWriterInfo;
   ARMTargetLowering   TLInfo;
   ARMSelectionDAGInfo TSInfo;
 public:
@@ -118,6 +125,9 @@ public:
     return InstrInfo.get();
   }
   virtual const TargetData       *getTargetData() const { return &DataLayout; }
+  virtual const ARMELFWriterInfo *getELFWriterInfo() const {
+    return Subtarget.isTargetELF() ? &ELFWriterInfo : 0;
+  }
 };
 
 } // end namespace llvm

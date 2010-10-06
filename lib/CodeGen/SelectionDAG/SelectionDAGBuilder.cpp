@@ -2207,6 +2207,19 @@ size_t SelectionDAGBuilder::Clusterify(CaseVector& Cases,
   return numCmps;
 }
 
+void SelectionDAGBuilder::UpdateSplitBlock(MachineBasicBlock *First,
+                                           MachineBasicBlock *Last) {
+  // Update JTCases.
+  for (unsigned i = 0, e = JTCases.size(); i != e; ++i)
+    if (JTCases[i].first.HeaderBB == First)
+      JTCases[i].first.HeaderBB = Last;
+
+  // Update BitTestCases.
+  for (unsigned i = 0, e = BitTestCases.size(); i != e; ++i)
+    if (BitTestCases[i].Parent == First)
+      BitTestCases[i].Parent = Last;
+}
+
 void SelectionDAGBuilder::visitSwitch(const SwitchInst &SI) {
   MachineBasicBlock *SwitchMBB = FuncInfo.MBB;
 
@@ -3942,6 +3955,9 @@ SelectionDAGBuilder::EmitFuncArgumentDbgValue(const Value *V, MDNode *Variable,
     const TargetRegisterInfo *TRI = DAG.getTarget().getRegisterInfo();
     Reg = TRI->getFrameRegister(MF);
     Offset = FuncInfo.getByValArgumentFrameIndex(Arg);
+    // If byval argument ofset is not recorded then ignore this.
+    if (!Offset)
+      Reg = 0;
   }
 
   if (N.getNode() && N.getOpcode() == ISD::CopyFromReg) {
@@ -4124,7 +4140,7 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
         return 0;
       DAG.AddDbgValue(SDV, N.getNode(), isParameter);
     } else {
-      // If Address is an arugment then try to emits its dbg value using
+      // If Address is an argument then try to emit its dbg value using
       // virtual register info from the FuncInfo.ValueMap. 
       if (!EmitFuncArgumentDbgValue(Address, Variable, 0, N)) {
         // If variable is pinned by a alloca in dominating bb then
@@ -4309,6 +4325,66 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
     return 0;
   }
 
+  case Intrinsic::x86_mmx_pslli_w:
+  case Intrinsic::x86_mmx_pslli_d:
+  case Intrinsic::x86_mmx_pslli_q:
+  case Intrinsic::x86_mmx_psrli_w:
+  case Intrinsic::x86_mmx_psrli_d:
+  case Intrinsic::x86_mmx_psrli_q:
+  case Intrinsic::x86_mmx_psrai_w:
+  case Intrinsic::x86_mmx_psrai_d: {
+    SDValue ShAmt = getValue(I.getArgOperand(1));
+    if (isa<ConstantSDNode>(ShAmt)) {
+      visitTargetIntrinsic(I, Intrinsic);
+      return 0;
+    }
+    unsigned NewIntrinsic = 0;
+    EVT ShAmtVT = MVT::v2i32;
+    switch (Intrinsic) {
+    case Intrinsic::x86_mmx_pslli_w:
+      NewIntrinsic = Intrinsic::x86_mmx_psll_w;
+      break;
+    case Intrinsic::x86_mmx_pslli_d:
+      NewIntrinsic = Intrinsic::x86_mmx_psll_d;
+      break;
+    case Intrinsic::x86_mmx_pslli_q:
+      NewIntrinsic = Intrinsic::x86_mmx_psll_q;
+      break;
+    case Intrinsic::x86_mmx_psrli_w:
+      NewIntrinsic = Intrinsic::x86_mmx_psrl_w;
+      break;
+    case Intrinsic::x86_mmx_psrli_d:
+      NewIntrinsic = Intrinsic::x86_mmx_psrl_d;
+      break;
+    case Intrinsic::x86_mmx_psrli_q:
+      NewIntrinsic = Intrinsic::x86_mmx_psrl_q;
+      break;
+    case Intrinsic::x86_mmx_psrai_w:
+      NewIntrinsic = Intrinsic::x86_mmx_psra_w;
+      break;
+    case Intrinsic::x86_mmx_psrai_d:
+      NewIntrinsic = Intrinsic::x86_mmx_psra_d;
+      break;
+    default: llvm_unreachable("Impossible intrinsic");  // Can't reach here.
+    }
+
+    // The vector shift intrinsics with scalars uses 32b shift amounts but
+    // the sse2/mmx shift instructions reads 64 bits. Set the upper 32 bits
+    // to be zero.
+    // We must do this early because v2i32 is not a legal type.
+    DebugLoc dl = getCurDebugLoc();
+    SDValue ShOps[2];
+    ShOps[0] = ShAmt;
+    ShOps[1] = DAG.getConstant(0, MVT::i32);
+    ShAmt =  DAG.getNode(ISD::BUILD_VECTOR, dl, ShAmtVT, &ShOps[0], 2);
+    EVT DestVT = TLI.getValueType(I.getType());
+    ShAmt = DAG.getNode(ISD::BIT_CONVERT, dl, DestVT, ShAmt);
+    Res = DAG.getNode(ISD::INTRINSIC_WO_CHAIN, dl, DestVT,
+                       DAG.getConstant(NewIntrinsic, MVT::i32),
+                       getValue(I.getArgOperand(0)), ShAmt);
+    setValue(&I, Res);
+    return 0;
+  }
   case Intrinsic::convertff:
   case Intrinsic::convertfsi:
   case Intrinsic::convertfui:

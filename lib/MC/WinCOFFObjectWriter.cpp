@@ -65,7 +65,7 @@ public:
   typedef llvm::SmallVector<AuxSymbol, 1> AuxiliarySymbols;
 
   name             Name;
-  size_t           Index;
+  int              Index;
   AuxiliarySymbols Aux;
   COFFSymbol      *Other;
   COFFSection     *Section;
@@ -96,7 +96,7 @@ public:
   COFF::section Header;
 
   std::string          Name;
-  size_t               Number;
+  int                  Number;
   MCSectionData const *MCData;
   COFFSymbol          *Symbol;
   relocations          Relocations;
@@ -180,6 +180,11 @@ public:
                         const MCFixup &Fixup,
                         MCValue Target,
                         uint64_t &FixedValue);
+
+  virtual bool IsFixupFullyResolved(const MCAssembler &Asm,
+                                    const MCValue Target,
+                                    bool IsPCRel,
+                                    const MCFragment *DF) const;
 
   void WriteObject(const MCAssembler &Asm, const MCAsmLayout &Layout);
 };
@@ -414,7 +419,7 @@ void WinCOFFObjectWriter::DefineSymbol(MCSymbolData const &SymbolData,
     bool external = SymbolData.isExternal() || (SymbolData.Fragment == NULL);
 
     coff_symbol->Data.StorageClass =
-      external ? COFF::IMAGE_SYM_CLASS_EXTERNAL : COFF::IMAGE_SYM_CLASS_LABEL;
+      external ? COFF::IMAGE_SYM_CLASS_EXTERNAL : COFF::IMAGE_SYM_CLASS_STATIC;
   }
 
   if (SymbolData.getFlags() & COFF::SF_WeakReference) {
@@ -674,6 +679,7 @@ void WinCOFFObjectWriter::RecordRelocation(const MCAssembler &Asm,
     FixedValue += 4;
     break;
   case FK_Data_4:
+  case X86::reloc_signed_4byte:
     Reloc.Data.Type = Is64Bit ? COFF::IMAGE_REL_AMD64_ADDR32
                               : COFF::IMAGE_REL_I386_DIR32;
     break;
@@ -688,6 +694,13 @@ void WinCOFFObjectWriter::RecordRelocation(const MCAssembler &Asm,
   }
 
   coff_section->Relocations.push_back(Reloc);
+}
+
+bool WinCOFFObjectWriter::IsFixupFullyResolved(const MCAssembler &Asm,
+                                               const MCValue Target,
+                                               bool IsPCRel,
+                                               const MCFragment *DF) const {
+  return false;
 }
 
 void WinCOFFObjectWriter::WriteObject(const MCAssembler &Asm,

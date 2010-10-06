@@ -372,8 +372,8 @@ X86InstrInfo::X86InstrInfo(X86TargetMachine &tm)
     { X86::Int_CVTPD2PSrr,  X86::Int_CVTPD2PSrm, 16 },
     { X86::Int_CVTPS2DQrr,  X86::Int_CVTPS2DQrm, 16 },
     { X86::Int_CVTPS2PDrr,  X86::Int_CVTPS2PDrm, 0 },
-    { X86::Int_CVTSD2SI64rr,X86::Int_CVTSD2SI64rm, 0 },
-    { X86::Int_CVTSD2SIrr,  X86::Int_CVTSD2SIrm, 0 },
+    { X86::CVTSD2SI64rr,    X86::CVTSD2SI64rm, 0 },
+    { X86::CVTSD2SIrr,      X86::CVTSD2SIrm, 0 },
     { X86::Int_CVTSD2SSrr,  X86::Int_CVTSD2SSrm, 0 },
     { X86::Int_CVTSI2SD64rr,X86::Int_CVTSI2SD64rm, 0 },
     { X86::Int_CVTSI2SDrr,  X86::Int_CVTSI2SDrm, 0 },
@@ -382,8 +382,8 @@ X86InstrInfo::X86InstrInfo(X86TargetMachine &tm)
     { X86::Int_CVTSS2SDrr,  X86::Int_CVTSS2SDrm, 0 },
     { X86::Int_CVTSS2SI64rr,X86::Int_CVTSS2SI64rm, 0 },
     { X86::Int_CVTSS2SIrr,  X86::Int_CVTSS2SIrm, 0 },
-    { X86::Int_CVTTPD2DQrr, X86::Int_CVTTPD2DQrm, 16 },
-    { X86::Int_CVTTPS2DQrr, X86::Int_CVTTPS2DQrm, 16 },
+    { X86::CVTTPD2DQrr,     X86::CVTTPD2DQrm, 16 },
+    { X86::CVTTPS2DQrr,     X86::CVTTPS2DQrm, 16 },
     { X86::Int_CVTTSD2SI64rr,X86::Int_CVTTSD2SI64rm, 0 },
     { X86::Int_CVTTSD2SIrr, X86::Int_CVTTSD2SIrm, 0 },
     { X86::Int_CVTTSS2SI64rr,X86::Int_CVTTSS2SI64rm, 0 },
@@ -1946,6 +1946,7 @@ void X86InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
 
   DEBUG(dbgs() << "Cannot copy " << RI.getName(SrcReg)
                << " to " << RI.getName(DestReg) << '\n');
+  MBB.dump();
   llvm_unreachable("Cannot emit physreg copy instruction");
 }
 
@@ -2358,8 +2359,8 @@ MachineInstr* X86InstrInfo::foldMemoryOperandImpl(MachineFunction &MF,
     case X86::Int_CVTSS2SDrr:
     case X86::RCPSSr:
     case X86::RCPSSr_Int:
-    case X86::ROUNDSDr_Int:
-    case X86::ROUNDSSr_Int:
+    case X86::ROUNDSDr:
+    case X86::ROUNDSSr:
     case X86::RSQRTSSr:
     case X86::RSQRTSSr_Int:
     case X86::SQRTSSr:
@@ -2410,8 +2411,8 @@ MachineInstr* X86InstrInfo::foldMemoryOperandImpl(MachineFunction &MF,
     case X86::Int_CVTSS2SDrr:
     case X86::RCPSSr:
     case X86::RCPSSr_Int:
-    case X86::ROUNDSDr_Int:
-    case X86::ROUNDSSr_Int:
+    case X86::ROUNDSDr:
+    case X86::ROUNDSSr:
     case X86::RSQRTSSr:
     case X86::RSQRTSSr_Int:
     case X86::SQRTSSr:

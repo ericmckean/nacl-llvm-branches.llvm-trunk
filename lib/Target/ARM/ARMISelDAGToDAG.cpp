@@ -54,6 +54,12 @@ DisableShifterOp("disable-shifter-op", cl::Hidden,
 /// instructions for SelectionDAG operations.
 ///
 namespace {
+
+enum AddrMode2Type {
+  AM2_BASE, // Simple AM2 (+-imm12)
+  AM2_SHOP  // Shifter-op AM2
+};
+
 class ARMDAGToDAGISel : public SelectionDAGISel {
   ARMBaseTargetMachine &TM;
 
@@ -82,8 +88,29 @@ public:
 
   bool SelectShifterOperandReg(SDValue N, SDValue &A,
                                SDValue &B, SDValue &C);
-  bool SelectAddrMode2(SDNode *Op, SDValue N, SDValue &Base,
-                       SDValue &Offset, SDValue &Opc);
+  AddrMode2Type SelectAddrMode2Worker(SDNode *Op,
+                                      SDValue N, SDValue &Base,
+                                      SDValue &Offset, SDValue &Opc);
+  bool SelectAddrMode2Base(SDNode *Op,
+                           SDValue N, SDValue &Base, SDValue &Offset,
+                           SDValue &Opc) {
+    return SelectAddrMode2Worker(Op, N, Base, Offset, Opc) == AM2_BASE;
+  }
+
+  bool SelectAddrMode2ShOp(SDNode *Op,
+                           SDValue N, SDValue &Base, SDValue &Offset,
+                           SDValue &Opc) {
+    return SelectAddrMode2Worker(Op, N, Base, Offset, Opc) == AM2_SHOP;
+  }
+
+  bool SelectAddrMode2(SDNode *Op, 
+                       SDValue N, SDValue &Base, SDValue &Offset,
+                       SDValue &Opc) {
+    SelectAddrMode2Worker(Op, N, Base, Offset, Opc);
+    // This always matches one way or another.
+    return true;
+  }
+
   bool SelectAddrMode2Offset(SDNode *Op, SDValue N,
                              SDValue &Offset, SDValue &Opc);
   bool SelectAddrMode3(SDNode *Op, SDValue N, SDValue &Base,
@@ -253,15 +280,15 @@ bool ARMDAGToDAGISel::SelectShifterOperandReg(SDValue N,
   return true;
 }
 
+AddrMode2Type ARMDAGToDAGISel::SelectAddrMode2Worker(SDNode *Op, /* LOCALMOD */
+                                                     SDValue N,
+                                                     SDValue &Base,
+                                                     SDValue &Offset,
 // @LOCALMOD-START
 // Note: In the code below we do not want "Offfset" to be real register to
 // not violate ARM sandboxing.
 // @LOCALMOD-END
-
-
-bool ARMDAGToDAGISel::SelectAddrMode2(SDNode *Op, SDValue N,
-                                      SDValue &Base, SDValue &Offset,
-                                      SDValue &Opc) {
+                                                     SDValue &Opc) {
   // @LOCALMOD-START
   // avoid two reg addressing mode for stores
   const bool is_store = (Op->getOpcode() == ISD::STORE);
@@ -285,7 +312,7 @@ bool ARMDAGToDAGISel::SelectAddrMode2(SDNode *Op, SDValue N,
           Opc = CurDAG->getTargetConstant(ARM_AM::getAM2Opc(AddSub, ShAmt,
                                                             ARM_AM::lsl),
                                           MVT::i32);
-          return true;
+          return AM2_SHOP;
         }
       }
     }
@@ -306,11 +333,11 @@ bool ARMDAGToDAGISel::SelectAddrMode2(SDNode *Op, SDValue N,
     Opc = CurDAG->getTargetConstant(ARM_AM::getAM2Opc(ARM_AM::add, 0,
                                                       ARM_AM::no_shift),
                                     MVT::i32);
-    return true;
+    return AM2_BASE;
   }
 
   // Match simple R +/- imm12 operands.
-  if (N.getOpcode() == ISD::ADD)
+  if (N.getOpcode() == ISD::ADD) {
     if (ConstantSDNode *RHS = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
       int RHSC = (int)RHS->getZExtValue();
       if ((RHSC >= 0 && RHSC < 0x1000) ||
@@ -330,10 +357,11 @@ bool ARMDAGToDAGISel::SelectAddrMode2(SDNode *Op, SDValue N,
         Opc = CurDAG->getTargetConstant(ARM_AM::getAM2Opc(AddSub, RHSC,
                                                           ARM_AM::no_shift),
                                         MVT::i32);
-        return true;
+        return AM2_BASE;
       }
     }
-
+  }
+  
   // @LOCALMOD-START
   // keep store addressing modes simple
   if (FlagSfiStore && is_store) {
@@ -348,7 +376,7 @@ bool ARMDAGToDAGISel::SelectAddrMode2(SDNode *Op, SDValue N,
     Opc = CurDAG->getTargetConstant(ARM_AM::getAM2Opc(ARM_AM::add, 0,
                                                       ARM_AM::no_shift),
                                     MVT::i32);
-    return true;
+    return AM2_BASE;
   }
   // @LOCALMOD-END
 
@@ -391,7 +419,7 @@ bool ARMDAGToDAGISel::SelectAddrMode2(SDNode *Op, SDValue N,
 
   Opc = CurDAG->getTargetConstant(ARM_AM::getAM2Opc(AddSub, ShAmt, ShOpcVal),
                                   MVT::i32);
-  return true;
+  return AM2_SHOP;
 }
 
 bool ARMDAGToDAGISel::SelectAddrMode2Offset(SDNode *Op, SDValue N,

@@ -106,6 +106,11 @@ protected:
   /// precision.
   bool FPOnlySP;
 
+  /// AllowsUnalignedMem - If true, the subtarget allows unaligned memory
+  /// accesses for some types.  For details, see
+  /// ARMTargetLowering::allowsUnalignedMemoryAccesses().
+  bool AllowsUnalignedMem;
+
   /// stackAlignment - The minimum alignment known to hold of the stack frame on
   /// entry to the function and which must be maintained by every function.
   unsigned stackAlignment;
@@ -191,8 +196,12 @@ protected:
 
   bool useMovt() const { return UseMovt && hasV6T2Ops(); }
 
+  bool allowsUnalignedMem() const { return AllowsUnalignedMem; }
+
   const std::string & getCPUString() const { return CPUString; }
 
+  unsigned getMispredictionPenalty() const;
+  
   /// enablePostRAScheduler - True at 'More' optimization.
   bool enablePostRAScheduler(CodeGenOpt::Level OptLevel,
                              TargetSubtarget::AntiDepBreakMode& Mode,
