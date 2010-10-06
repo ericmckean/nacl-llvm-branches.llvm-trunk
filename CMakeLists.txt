@@ -66,6 +66,7 @@ set(LLVM_ALL_TARGETS
   MSP430
   PIC16
   PowerPC
+  PTX
   Sparc
   SystemZ
   X86
@@ -323,6 +324,11 @@ foreach(t ${LLVM_TARGETS_TO_BUILD})
     set(LLVM_ENUM_ASM_PRINTERS 
       "${LLVM_ENUM_ASM_PRINTERS}LLVM_ASM_PRINTER(${t})\n")
   endif( EXISTS ${LLVM_MAIN_SRC_DIR}/lib/Target/${t}/AsmPrinter/CMakeLists.txt )
+  if( EXISTS ${LLVM_MAIN_SRC_DIR}/lib/Target/${t}/InstPrinter/CMakeLists.txt )
+    add_subdirectory(lib/Target/${t}/InstPrinter)
+    set(LLVM_ENUM_ASM_PRINTERS
+      "${LLVM_ENUM_ASM_PRINTERS}LLVM_ASM_PRINTER(${t})\n")
+  endif( EXISTS ${LLVM_MAIN_SRC_DIR}/lib/Target/${t}/InstPrinter/CMakeLists.txt )
   if( EXISTS ${LLVM_MAIN_SRC_DIR}/lib/Target/${t}/AsmParser/CMakeLists.txt )
     add_subdirectory(lib/Target/${t}/AsmParser)
     set(LLVM_ENUM_ASM_PARSERS 
@@ -335,6 +341,11 @@ foreach(t ${LLVM_TARGETS_TO_BUILD})
   endif( EXISTS ${LLVM_MAIN_SRC_DIR}/lib/Target/${t}/Disassembler/CMakeLists.txt )
   set(CURRENT_LLVM_TARGET)
 endforeach(t)
+
+# PIC16 contains an odd library:
+if( LLVM_TARGETS_TO_BUILD MATCHES ".*PIC16.*" )
+  add_subdirectory(lib/Target/PIC16/PIC16Passes)
+endif()
 
 # Produce llvm/Config/AsmPrinters.def
 configure_file(

@@ -75,6 +75,14 @@ X86SelectionDAGInfo::EmitTargetCodeForMemset(SelectionDAG &DAG, DebugLoc dl,
     return SDValue();
   }
 
+  // @LOCALMOD-BEGIN
+  if (Subtarget->isTargetNaCl()) {
+    // TODO: Can we allow this optimization for Native Client?
+    // At the very least, pointer size needs to be fixed below.
+    return SDValue();
+  }
+  // @LOCALMOD-END
+
   uint64_t SizeVal = ConstantSize->getZExtValue();
   SDValue InFlag(0, 0);
   EVT AVT;

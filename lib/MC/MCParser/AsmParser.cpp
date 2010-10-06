@@ -19,7 +19,6 @@
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCExpr.h"
-#include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCParser/AsmCond.h"
 #include "llvm/MC/MCParser/AsmLexer.h"
 #include "llvm/MC/MCParser/MCAsmParser.h"
@@ -1047,14 +1046,9 @@ bool AsmParser::ParseStatement() {
   }
 
   // If parsing succeeded, match the instruction.
-  if (!HadError) {
-    MCInst Inst;
-    if (!getTargetParser().MatchInstruction(IDLoc, ParsedOperands, Inst)) {
-      // Emit the instruction on success.
-      Out.EmitInstruction(Inst);
-    } else
-      HadError = true;
-  }
+  if (!HadError)
+    HadError = getTargetParser().MatchAndEmitInstruction(IDLoc, ParsedOperands,
+                                                         Out);
 
   // Free any parsed operands.
   for (unsigned i = 0, e = ParsedOperands.size(); i != e; ++i)
@@ -1660,12 +1654,7 @@ bool AsmParser::ParseDirectiveAlign(bool IsPow2, unsigned ValueSize) {
 
   // Check whether we should use optimal code alignment for this .align
   // directive.
-  //
-  // FIXME: This should be using a target hook.
-  bool UseCodeAlign = false;
-  if (const MCSectionMachO *S = dyn_cast<MCSectionMachO>(
-        getStreamer().getCurrentSection()))
-    UseCodeAlign = S->hasAttribute(MCSectionMachO::S_ATTR_PURE_INSTRUCTIONS);
+  bool UseCodeAlign = getStreamer().getCurrentSection()->UseCodeAlign();
   if ((!HasFillExpr || Lexer.getMAI().getTextAlignFillValue() == FillExpr) &&
       ValueSize == 1 && UseCodeAlign) {
     getStreamer().EmitCodeAlignment(Alignment, MaxBytesToFill);
@@ -1702,7 +1691,7 @@ bool AsmParser::ParseDirectiveSymbolAttribute(MCSymbolAttr Attr) {
   }
 
   Lex();
-  return false;  
+  return false;
 }
 
 /// ParseDirectiveELFType
@@ -2042,7 +2031,7 @@ bool GenericAsmParser::ParseDirectiveLoc(StringRef, SMLoc DirectiveLoc) {
   int64_t FileNumber = getTok().getIntVal();
   if (FileNumber < 1)
     return TokError("file number less than one in '.loc' directive");
-  if (!getContext().ValidateDwarfFileNumber(FileNumber))
+  if (!getContext().isValidDwarfFileNumber(FileNumber))
     return TokError("unassigned file number in '.loc' directive");
   Lex();
 
@@ -2062,7 +2051,7 @@ bool GenericAsmParser::ParseDirectiveLoc(StringRef, SMLoc DirectiveLoc) {
     Lex();
   }
 
-  unsigned Flags = 0;
+  unsigned Flags = DWARF2_LINE_DEFAULT_IS_STMT ? DWARF2_FLAG_IS_STMT : 0;
   unsigned Isa = 0;
   if (getLexer().isNot(AsmToken::EndOfStatement)) {
     for (;;) {

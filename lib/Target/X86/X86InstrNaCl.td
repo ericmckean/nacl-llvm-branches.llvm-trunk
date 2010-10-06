@@ -30,7 +30,7 @@ let isTerminator = 1, isReturn = 1, isBarrier = 1,
 
   def NACL_RET32   : I<0, Pseudo, (outs), (ins variable_ops),
                     "pop %ecx\n\tnacljmp %ecx",
-                    [(X86retflag 0)]>, 
+                    []>, 
                     Requires<[IsNaCl32]>;
   def NACL_RETI32   : I<0, Pseudo, (outs), (ins i16imm:$amt, variable_ops),
                     "pop %ecx\n"
