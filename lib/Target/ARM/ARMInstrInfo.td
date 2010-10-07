@@ -1005,7 +1005,7 @@ let isReturn = 1, isTerminator = 1, isBarrier = 1, mayLoad = 1,
     hasExtraDefRegAllocReq = 1 in
   def LDM_RET : AXI4ld<(outs GPR:$wb), (ins addrmode4:$addr, pred:$p,
                                         reglist:$dsts, variable_ops),
-                       IndexModeUpd, LdStMulFrm, IIC_iLoadmBr,
+                       IndexModeUpd, LdStMulFrm, IIC_iLoad_mBr,
                        "ldm${addr:submode}${p}\t$addr!, $dsts",
                        "$addr.addr = $wb", []>;
 
@@ -1016,14 +1016,14 @@ let isCall = 1,
           D16, D17, D18, D19, D20, D21, D22, D23,
           D24, D25, D26, D27, D28, D29, D30, D31, CPSR, FPSCR] in {
   def BL  : ABXI<0b1011, (outs), (ins i32imm:$func, variable_ops),
-                IIC_Br, "bl\t${func:call}",
+                IIC_Br, "bl\t$func",
                 [(ARMcall tglobaladdr:$func)]>,
             Requires<[IsARM, IsNotDarwin]> {
     let Inst{31-28} = 0b1110;
   }
 
   def BL_pred : ABI<0b1011, (outs), (ins i32imm:$func, variable_ops),
-                   IIC_Br, "bl", "\t${func:call}",
+                   IIC_Br, "bl", "\t$func",
                    [(ARMcall_pred tglobaladdr:$func)]>,
                 Requires<[IsARM, IsNotDarwin]>;
 
@@ -1067,13 +1067,13 @@ let isCall = 1,
           D16, D17, D18, D19, D20, D21, D22, D23,
           D24, D25, D26, D27, D28, D29, D30, D31, CPSR, FPSCR] in {
   def BLr9  : ABXI<0b1011, (outs), (ins i32imm:$func, variable_ops),
-                IIC_Br, "bl\t${func:call}",
+                IIC_Br, "bl\t$func",
                 [(ARMcall tglobaladdr:$func)]>, Requires<[IsARM, IsDarwin]> {
     let Inst{31-28} = 0b1110;
   }
 
   def BLr9_pred : ABI<0b1011, (outs), (ins i32imm:$func, variable_ops),
-                   IIC_Br, "bl", "\t${func:call}",
+                   IIC_Br, "bl", "\t$func",
                    [(ARMcall_pred tglobaladdr:$func)]>,
                   Requires<[IsARM, IsDarwin]>;
 
@@ -1514,12 +1514,12 @@ def STRHT: AI3sthpo<(outs GPR:$base_wb),
 let mayLoad = 1, neverHasSideEffects = 1, hasExtraDefRegAllocReq = 1 in {
 def LDM : AXI4ld<(outs), (ins addrmode4:$addr, pred:$p,
                           reglist:$dsts, variable_ops),
-                 IndexModeNone, LdStMulFrm, IIC_iLoadm,
+                 IndexModeNone, LdStMulFrm, IIC_iLoad_m,
                  "ldm${addr:submode}${p}\t$addr, $dsts", "", []>;
 
 def LDM_UPD : AXI4ld<(outs GPR:$wb), (ins addrmode4:$addr, pred:$p,
                                       reglist:$dsts, variable_ops),
-                     IndexModeUpd, LdStMulFrm, IIC_iLoadm,
+                     IndexModeUpd, LdStMulFrm, IIC_iLoad_mu,
                      "ldm${addr:submode}${p}\t$addr!, $dsts",
                      "$addr.addr = $wb", []>;
 } // mayLoad, neverHasSideEffects, hasExtraDefRegAllocReq
@@ -1527,12 +1527,12 @@ def LDM_UPD : AXI4ld<(outs GPR:$wb), (ins addrmode4:$addr, pred:$p,
 let mayStore = 1, neverHasSideEffects = 1, hasExtraSrcRegAllocReq = 1 in {
 def STM : AXI4st<(outs), (ins addrmode4:$addr, pred:$p,
                           reglist:$srcs, variable_ops),
-                 IndexModeNone, LdStMulFrm, IIC_iStorem,
+                 IndexModeNone, LdStMulFrm, IIC_iStore_m,
                  "stm${addr:submode}${p}\t$addr, $srcs", "", []>;
 
 def STM_UPD : AXI4st<(outs GPR:$wb), (ins addrmode4:$addr, pred:$p,
                                       reglist:$srcs, variable_ops),
-                     IndexModeUpd, LdStMulFrm, IIC_iStorem,
+                     IndexModeUpd, LdStMulFrm, IIC_iStore_mu,
                      "stm${addr:submode}${p}\t$addr!, $srcs",
                      "$addr.addr = $wb", []>;
 } // mayStore, neverHasSideEffects, hasExtraSrcRegAllocReq
@@ -2469,6 +2469,9 @@ def BCCZi64 : PseudoInst<(outs),
 // Conditional moves
 // FIXME: should be able to write a pattern for ARMcmov, but can't use
 // a two-value operand where a dag node expects two operands. :(
+// FIXME: These should all be pseudo-instructions that get expanded to
+//        the normal MOV instructions. That would fix the dependency on
+//        special casing them in tblgen.
 let neverHasSideEffects = 1 in {
 def MOVCCr : AI1<0b1101, (outs GPR:$dst), (ins GPR:$false, GPR:$true), DPFrm,
                 IIC_iCMOVr, "mov", "\t$dst, $true",
@@ -2484,6 +2487,16 @@ def MOVCCs : AI1<0b1101, (outs GPR:$dst),
    [/*(set GPR:$dst, (ARMcmov GPR:$false, so_reg:$true, imm:$cc, CCR:$ccr))*/]>,
                 RegConstraint<"$false = $dst">, UnaryDP {
   let Inst{25} = 0;
+}
+
+def MOVCCi16 : AI1<0b1000, (outs GPR:$dst), (ins GPR:$false, i32imm:$src),
+                 DPFrm, IIC_iMOVi,
+                 "movw", "\t$dst, $src",
+                 []>,
+                 RegConstraint<"$false = $dst">, Requires<[IsARM, HasV6T2]>,
+                 UnaryDP {
+  let Inst{20} = 0;
+  let Inst{25} = 1;
 }
 
 def MOVCCi : AI1<0b1101, (outs GPR:$dst),
@@ -2796,10 +2809,9 @@ def : ARMPat<(add GPR:$LHS, so_neg_imm2part:$RHS),
 // as a single unit instead of having to handle reg inputs.
 // FIXME: Remove this when we can do generalized remat.
 let isReMaterializable = 1 in
-def MOVi32imm : AI1x2<(outs GPR:$dst), (ins i32imm:$src), Pseudo, IIC_iMOVix2,
-                   "movw", "\t$dst, ${src:lo16}\n\tmovt${p}\t$dst, ${src:hi16}",
-                     [(set GPR:$dst, (i32 imm:$src))]>,
-               Requires<[IsARM, HasV6T2]>;
+def MOVi32imm : PseudoInst<(outs GPR:$dst), (ins i32imm:$src), IIC_iMOVix2, "",
+                           [(set GPR:$dst, (i32 imm:$src))]>,
+                           Requires<[IsARM, HasV6T2]>;
 
 // ConstantPool, GlobalAddress, and JumpTable
 def : ARMPat<(ARMWrapper  tglobaladdr :$dst), (LEApcrel tglobaladdr :$dst)>,

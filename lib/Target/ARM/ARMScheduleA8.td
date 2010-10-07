@@ -172,21 +172,44 @@ def CortexA8Itineraries : ProcessorItineraries<
                                  InstrStage<1, [A8_Pipe0, A8_Pipe1]>,
                                  InstrStage<1, [A8_LdSt0]>], [4, 3, 1, 1]>,
   //
-  // Load multiple
-  InstrItinData<IIC_iLoadm   , [InstrStage<2, [A8_Issue], 0>,
+  // Load multiple, def is the 5th operand.
+  InstrItinData<IIC_iLoad_m  , [InstrStage<2, [A8_Issue], 0>,
                                 InstrStage<2, [A8_Pipe0], 0>,
                                 InstrStage<2, [A8_Pipe1]>,
                                 InstrStage<1, [A8_Pipe0, A8_Pipe1]>,
-                                InstrStage<1, [A8_LdSt0]>]>,
-
+                                InstrStage<1, [A8_LdSt0]>], [1, 1, 1, 1, 3]>,
+  //
+  // Load multiple + update, defs are the 1st and 5th operands.
+  InstrItinData<IIC_iLoad_mu , [InstrStage<2, [A8_Issue], 0>,
+                                InstrStage<2, [A8_Pipe0], 0>,
+                                InstrStage<2, [A8_Pipe1]>,
+                                InstrStage<1, [A8_Pipe0, A8_Pipe1]>,
+                                InstrStage<1, [A8_LdSt0]>], [2, 1, 1, 1, 3]>,
   //
   // Load multiple plus branch
-  InstrItinData<IIC_iLoadmBr , [InstrStage<2, [A8_Issue], 0>,
+  InstrItinData<IIC_iLoad_mBr, [InstrStage<2, [A8_Issue], 0>,
                                 InstrStage<2, [A8_Pipe0], 0>,
                                 InstrStage<2, [A8_Pipe1]>,
                                 InstrStage<1, [A8_Pipe0, A8_Pipe1]>,
                                 InstrStage<1, [A8_LdSt0]>,
-                                InstrStage<1, [A8_Pipe0, A8_Pipe1]>]>,
+                                InstrStage<1, [A8_Pipe0, A8_Pipe1]>],
+                               [1, 2, 1, 1, 3]>,
+  //
+  // Pop, def is the 3rd operand.
+  InstrItinData<IIC_iPop  ,    [InstrStage<2, [A8_Issue], 0>,
+                                InstrStage<2, [A8_Pipe0], 0>,
+                                InstrStage<2, [A8_Pipe1]>,
+                                InstrStage<1, [A8_Pipe0, A8_Pipe1]>,
+                                InstrStage<1, [A8_LdSt0]>], [1, 1, 3]>,
+  //
+  // Push, def is the 3th operand.
+  InstrItinData<IIC_iPop_Br,   [InstrStage<2, [A8_Issue], 0>,
+                                InstrStage<2, [A8_Pipe0], 0>,
+                                InstrStage<2, [A8_Pipe1]>,
+                                InstrStage<1, [A8_Pipe0, A8_Pipe1]>,
+                                InstrStage<1, [A8_LdSt0]>,
+                                InstrStage<1, [A8_Pipe0, A8_Pipe1]>],
+                               [1, 1, 3]>,
 
   //
   // iLoadi + iALUr for t2LDRpci_pic.
@@ -266,11 +289,18 @@ def CortexA8Itineraries : ProcessorItineraries<
                                  InstrStage<1, [A8_LdSt0]>], [3, 3, 1, 1]>,
   //
   // Store multiple
-  InstrItinData<IIC_iStorem  , [InstrStage<2, [A8_Issue], 0>,
+  InstrItinData<IIC_iStore_m , [InstrStage<2, [A8_Issue], 0>,
                                 InstrStage<2, [A8_Pipe0], 0>,
                                 InstrStage<2, [A8_Pipe1]>,
                                 InstrStage<1, [A8_Pipe0, A8_Pipe1]>,
                                 InstrStage<1, [A8_LdSt0]>]>,
+  //
+  // Store multiple + update
+  InstrItinData<IIC_iStore_mu, [InstrStage<2, [A8_Issue], 0>,
+                                InstrStage<2, [A8_Pipe0], 0>,
+                                InstrStage<2, [A8_Pipe1]>,
+                                InstrStage<1, [A8_Pipe0, A8_Pipe1]>,
+                                InstrStage<1, [A8_LdSt0]>], [2]>,
 
   // Branch
   //
@@ -384,54 +414,58 @@ def CortexA8Itineraries : ProcessorItineraries<
   InstrItinData<IIC_fpLoad32, [InstrStage<1, [A8_Issue], 0>,
                                InstrStage<1, [A8_Pipe0, A8_Pipe1]>,
                                InstrStage<1, [A8_LdSt0], 0>,
-                               InstrStage<1, [A8_NLSPipe]>],
+                               InstrStage<2, [A8_NLSPipe]>],
                               [2, 1]>,
   //
   // Double-precision FP Load
   // use A8_Issue to enforce the 1 load/store per cycle limit
   InstrItinData<IIC_fpLoad64, [InstrStage<2, [A8_Issue], 0>,
-                               InstrStage<1, [A8_Pipe0], 0>,
-                               InstrStage<1, [A8_Pipe1]>,
                                InstrStage<1, [A8_Pipe0, A8_Pipe1]>,
                                InstrStage<1, [A8_LdSt0], 0>,
-                               InstrStage<1, [A8_NLSPipe]>],
+                               InstrStage<2, [A8_NLSPipe]>],
                               [2, 1]>,
   //
   // FP Load Multiple
   // use A8_Issue to enforce the 1 load/store per cycle limit
-  InstrItinData<IIC_fpLoadm,  [InstrStage<3, [A8_Issue], 0>,
-                               InstrStage<2, [A8_Pipe0], 0>,
-                               InstrStage<2, [A8_Pipe1]>,
+  InstrItinData<IIC_fpLoad_m, [InstrStage<3, [A8_Issue], 0>,
                                InstrStage<1, [A8_Pipe0, A8_Pipe1]>,
                                InstrStage<1, [A8_LdSt0], 0>,
-                               InstrStage<1, [A8_NLSPipe]>]>,
+                               InstrStage<1, [A8_NLSPipe]>], [1, 1, 1, 2]>,
+  //
+  // FP Load Multiple + update
+  InstrItinData<IIC_fpLoad_mu,[InstrStage<3, [A8_Issue], 0>,
+                               InstrStage<1, [A8_Pipe0, A8_Pipe1]>,
+                               InstrStage<1, [A8_LdSt0], 0>,
+                               InstrStage<1, [A8_NLSPipe]>], [2, 1, 1, 1, 2]>,
   //
   // Single-precision FP Store
   // use A8_Issue to enforce the 1 load/store per cycle limit
   InstrItinData<IIC_fpStore32,[InstrStage<1, [A8_Issue], 0>,
                                InstrStage<1, [A8_Pipe0, A8_Pipe1]>,
                                InstrStage<1, [A8_LdSt0], 0>,
-                               InstrStage<1, [A8_NLSPipe]>],
+                               InstrStage<2, [A8_NLSPipe]>],
                               [1, 1]>,
   //
   // Double-precision FP Store
   // use A8_Issue to enforce the 1 load/store per cycle limit
   InstrItinData<IIC_fpStore64,[InstrStage<2, [A8_Issue], 0>,
-                               InstrStage<1, [A8_Pipe0], 0>,
-                               InstrStage<1, [A8_Pipe1]>,
                                InstrStage<1, [A8_Pipe0, A8_Pipe1]>,
                                InstrStage<1, [A8_LdSt0], 0>,
-                               InstrStage<1, [A8_NLSPipe]>],
+                               InstrStage<2, [A8_NLSPipe]>],
                               [1, 1]>,
   //
   // FP Store Multiple
   // use A8_Issue to enforce the 1 load/store per cycle limit
-  InstrItinData<IIC_fpStorem, [InstrStage<3, [A8_Issue], 0>,
-                               InstrStage<2, [A8_Pipe0], 0>,
-                               InstrStage<2, [A8_Pipe1]>,
+  InstrItinData<IIC_fpStore_m,[InstrStage<3, [A8_Issue], 0>,
                                InstrStage<1, [A8_Pipe0, A8_Pipe1]>,
                                InstrStage<1, [A8_LdSt0], 0>,
-                               InstrStage<1, [A8_NLSPipe]>]>,
+                               InstrStage<1, [A8_NLSPipe]>], [1, 1, 1, 1]>,
+  //
+  // FP Store Multiple + update
+  InstrItinData<IIC_fpStore_mu,[InstrStage<3, [A8_Issue], 0>,
+                                InstrStage<1, [A8_Pipe0, A8_Pipe1]>,
+                                InstrStage<1, [A8_LdSt0], 0>,
+                                InstrStage<1, [A8_NLSPipe]>], [2, 1, 1, 1, 1]>,
 
   // NEON
   // Issue through integer pipeline, and execute in NEON unit.
