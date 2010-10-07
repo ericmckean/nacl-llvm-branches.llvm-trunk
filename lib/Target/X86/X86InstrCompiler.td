@@ -158,15 +158,24 @@ def MOV64ri64i32 : Ii32<0xB8, AddRegFrm, (outs GR64:$dst), (ins i64i32imm:$src),
                         "", [(set GR64:$dst, i64immZExt32:$src)]>;
 
 
-// Use sbb to materialize carry flag into a GPR.
-// FIXME: This are pseudo ops that should be replaced with Pat<> patterns.
+// Use sbb to materialize carry bit.
+let Uses = [EFLAGS], Defs = [EFLAGS], isCodeGenOnly = 1 in {
+// FIXME: These are pseudo ops that should be replaced with Pat<> patterns.
 // However, Pat<> can't replicate the destination reg into the inputs of the
 // result.
-// FIXME: Change this to have encoding Pseudo when X86MCCodeEmitter replaces
+// FIXME: Change these to have encoding Pseudo when X86MCCodeEmitter replaces
 // X86CodeEmitter.
-let Defs = [EFLAGS], Uses = [EFLAGS], isCodeGenOnly = 1 in
+def SETB_C8r : I<0x18, MRMInitReg, (outs GR8:$dst), (ins), "",
+                 [(set GR8:$dst, (X86setcc_c X86_COND_B, EFLAGS))]>;
+def SETB_C16r : I<0x19, MRMInitReg, (outs GR16:$dst), (ins), "",
+                 [(set GR16:$dst, (X86setcc_c X86_COND_B, EFLAGS))]>,
+                OpSize;
+def SETB_C32r : I<0x19, MRMInitReg, (outs GR32:$dst), (ins), "",
+                 [(set GR32:$dst, (X86setcc_c X86_COND_B, EFLAGS))]>;
 def SETB_C64r : RI<0x19, MRMInitReg, (outs GR64:$dst), (ins), "",
                  [(set GR64:$dst, (X86setcc_c X86_COND_B, EFLAGS))]>;
+} // isCodeGenOnly
+
 
 def : Pat<(i64 (anyext (i8 (X86setcc_c X86_COND_B, EFLAGS)))),
           (SETB_C64r)>;
@@ -263,6 +272,67 @@ def TLSCall_64 : I<0, Pseudo, (outs), (ins i64mem:$sym),
                   "# TLSCall_64",
                   [(X86TLSCall addr:$sym)]>,
                   Requires<[In64BitMode]>;
+
+
+//===----------------------------------------------------------------------===//
+// Conditional Move Pseudo Instructions
+
+let Constraints = "$src1 = $dst" in {
+
+// Conditional moves
+let Uses = [EFLAGS] in {
+
+// X86 doesn't have 8-bit conditional moves. Use a customInserter to
+// emit control flow. An alternative to this is to mark i8 SELECT as Promote,
+// however that requires promoting the operands, and can induce additional
+// i8 register pressure. Note that CMOV_GR8 is conservatively considered to
+// clobber EFLAGS, because if one of the operands is zero, the expansion
+// could involve an xor.
+let usesCustomInserter = 1, Constraints = "", Defs = [EFLAGS] in {
+def CMOV_GR8 : I<0, Pseudo,
+                 (outs GR8:$dst), (ins GR8:$src1, GR8:$src2, i8imm:$cond),
+                 "#CMOV_GR8 PSEUDO!",
+                 [(set GR8:$dst, (X86cmov GR8:$src1, GR8:$src2,
+                                          imm:$cond, EFLAGS))]>;
+
+let Predicates = [NoCMov] in {
+def CMOV_GR32 : I<0, Pseudo,
+                    (outs GR32:$dst), (ins GR32:$src1, GR32:$src2, i8imm:$cond),
+                    "#CMOV_GR32* PSEUDO!",
+                    [(set GR32:$dst,
+                      (X86cmov GR32:$src1, GR32:$src2, imm:$cond, EFLAGS))]>;
+def CMOV_GR16 : I<0, Pseudo,
+                    (outs GR16:$dst), (ins GR16:$src1, GR16:$src2, i8imm:$cond),
+                    "#CMOV_GR16* PSEUDO!",
+                    [(set GR16:$dst,
+                      (X86cmov GR16:$src1, GR16:$src2, imm:$cond, EFLAGS))]>;
+def CMOV_RFP32 : I<0, Pseudo,
+                    (outs RFP32:$dst),
+                    (ins RFP32:$src1, RFP32:$src2, i8imm:$cond),
+                    "#CMOV_RFP32 PSEUDO!",
+                    [(set RFP32:$dst,
+                      (X86cmov RFP32:$src1, RFP32:$src2, imm:$cond,
+                                                  EFLAGS))]>;
+def CMOV_RFP64 : I<0, Pseudo,
+                    (outs RFP64:$dst),
+                    (ins RFP64:$src1, RFP64:$src2, i8imm:$cond),
+                    "#CMOV_RFP64 PSEUDO!",
+                    [(set RFP64:$dst,
+                      (X86cmov RFP64:$src1, RFP64:$src2, imm:$cond,
+                                                  EFLAGS))]>;
+def CMOV_RFP80 : I<0, Pseudo,
+                    (outs RFP80:$dst),
+                    (ins RFP80:$src1, RFP80:$src2, i8imm:$cond),
+                    "#CMOV_RFP80 PSEUDO!",
+                    [(set RFP80:$dst,
+                      (X86cmov RFP80:$src1, RFP80:$src2, imm:$cond,
+                                                  EFLAGS))]>;
+} // Predicates = [NoCMov]
+} // UsesCustomInserter = 1, Constraints = "", Defs = [EFLAGS] 
+} // Uses = [EFLAGS]
+
+} // Constraints = "$src1 = $dst" in
+
 
 //===----------------------------------------------------------------------===//
 // Atomic Instruction Pseudo Instructions
@@ -841,104 +911,32 @@ def : Pat<(X86cmp GR64:$src1, 0),
 
 // Conditional moves with folded loads with operands swapped and conditions
 // inverted.
-def : Pat<(X86cmov (loadi16 addr:$src1), GR16:$src2, X86_COND_B, EFLAGS),
-          (CMOVAE16rm GR16:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi32 addr:$src1), GR32:$src2, X86_COND_B, EFLAGS),
-          (CMOVAE32rm GR32:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi16 addr:$src1), GR16:$src2, X86_COND_AE, EFLAGS),
-          (CMOVB16rm GR16:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi32 addr:$src1), GR32:$src2, X86_COND_AE, EFLAGS),
-          (CMOVB32rm GR32:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi16 addr:$src1), GR16:$src2, X86_COND_E, EFLAGS),
-          (CMOVNE16rm GR16:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi32 addr:$src1), GR32:$src2, X86_COND_E, EFLAGS),
-          (CMOVNE32rm GR32:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi16 addr:$src1), GR16:$src2, X86_COND_NE, EFLAGS),
-          (CMOVE16rm GR16:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi32 addr:$src1), GR32:$src2, X86_COND_NE, EFLAGS),
-          (CMOVE32rm GR32:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi16 addr:$src1), GR16:$src2, X86_COND_BE, EFLAGS),
-          (CMOVA16rm GR16:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi32 addr:$src1), GR32:$src2, X86_COND_BE, EFLAGS),
-          (CMOVA32rm GR32:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi16 addr:$src1), GR16:$src2, X86_COND_A, EFLAGS),
-          (CMOVBE16rm GR16:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi32 addr:$src1), GR32:$src2, X86_COND_A, EFLAGS),
-          (CMOVBE32rm GR32:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi16 addr:$src1), GR16:$src2, X86_COND_L, EFLAGS),
-          (CMOVGE16rm GR16:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi32 addr:$src1), GR32:$src2, X86_COND_L, EFLAGS),
-          (CMOVGE32rm GR32:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi16 addr:$src1), GR16:$src2, X86_COND_GE, EFLAGS),
-          (CMOVL16rm GR16:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi32 addr:$src1), GR32:$src2, X86_COND_GE, EFLAGS),
-          (CMOVL32rm GR32:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi16 addr:$src1), GR16:$src2, X86_COND_LE, EFLAGS),
-          (CMOVG16rm GR16:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi32 addr:$src1), GR32:$src2, X86_COND_LE, EFLAGS),
-          (CMOVG32rm GR32:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi16 addr:$src1), GR16:$src2, X86_COND_G, EFLAGS),
-          (CMOVLE16rm GR16:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi32 addr:$src1), GR32:$src2, X86_COND_G, EFLAGS),
-          (CMOVLE32rm GR32:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi16 addr:$src1), GR16:$src2, X86_COND_P, EFLAGS),
-          (CMOVNP16rm GR16:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi32 addr:$src1), GR32:$src2, X86_COND_P, EFLAGS),
-          (CMOVNP32rm GR32:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi16 addr:$src1), GR16:$src2, X86_COND_NP, EFLAGS),
-          (CMOVP16rm GR16:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi32 addr:$src1), GR32:$src2, X86_COND_NP, EFLAGS),
-          (CMOVP32rm GR32:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi16 addr:$src1), GR16:$src2, X86_COND_S, EFLAGS),
-          (CMOVNS16rm GR16:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi32 addr:$src1), GR32:$src2, X86_COND_S, EFLAGS),
-          (CMOVNS32rm GR32:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi16 addr:$src1), GR16:$src2, X86_COND_NS, EFLAGS),
-          (CMOVS16rm GR16:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi32 addr:$src1), GR32:$src2, X86_COND_NS, EFLAGS),
-          (CMOVS32rm GR32:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi16 addr:$src1), GR16:$src2, X86_COND_O, EFLAGS),
-          (CMOVNO16rm GR16:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi32 addr:$src1), GR32:$src2, X86_COND_O, EFLAGS),
-          (CMOVNO32rm GR32:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi16 addr:$src1), GR16:$src2, X86_COND_NO, EFLAGS),
-          (CMOVO16rm GR16:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi32 addr:$src1), GR32:$src2, X86_COND_NO, EFLAGS),
-          (CMOVO32rm GR32:$src2, addr:$src1)>;
+multiclass CMOVmr<PatLeaf InvertedCond, Instruction Inst16, Instruction Inst32,
+                  Instruction Inst64> {
+  def : Pat<(X86cmov (loadi16 addr:$src1), GR16:$src2, InvertedCond, EFLAGS),
+            (Inst16 GR16:$src2, addr:$src1)>;
+  def : Pat<(X86cmov (loadi32 addr:$src1), GR32:$src2, InvertedCond, EFLAGS),
+            (Inst32 GR32:$src2, addr:$src1)>;
+  def : Pat<(X86cmov (loadi64 addr:$src1), GR64:$src2, InvertedCond, EFLAGS),
+            (Inst64 GR64:$src2, addr:$src1)>;
+}
 
-def : Pat<(X86cmov (loadi64 addr:$src1), GR64:$src2, X86_COND_B, EFLAGS),
-          (CMOVAE64rm GR64:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi64 addr:$src1), GR64:$src2, X86_COND_AE, EFLAGS),
-          (CMOVB64rm GR64:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi64 addr:$src1), GR64:$src2, X86_COND_E, EFLAGS),
-          (CMOVNE64rm GR64:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi64 addr:$src1), GR64:$src2, X86_COND_NE, EFLAGS),
-          (CMOVE64rm GR64:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi64 addr:$src1), GR64:$src2, X86_COND_BE, EFLAGS),
-          (CMOVA64rm GR64:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi64 addr:$src1), GR64:$src2, X86_COND_A, EFLAGS),
-          (CMOVBE64rm GR64:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi64 addr:$src1), GR64:$src2, X86_COND_L, EFLAGS),
-          (CMOVGE64rm GR64:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi64 addr:$src1), GR64:$src2, X86_COND_GE, EFLAGS),
-          (CMOVL64rm GR64:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi64 addr:$src1), GR64:$src2, X86_COND_LE, EFLAGS),
-          (CMOVG64rm GR64:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi64 addr:$src1), GR64:$src2, X86_COND_G, EFLAGS),
-          (CMOVLE64rm GR64:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi64 addr:$src1), GR64:$src2, X86_COND_P, EFLAGS),
-          (CMOVNP64rm GR64:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi64 addr:$src1), GR64:$src2, X86_COND_NP, EFLAGS),
-          (CMOVP64rm GR64:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi64 addr:$src1), GR64:$src2, X86_COND_S, EFLAGS),
-          (CMOVNS64rm GR64:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi64 addr:$src1), GR64:$src2, X86_COND_NS, EFLAGS),
-          (CMOVS64rm GR64:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi64 addr:$src1), GR64:$src2, X86_COND_O, EFLAGS),
-          (CMOVNO64rm GR64:$src2, addr:$src1)>;
-def : Pat<(X86cmov (loadi64 addr:$src1), GR64:$src2, X86_COND_NO, EFLAGS),
-          (CMOVO64rm GR64:$src2, addr:$src1)>;
-
+defm : CMOVmr<X86_COND_B , CMOVAE16rm, CMOVAE32rm, CMOVAE64rm>;
+defm : CMOVmr<X86_COND_AE, CMOVB16rm , CMOVB32rm , CMOVB64rm>;
+defm : CMOVmr<X86_COND_E , CMOVNE16rm, CMOVNE32rm, CMOVNE64rm>;
+defm : CMOVmr<X86_COND_NE, CMOVE16rm , CMOVE32rm , CMOVE64rm>;
+defm : CMOVmr<X86_COND_BE, CMOVA16rm , CMOVA32rm , CMOVA64rm>;
+defm : CMOVmr<X86_COND_A , CMOVBE16rm, CMOVBE32rm, CMOVBE64rm>;
+defm : CMOVmr<X86_COND_L , CMOVGE16rm, CMOVGE32rm, CMOVGE64rm>;
+defm : CMOVmr<X86_COND_GE, CMOVL16rm , CMOVL32rm , CMOVL64rm>;
+defm : CMOVmr<X86_COND_LE, CMOVG16rm , CMOVG32rm , CMOVG64rm>;
+defm : CMOVmr<X86_COND_G , CMOVLE16rm, CMOVLE32rm, CMOVLE64rm>;
+defm : CMOVmr<X86_COND_P , CMOVNP16rm, CMOVNP32rm, CMOVNP64rm>;
+defm : CMOVmr<X86_COND_NP, CMOVP16rm , CMOVP32rm , CMOVP64rm>;
+defm : CMOVmr<X86_COND_S , CMOVNS16rm, CMOVNS32rm, CMOVNS64rm>;
+defm : CMOVmr<X86_COND_NS, CMOVS16rm , CMOVS32rm , CMOVS64rm>;
+defm : CMOVmr<X86_COND_O , CMOVNO16rm, CMOVNO32rm, CMOVNO64rm>;
+defm : CMOVmr<X86_COND_NO, CMOVO16rm , CMOVO32rm , CMOVO64rm>;
 
 // zextload bool -> zextload byte
 def : Pat<(zextloadi8i1  addr:$src), (MOV8rm     addr:$src)>;
