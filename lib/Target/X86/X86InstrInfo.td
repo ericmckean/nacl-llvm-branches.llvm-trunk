@@ -149,11 +149,10 @@ def X86vastart_save_xmm_regs :
                  SDNode<"X86ISD::VASTART_SAVE_XMM_REGS",
                         SDT_X86VASTART_SAVE_XMM_REGS,
                         [SDNPHasChain, SDNPVariadic]>;
-// @LOCALMOD-BEGIN
 def X86vaarg64 :
-                 SDNode<"X86ISD::VAARG_64", SDT_X86VAARG_64, 
-                        [SDNPHasChain, SDNPMayLoad, SDNPMayStore]>;
-// @LOCALMOD-END
+                 SDNode<"X86ISD::VAARG_64", SDT_X86VAARG_64,
+                        [SDNPHasChain, SDNPMayLoad, SDNPMayStore,
+                         SDNPMemOperand]>;
 def X86callseq_start :
                  SDNode<"ISD::CALLSEQ_START", SDT_X86CallSeqStart,
                         [SDNPHasChain, SDNPOutFlag]>;

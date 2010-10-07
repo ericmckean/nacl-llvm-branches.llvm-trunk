@@ -402,7 +402,7 @@ X86TargetLowering::X86TargetLowering(X86TargetMachine &TM)
   // VASTART needs to be custom lowered to use the VarArgsFrameIndex
   setOperationAction(ISD::VASTART           , MVT::Other, Custom);
   setOperationAction(ISD::VAEND             , MVT::Other, Expand);
-  if (Subtarget->is64Bit()) {
+  if (Subtarget->is64Bit() && !Subtarget->isTargetWin64()) {
     setOperationAction(ISD::VAARG           , MVT::Other, Custom);
     setOperationAction(ISD::VACOPY          , MVT::Other, Custom);
   } else {
@@ -1546,46 +1546,6 @@ X86TargetLowering::LowerMemArgument(SDValue Chain,
   }
 }
 
-
-
-void X86TargetLowering::getVarArgInfo(const Function *Fn, 
-                                      VarArgInfo *VAInfo) const {
-
-  // FIXME: We should really autogenerate these arrays
-  static const unsigned GPR64ArgRegsWin64[] = {
-    X86::RCX, X86::RDX, X86::R8,  X86::R9
-  };
-  static const unsigned GPR64ArgRegs64Bit[] = {
-    X86::RDI, X86::RSI, X86::RDX, X86::RCX, X86::R8, X86::R9
-  };
-  static const unsigned XMMArgRegs64Bit[] = {
-    X86::XMM0, X86::XMM1, X86::XMM2, X86::XMM3,
-    X86::XMM4, X86::XMM5, X86::XMM6, X86::XMM7
-  };
-
-  bool IsWin64 = Subtarget->isTargetWin64();
-
-  if (IsWin64) {
-    VAInfo->TotalNumIntRegs = 4;
-    VAInfo->TotalNumXMMRegs = 0;
-    VAInfo->GPR64ArgRegs = GPR64ArgRegsWin64;
-    VAInfo->XMMArgRegs = XMMArgRegs64Bit;
-  } else {
-    VAInfo->TotalNumIntRegs = 6;
-    VAInfo->TotalNumXMMRegs = 8;
-    VAInfo->GPR64ArgRegs = GPR64ArgRegs64Bit;
-    VAInfo->XMMArgRegs = XMMArgRegs64Bit;
-  }
-  VAInfo->NoImplicitFloatOps = Fn->hasFnAttr(Attribute::NoImplicitFloat);
-
-  if (UseSoftFloat || VAInfo->NoImplicitFloatOps || !Subtarget->hasSSE1())
-    // Kernel mode asks for SSE to be disabled, so don't push them
-    // on the stack.
-    VAInfo->TotalNumXMMRegs = 0;
-
-}
-
-
 SDValue
 X86TargetLowering::LowerFormalArguments(SDValue Chain,
                                         CallingConv::ID CallConv,
@@ -1719,29 +1679,46 @@ X86TargetLowering::LowerFormalArguments(SDValue Chain,
       FuncInfo->setVarArgsFrameIndex(MFI->CreateFixedObject(1, StackSize,true));
     }
     if (Is64Bit) {
-      // @LOCALMOD - BEGIN
-      VarArgInfo VAInfo;
-      getVarArgInfo(Fn, &VAInfo);
-      unsigned TotalNumIntRegs = VAInfo.TotalNumIntRegs;
-      unsigned TotalNumXMMRegs = VAInfo.TotalNumXMMRegs;
-      const unsigned *GPR64ArgRegs = VAInfo.GPR64ArgRegs;
-      const unsigned *XMMArgRegs64Bit = VAInfo.XMMArgRegs;
-      bool NoImplicitFloatOps = VAInfo.NoImplicitFloatOps;
-      // @LOCALMOD - END
+      unsigned TotalNumIntRegs = 0, TotalNumXMMRegs = 0;
 
+      // FIXME: We should really autogenerate these arrays
+      static const unsigned GPR64ArgRegsWin64[] = {
+        X86::RCX, X86::RDX, X86::R8,  X86::R9
+      };
+      static const unsigned GPR64ArgRegs64Bit[] = {
+        X86::RDI, X86::RSI, X86::RDX, X86::RCX, X86::R8, X86::R9
+      };
+      static const unsigned XMMArgRegs64Bit[] = {
+        X86::XMM0, X86::XMM1, X86::XMM2, X86::XMM3,
+        X86::XMM4, X86::XMM5, X86::XMM6, X86::XMM7
+      };
+      const unsigned *GPR64ArgRegs;
+      unsigned NumXMMRegs = 0;
+
+      if (IsWin64) {
+        // The XMM registers which might contain var arg parameters are shadowed
+        // in their paired GPR.  So we only need to save the GPR to their home
+        // slots.
+        TotalNumIntRegs = 4;
+        GPR64ArgRegs = GPR64ArgRegsWin64;
+      } else {
+        TotalNumIntRegs = 6; TotalNumXMMRegs = 8;
+        GPR64ArgRegs = GPR64ArgRegs64Bit;
+
+        NumXMMRegs = CCInfo.getFirstUnallocated(XMMArgRegs64Bit, TotalNumXMMRegs);
+      }
       unsigned NumIntRegs = CCInfo.getFirstUnallocated(GPR64ArgRegs,
                                                        TotalNumIntRegs);
-      unsigned NumXMMRegs = 0;
-      if (!IsWin64) {
-        NumXMMRegs = CCInfo.getFirstUnallocated(XMMArgRegs64Bit, TotalNumXMMRegs);
-      }      
 
+      bool NoImplicitFloatOps = Fn->hasFnAttr(Attribute::NoImplicitFloat);
       assert(!(NumXMMRegs && !Subtarget->hasSSE1()) &&
              "SSE register cannot be used when SSE is disabled!");
       assert(!(NumXMMRegs && UseSoftFloat && NoImplicitFloatOps) &&
              "SSE register cannot be used when SSE is disabled!");
-
-
+      if (UseSoftFloat || NoImplicitFloatOps || !Subtarget->hasSSE1())
+        // Kernel mode asks for SSE to be disabled, so don't push them
+        // on the stack.
+        TotalNumXMMRegs = 0;
 
       if (IsWin64) {
         FuncInfo->setRegSaveFrameIndex(
@@ -7605,28 +7582,36 @@ SDValue X86TargetLowering::LowerVASTART(SDValue Op, SelectionDAG &DAG) const {
                      &MemOps[0], MemOps.size());
 }
 
-// @LOCALMOD-START
 SDValue X86TargetLowering::LowerVAARG(SDValue Op, SelectionDAG &DAG) const {
   // X86-64 va_list is a struct { i32, i32, i8*, i8* }.
   assert(Subtarget->is64Bit() && "This code only handles 64-bit va_arg!");
+  assert(!Subtarget->isTargetWin64() && "This code path is not for Win64!");
+
   assert(Op.getNode()->getNumOperands() == 4);
-  DebugLoc dl = Op.getDebugLoc();
   SDValue Chain = Op.getOperand(0);
   SDValue SrcPtr = Op.getOperand(1);
   const Value *SV = cast<SrcValueSDNode>(Op.getOperand(2))->getValue();
   unsigned Align = Op.getConstantOperandVal(3);
+  DebugLoc dl = Op.getDebugLoc();
 
-  EVT VarArgVT = Op.getNode()->getValueType(0);
-  const Type *VarArgTy = VarArgVT.getTypeForEVT(*DAG.getContext());
-  uint32_t VarArgSize = getTargetData()->getTypeAllocSize(VarArgTy);
-  int8_t VarArgMode;
+  EVT ArgVT = Op.getNode()->getValueType(0);
+  const Type *ArgTy = ArgVT.getTypeForEVT(*DAG.getContext());
+  uint32_t ArgSize = getTargetData()->getTypeAllocSize(ArgTy);
+  uint8_t ArgMode;
 
-  if (VarArgVT == MVT::f64) {
-    VarArgMode = 2;  // Use fp_offset
-  } else if (VarArgSize <= 8) {
-    VarArgMode = 1;  // Use gp_offset
+  if (ArgVT == MVT::f64 || ArgVT == MVT::f128) {
+    ArgMode = 2;  // Argument passed in XMM register. Use fp_offset.
+  } else if (ArgVT.isInteger() && ArgSize <= 32 /*bytes*/) {
+    ArgMode = 1;  // Argument passed in GPR64 register(s). Use gp_offset.
   } else {
-    VarArgMode = 0;  // Use overflow area only
+    ArgMode = 0;  // Use overflow area only
+  }
+
+  if (ArgMode == 2) {
+    // Sanity Check: Make sure using fp_offset makes sense.
+    const Function *Fn = DAG.getMachineFunction().getFunction();
+    bool NoImplicitFloatOps = Fn->hasFnAttr(Attribute::NoImplicitFloat);
+    assert(!UseSoftFloat && !NoImplicitFloatOps && Subtarget->hasSSE1());
   }
 
   // Insert VAARG_64 node into the DAG
@@ -7634,21 +7619,27 @@ SDValue X86TargetLowering::LowerVAARG(SDValue Op, SelectionDAG &DAG) const {
   SmallVector<SDValue, 11> InstOps;
   InstOps.push_back(Chain);
   InstOps.push_back(SrcPtr);
-  InstOps.push_back(DAG.getConstant(VarArgSize, MVT::i32));
-  InstOps.push_back(DAG.getConstant(VarArgMode, MVT::i8));
+  InstOps.push_back(DAG.getConstant(ArgSize, MVT::i32));
+  InstOps.push_back(DAG.getConstant(ArgMode, MVT::i8));
   InstOps.push_back(DAG.getConstant(Align, MVT::i32));
   SDVTList VTs = DAG.getVTList(getPointerTy(), MVT::Other);
-  SDValue VAARG = DAG.getNode(X86ISD::VAARG_64, dl,
-                              VTs, &InstOps[0], InstOps.size());
+  SDValue VAARG = DAG.getMemIntrinsicNode(X86ISD::VAARG_64, dl,
+                                          VTs, &InstOps[0], InstOps.size(),
+                                          MVT::i64,
+                                          MachinePointerInfo(SV),
+                                          /*Align=*/0,
+                                          /*Volatile=*/false,
+                                          /*ReadMem=*/true,
+                                          /*WriteMem=*/true);
   Chain = VAARG.getValue(1);
 
   // Load the next argument and return it
-  return DAG.getLoad(VarArgVT, dl,
-                      Chain,
-                      VAARG,
-                      MachinePointerInfo(), false, false, 0);
+  return DAG.getLoad(ArgVT, dl,
+                     Chain,
+                     VAARG,
+                     MachinePointerInfo(),
+                     false, false, 0);
 }
-// @LOCALMOD-END
 
 SDValue X86TargetLowering::LowerVACOPY(SDValue Op, SelectionDAG &DAG) const {
   // X86-64 va_list is a struct { i32, i32, i8*, i8* }.
@@ -9482,7 +9473,6 @@ X86TargetLowering::EmitPCMP(MachineInstr *MI, MachineBasicBlock *BB,
   return BB;
 }
 
-// @LOCALMOD-START
 MachineBasicBlock *
 X86TargetLowering::EmitVAARG64WithCustomInserter(
                    MachineInstr *MI,
@@ -9490,10 +9480,10 @@ X86TargetLowering::EmitVAARG64WithCustomInserter(
   // Emit va_arg instruction on X86-64.
 
   // Operands to this pseudo-instruction:
-  // 0  ) Output        : destination address (register)
-  // 1-5) Input         : va_list address (address)
-  // 6  ) VarArgSize    : Size (in bytes) of vararg type
-  // 7  ) VarArgMode    : 0 = overflow only, 1 = use gp offset, 2 = use fp offset
+  // 0  ) Output        : destination address (reg)
+  // 1-5) Input         : va_list address (addr, i64mem)
+  // 6  ) ArgSize       : Size (in bytes) of vararg type
+  // 7  ) ArgMode       : 0 = overflow only, 1 = use gp offset, 2 = use fp offset
   // 8  ) Align         : Alignment of type
   // 9  ) EFLAGS (implicit-def)
 
@@ -9506,71 +9496,88 @@ X86TargetLowering::EmitVAARG64WithCustomInserter(
   MachineOperand &Index = MI->getOperand(3);
   MachineOperand &Disp = MI->getOperand(4);
   MachineOperand &Segment = MI->getOperand(5);
-  int32_t VarArgSize = MI->getOperand(6).getImm();
-  int8_t  VarArgMode = MI->getOperand(7).getImm();
-  int32_t Align = MI->getOperand(8).getImm();
+  unsigned ArgSize = MI->getOperand(6).getImm();
+  unsigned ArgMode = MI->getOperand(7).getImm();
+  unsigned Align = MI->getOperand(8).getImm();
 
-  // Get VarArg Calling Convention information for this system
-  VarArgInfo VAInfo;
-  MachineFunction *MF = MBB->getParent();
-  const Function *Fn = MF->getFunction();
-  getVarArgInfo(Fn, &VAInfo);
-  unsigned TotalNumIntRegs = VAInfo.TotalNumIntRegs;
-  unsigned TotalNumXMMRegs = VAInfo.TotalNumXMMRegs;
+  // Memory Reference
+  assert(MI->hasOneMemOperand() && "Expected VAARG_64 to have one memoperand");
+  MachineInstr::mmo_iterator MMOBegin = MI->memoperands_begin();
+  MachineInstr::mmo_iterator MMOEnd = MI->memoperands_end();
 
-  // Gather Machine Information
-  bool IsPtr64Bits = (64 == getPointerTy().getSizeInBits());
+  // Machine Information
   const TargetInstrInfo *TII = getTargetMachine().getInstrInfo();
   MachineRegisterInfo &MRI = MBB->getParent()->getRegInfo();
-  const TargetRegisterClass *PointerRegClass = getRegClassFor(getPointerTy());
+  const TargetRegisterClass *AddrRegClass = getRegClassFor(MVT::i64);
   const TargetRegisterClass *OffsetRegClass = getRegClassFor(MVT::i32);
   DebugLoc DL = MI->getDebugLoc();
 
-  // va_list data structure (24 bytes)
-  //
-  // first byte -->  32 bits - gp_offset
-  //                 32 bits - fp_offset
-  //                 64 bits - overflow_area (address)
-  //                 64 bits - reg_save_area (address)
-  //
-  bool UsingGPOffset = (VarArgMode == 1) && TotalNumIntRegs > 0;
-  bool UsingFPOffset = (VarArgMode == 2) && TotalNumXMMRegs > 0;
-  bool UsingOffset = UsingGPOffset || UsingFPOffset;
+  // struct va_list {
+  //   i32   gp_offset
+  //   i32   fp_offset
+  //   i64   overflow_area (address)
+  //   i64   reg_save_area (address)
+  // }
+  // sizeof(va_list) = 24
+  // alignment(va_list) = 8
+
+  unsigned TotalNumIntRegs = 6;
+  unsigned TotalNumXMMRegs = 8;
+  bool UseGPOffset = (ArgMode == 1);
+  bool UseFPOffset = (ArgMode == 2);
+  unsigned MaxOffset = TotalNumIntRegs * 8 +
+                       (UseFPOffset ? TotalNumXMMRegs * 16 : 0);
+
+  /* Align ArgSize to a multiple of 8 */
+  unsigned ArgSizeA8 = (ArgSize + 7) & ~7;
+  bool NeedsAlign = (Align > 8);
+
   MachineBasicBlock *thisMBB = MBB;
   MachineBasicBlock *overflowMBB;
   MachineBasicBlock *offsetMBB;
   MachineBasicBlock *endMBB;
 
-  unsigned DestReg1 = 0;  // for offsetMBB
-  unsigned DestReg2 = 0;  // for overflowMBB
-  if (!UsingOffset) {
-    // If we only pull from the overflow region, we'll never branch.
+  // @LOCALMOD-BEGIN
+  unsigned RealDestReg = 0;
+  if (Subtarget->isTargetNaCl()) {
+    // Pretend pointers are 64-bit until the end
+    RealDestReg = DestReg;
+    DestReg = MRI.createVirtualRegister(AddrRegClass);
+  }
+  // @LOCALMOD-END
+
+  unsigned OffsetDestReg = 0;    // Argument address computed by offsetMBB
+  unsigned OverflowDestReg = 0;  // Argument address computed by overflowMBB
+  unsigned OffsetReg = 0;
+
+  if (!UseGPOffset && !UseFPOffset) {
+    // If we only pull from the overflow region, we don't create a branch.
     // We don't need to alter control flow.
-    DestReg1 = 0;       // unused register
-    DestReg2 = DestReg;
+    OffsetDestReg = 0; // unused
+    OverflowDestReg = DestReg;
 
     offsetMBB = NULL;
     overflowMBB = thisMBB;
     endMBB = thisMBB;
   } else {
-    // To check the offset bounds, we need to branch using
-    // a diamond pattern.
+    // First emit code to check if gp_offset (or fp_offset) is below the bound.
+    // If so, pull the argument from reg_save_area. (branch to offsetMBB)
+    // If not, pull from overflow_area. (branch to overflowMBB)
     //
     //       thisMBB
-    //         |     \
-    //         |      \ <--- if Offset >= MaxOffset
-    //         |       \
+    //         |     .
+    //         |        .
     //     offsetMBB   overflowMBB
-    //         |       /
-    //         |      /
-    //         |     / 
-    //        endMBB   
+    //         |        .
+    //         |     .
+    //        endMBB
 
-    // Registers for the PHI
-    DestReg1 = MRI.createVirtualRegister(PointerRegClass);
-    DestReg2 = MRI.createVirtualRegister(PointerRegClass);
+    // Registers for the PHI in endMBB
+    OffsetDestReg = MRI.createVirtualRegister(AddrRegClass);
+    OverflowDestReg = MRI.createVirtualRegister(AddrRegClass);
 
     const BasicBlock *LLVM_BB = MBB->getBasicBlock();
+    MachineFunction *MF = MBB->getParent();
     overflowMBB = MF->CreateMachineBasicBlock(LLVM_BB);
     offsetMBB = MF->CreateMachineBasicBlock(LLVM_BB);
     endMBB = MF->CreateMachineBasicBlock(LLVM_BB);
@@ -9597,142 +9604,147 @@ X86TargetLowering::EmitVAARG64WithCustomInserter(
     offsetMBB->addSuccessor(endMBB);
     overflowMBB->addSuccessor(endMBB);
 
-    // Emit the PHI
-    BuildMI(endMBB, DL, TII->get(X86::PHI), DestReg)
-      .addReg(DestReg1).addMBB(offsetMBB)
-      .addReg(DestReg2).addMBB(overflowMBB);
-  }
-
-  unsigned Opc;
-
-  if (offsetMBB) {
-    // Emit code to check the offset, and use the reg_save_area if there
-    // is more data there.
-
     // Load the offset value into a register
-    unsigned OffsetReg = MRI.createVirtualRegister(OffsetRegClass);
+    OffsetReg = MRI.createVirtualRegister(OffsetRegClass);
     BuildMI(thisMBB, DL, TII->get(X86::MOV32rm), OffsetReg)
       .addOperand(Base)
       .addOperand(Scale)
       .addOperand(Index)
-      .addDisp(Disp, UsingFPOffset ? 4 : 0)
-      .addOperand(Segment);
+      .addDisp(Disp, UseFPOffset ? 4 : 0)
+      .addOperand(Segment)
+      .setMemRefs(MMOBegin, MMOEnd);
 
-    // Compare it against the maximum offset
-    int16_t MaxOffset = TotalNumIntRegs * 8;
-    if (UsingFPOffset)
-      MaxOffset += TotalNumXMMRegs * 16;
-
+    // Check if there is enough room left to pull this argument.
     BuildMI(thisMBB, DL, TII->get(X86::CMP32ri))
       .addReg(OffsetReg)
-      .addImm(MaxOffset);
+      .addImm(MaxOffset + 8 - ArgSizeA8);
 
     // Branch to "overflowMBB" if offset >= max
     // Fall through to "offsetMBB" otherwise
     BuildMI(thisMBB, DL, TII->get(X86::GetCondBranchFromCond(X86::COND_AE)))
       .addMBB(overflowMBB);
+  }
 
-    // In offsetMBB, read the reg_save_area address.
-    unsigned RegSaveReg = MRI.createVirtualRegister(PointerRegClass);
-    Opc = IsPtr64Bits ? X86::MOV64rm : X86::MOV32rm;
-    BuildMI(offsetMBB, DL, TII->get(Opc), RegSaveReg)
+  // In offsetMBB, emit code to use the reg_save_area.
+  if (offsetMBB) {
+    assert(OffsetReg != 0);
+
+    // Read the reg_save_area address.
+    unsigned RegSaveReg = MRI.createVirtualRegister(AddrRegClass);
+    BuildMI(offsetMBB, DL, TII->get(X86::MOV64rm), RegSaveReg)
       .addOperand(Base)
       .addOperand(Scale)
       .addOperand(Index)
       .addDisp(Disp, 16)
-      .addOperand(Segment);
+      .addOperand(Segment)
+      .setMemRefs(MMOBegin, MMOEnd);
+
+    // Zero-extend the offset   LOCALMOD: X86::MOVZX64rr32 OffsetReg64, OffsetReg
+    unsigned OffsetReg64 = MRI.createVirtualRegister(AddrRegClass);
+      BuildMI(offsetMBB, DL, TII->get(X86::SUBREG_TO_REG), OffsetReg64)
+        .addImm(0)
+        .addReg(OffsetReg)
+        .addImm(X86::sub_32bit);
 
     // Add the offset to the reg_save_area to get the final address.
-    unsigned OffsetRegPromoted;
-    if (IsPtr64Bits) {
-      OffsetRegPromoted = MRI.createVirtualRegister(PointerRegClass);
-      BuildMI(offsetMBB, DL, TII->get(X86::MOVZX64rr32), OffsetRegPromoted)
-        .addReg(OffsetReg);
-    } else {
-      OffsetRegPromoted = OffsetReg;
-    }
-    Opc = IsPtr64Bits ? X86::ADD64rr : X86::ADD32rr;
-    BuildMI(offsetMBB, DL, TII->get(Opc), DestReg1)
+    BuildMI(offsetMBB, DL, TII->get(X86::ADD64rr), OffsetDestReg)
       .addReg(RegSaveReg)
-      .addReg(OffsetRegPromoted);
+      .addReg(OffsetReg64);
 
-    // Compute the new offset, and store it back into the va_list.
-    unsigned NewOffsetReg = MRI.createVirtualRegister(OffsetRegClass);
-    BuildMI(offsetMBB, DL, TII->get(X86::ADD32ri), NewOffsetReg)
+    // Compute the offset for the next argument
+    unsigned NextOffsetReg = MRI.createVirtualRegister(OffsetRegClass);
+    BuildMI(offsetMBB, DL, TII->get(X86::ADD32ri), NextOffsetReg)
       .addReg(OffsetReg)
-      .addImm(UsingFPOffset ? 16 : 8);
+      .addImm(UseFPOffset ? 16 : 8);
 
+    // Store it back into the va_list.
     BuildMI(offsetMBB, DL, TII->get(X86::MOV32mr))
       .addOperand(Base)
       .addOperand(Scale)
       .addOperand(Index)
-      .addDisp(Disp, UsingFPOffset ? 4 : 0)
+      .addDisp(Disp, UseFPOffset ? 4 : 0)
       .addOperand(Segment)
-      .addReg(NewOffsetReg);
+      .addReg(NextOffsetReg)
+      .setMemRefs(MMOBegin, MMOEnd);
 
     // Jump to endMBB
     BuildMI(offsetMBB, DL, TII->get(X86::JMP_4))
       .addMBB(endMBB);
   }
 
+  //
   // Emit code to use overflow area
+  //
 
-  // Load the overflow area address into the destination register
-  // If we need to align it, load it into a temporary first.
-  bool NeedAlign = (Align > 1);
-  unsigned OverflowAddrReg;
-  if (NeedAlign) {
-    OverflowAddrReg = MRI.createVirtualRegister(PointerRegClass);
-  } else {
-    OverflowAddrReg = DestReg2;
-  }
-  Opc = IsPtr64Bits ? X86::MOV64rm : X86::MOV32rm;
-  BuildMI(overflowMBB, DL, TII->get(Opc), OverflowAddrReg)
-    .addOperand(Base)
-    .addOperand(Scale)
-    .addOperand(Index)
-    .addDisp(Disp, 8)
-    .addOperand(Segment);
-
-  // Align the overflow address
-  // aligned_addr = (addr + (align-1)) & ~(align-1)
-  if (NeedAlign) {
-    assert( ((Align & (Align-1)) == 0) && "Alignment must be a power of 2");
-    unsigned TmpReg = MRI.createVirtualRegister(PointerRegClass);
-    Opc = IsPtr64Bits ? X86::ADD64ri32 : X86::ADD32ri;
-    BuildMI(overflowMBB, DL, TII->get(Opc), TmpReg)
-      .addReg(OverflowAddrReg)
-      .addImm(Align-1);
-    Opc = IsPtr64Bits ? X86::AND64ri32 : X86::AND32ri;
-    BuildMI(overflowMBB, DL, TII->get(Opc), DestReg2)
-      .addReg(TmpReg)
-      .addImm(~(uint32_t)(Align-1));
-  }
-
-  // Calculuate the new overflow address.
-  uint32_t AddBytes = ((VarArgSize + 7) & ~7);
-  unsigned NewAddrReg = MRI.createVirtualRegister(PointerRegClass);
-  Opc = IsPtr64Bits ? X86::ADD64ri32 : X86::ADD32ri;
-  BuildMI(overflowMBB, DL, TII->get(Opc), NewAddrReg)
-    .addReg(DestReg2)
-    .addImm(AddBytes);
-
-  // Store the new overflow address.
-  Opc = IsPtr64Bits ? X86::MOV64mr : X86::MOV32mr;
-  BuildMI(overflowMBB, DL, TII->get(Opc))
+  // Load the overflow_area address into a register.
+  unsigned OverflowAddrReg = MRI.createVirtualRegister(AddrRegClass);
+  BuildMI(overflowMBB, DL, TII->get(X86::MOV64rm), OverflowAddrReg)
     .addOperand(Base)
     .addOperand(Scale)
     .addOperand(Index)
     .addDisp(Disp, 8)
     .addOperand(Segment)
-    .addReg(NewAddrReg);
+    .setMemRefs(MMOBegin, MMOEnd);
+
+  // If we need to align it, do so. Otherwise, just copy the address
+  // to OverflowDestReg.
+  if (NeedsAlign) {
+    // Align the overflow address
+    assert((Align & (Align-1)) == 0 && "Alignment must be a power of 2");
+    unsigned TmpReg = MRI.createVirtualRegister(AddrRegClass);
+
+    // aligned_addr = (addr + (align-1)) & ~(align-1)
+    BuildMI(overflowMBB, DL, TII->get(X86::ADD64ri32), TmpReg)
+      .addReg(OverflowAddrReg)
+      .addImm(Align-1);
+
+    BuildMI(overflowMBB, DL, TII->get(X86::AND64ri32), OverflowDestReg)
+      .addReg(TmpReg)
+      .addImm(~(uint32_t)(Align-1));
+  } else {
+    BuildMI(overflowMBB, DL, TII->get(TargetOpcode::COPY), OverflowDestReg)
+      .addReg(OverflowAddrReg);
+  }
+
+  // Compute the next overflow address after this argument.
+  // (the overflow address should be kept 8-byte aligned)
+  unsigned NextAddrReg = MRI.createVirtualRegister(AddrRegClass);
+  BuildMI(overflowMBB, DL, TII->get(X86::ADD64ri32), NextAddrReg)
+    .addReg(OverflowDestReg)
+    .addImm(ArgSizeA8);
+
+  // Store the new overflow address.
+  BuildMI(overflowMBB, DL, TII->get(X86::MOV64mr))
+    .addOperand(Base)
+    .addOperand(Scale)
+    .addOperand(Index)
+    .addDisp(Disp, 8)
+    .addOperand(Segment)
+    .addReg(NextAddrReg)
+    .setMemRefs(MMOBegin, MMOEnd);
+
+  // If we branched, emit the PHI to endMBB.
+  if (offsetMBB) {
+    BuildMI(endMBB, DL, TII->get(X86::PHI), DestReg)
+      .addReg(OffsetDestReg).addMBB(offsetMBB)
+      .addReg(OverflowDestReg).addMBB(overflowMBB);
+  }
+
+  // @LOCALMOD-BEGIN
+  if (Subtarget->isTargetNaCl()) {
+    // Truncate the address to 32-bits.
+    MachineInstr *CopyMI =
+      BuildMI(endMBB, DL, TII->get(TargetOpcode::COPY), RealDestReg)
+        .addReg(DestReg);
+    CopyMI->getOperand(1).setSubReg(X86::sub_32bit);
+  }
+  // @LOCALMOD-END
 
   // Erase the pseudo instruction
   MI->eraseFromParent();
 
   return endMBB;
 }
-// @LOCALMOD-END
 
 MachineBasicBlock *
 X86TargetLowering::EmitVAStartSaveXMMRegsWithCustomInserter(
