@@ -652,33 +652,40 @@ bool ARMFastISel::ARMEmitLoad(EVT VT, unsigned &ResultReg,
 
   assert(VT.isSimple() && "Non-simple types are invalid here!");
   unsigned Opc;
+  TargetRegisterClass *RC;
   bool isFloat = false;
   switch (VT.getSimpleVT().SimpleTy) {
     default:
       // This is mostly going to be Neon/vector support.
       return false;
+    // Using thumb1 instructions for now, use the appropriate RC.
     case MVT::i16:
       Opc = isThumb ? ARM::tLDRH : ARM::LDRH;
+      RC = isThumb ? ARM::tGPRRegisterClass : ARM::GPRRegisterClass;
       VT = MVT::i32;
       break;
     case MVT::i8:
       Opc = isThumb ? ARM::tLDRB : ARM::LDRB;
+      RC = isThumb ? ARM::tGPRRegisterClass : ARM::GPRRegisterClass;
       VT = MVT::i32;
       break;
     case MVT::i32:
       Opc = isThumb ? ARM::tLDR : ARM::LDR;
+      RC = isThumb ? ARM::tGPRRegisterClass : ARM::GPRRegisterClass;
       break;
     case MVT::f32:
       Opc = ARM::VLDRS;
+      RC = TLI.getRegClassFor(VT);
       isFloat = true;
       break;
     case MVT::f64:
       Opc = ARM::VLDRD;
+      RC = TLI.getRegClassFor(VT);
       isFloat = true;
       break;
   }
 
-  ResultReg = createResultReg(TLI.getRegClassFor(VT));
+  ResultReg = createResultReg(RC);
 
   // TODO: Fix the Addressing modes so that these can share some code.
   // Since this is a Thumb1 load this will work in Thumb1 or 2 mode.
@@ -942,8 +949,10 @@ bool ARMFastISel::SelectCmp(const Instruction *I) {
 
   // Now set a register based on the comparison. Explicitly set the predicates
   // here.
-  unsigned MovCCOpc = isThumb ? ARM::tMOVCCi : ARM::MOVCCi;
-  unsigned DestReg = createResultReg(ARM::GPRRegisterClass);
+  unsigned MovCCOpc = isThumb ? ARM::t2MOVCCi : ARM::MOVCCi;
+  TargetRegisterClass *RC = isThumb ? ARM::rGPRRegisterClass 
+                                    : ARM::GPRRegisterClass;
+  unsigned DestReg = createResultReg(RC);
   Constant *Zero 
     = ConstantInt::get(Type::getInt32Ty(*Context), 0);
   unsigned ZeroReg = TargetMaterializeConstant(Zero);
@@ -979,8 +988,8 @@ bool ARMFastISel::SelectFPTrunc(const Instruction *I) {
   if (!Subtarget->hasVFP2()) return false;
 
   Value *V = I->getOperand(0);
-  if (!I->getType()->isFloatTy() ||
-      !V->getType()->isDoubleTy()) return false;
+  if (!(I->getType()->isFloatTy() &&
+        V->getType()->isDoubleTy())) return false;
 
   unsigned Op = getRegForValue(V);
   if (Op == 0) return false;
@@ -1007,7 +1016,7 @@ bool ARMFastISel::SelectSIToFP(const Instruction *I) {
   
   // The conversion routine works on fp-reg to fp-reg and the operand above
   // was an integer, move it to the fp registers if possible.
-  unsigned FP = ARMMoveToFPReg(DstVT, Op);
+  unsigned FP = ARMMoveToFPReg(MVT::f32, Op);
   if (FP == 0) return false;
   
   unsigned Opc;
@@ -1040,9 +1049,9 @@ bool ARMFastISel::SelectFPToSI(const Instruction *I) {
   if (OpTy->isFloatTy()) Opc = ARM::VTOSIZS;
   else if (OpTy->isDoubleTy()) Opc = ARM::VTOSIZD;
   else return 0;
-  EVT OpVT = TLI.getValueType(OpTy, true);
   
-  unsigned ResultReg = createResultReg(TLI.getRegClassFor(OpVT));
+  // f64->s32 or f32->s32 both need an intermediate f32 reg.
+  unsigned ResultReg = createResultReg(TLI.getRegClassFor(MVT::f32));
   AddOptionalDefs(BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DL, TII.get(Opc),
                           ResultReg)
                   .addReg(Op));
@@ -1181,7 +1190,7 @@ bool ARMFastISel::ProcessCallArgs(SmallVectorImpl<Value*> &Args,
     switch (VA.getLocInfo()) {
       case CCValAssign::Full: break;
       default:
-      assert(false && "Handle arg promotion.");
+      // TODO: Handle arg promotion.
       return false;
     }
 
@@ -1354,7 +1363,7 @@ bool ARMFastISel::SelectCall(const Instruction *I) {
   CallingConv::ID CC = CS.getCallingConv();
   // TODO: Avoid some calling conventions?
   if (CC != CallingConv::C) {
-    errs() << "Can't handle calling convention: " << CC << "\n";
+    // errs() << "Can't handle calling convention: " << CC << "\n";
     return false;
   }
   
