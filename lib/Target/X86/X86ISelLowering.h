@@ -252,7 +252,6 @@ namespace llvm {
       // according to %al. An operator is needed so that this can be expanded
       // with control flow.
       VASTART_SAVE_XMM_REGS,
-      VAARG_64,
 
       // MINGW_ALLOCA - MingW's __alloca call to do stack probing.
       MINGW_ALLOCA,
@@ -311,7 +310,11 @@ namespace llvm {
       /// slots. This corresponds to the X86::FST32m / X86::FST64m. It takes a
       /// chain operand, value to store, address, and a ValueType to store it
       /// as.
-      FST
+      FST,
+
+      /// VAARG_64 - This instruction grabs the address of the next argument
+      /// from a va_list. (reads and modifies the va_list in memory)
+      VAARG_64
       
       // WARNING: Do not add anything in the end unless you want the node to
       // have memop! In fact, starting from ATOMADD64_DAG all opcodes will be
@@ -424,17 +427,6 @@ namespace llvm {
   //===--------------------------------------------------------------------===//
   //  X86TargetLowering - X86 Implementation of the TargetLowering interface
   class X86TargetLowering : public TargetLowering {
-
-    // @LOCALMOD-BEGIN
-    struct VarArgInfo {               // va_arg calling convention info
-      unsigned TotalNumIntRegs;
-      unsigned TotalNumXMMRegs;
-      const unsigned *GPR64ArgRegs;
-      const unsigned *XMMArgRegs;
-      bool NoImplicitFloatOps;
-    };
-   // @LOCALMOD-END
-
 
   public:
     explicit X86TargetLowering(X86TargetMachine &TM);
@@ -797,9 +789,6 @@ namespace llvm {
     // Utility functions to help LowerVECTOR_SHUFFLE
     SDValue LowerVECTOR_SHUFFLEv8i16(SDValue Op, SelectionDAG &DAG) const;
     
-    // @LOCALMOD
-    void getVarArgInfo(const Function *Fn, VarArgInfo *VAInfo) const;
-
     virtual SDValue
       LowerFormalArguments(SDValue Chain,
                            CallingConv::ID CallConv, bool isVarArg,
@@ -869,12 +858,10 @@ namespace llvm {
                                                           MachineBasicBlock *BB,
                                                         unsigned cmovOpc) const;
 
-    // @LOCALMOD-BEGIN
-    // Emit the instructions needed to get the next va_arg
+    // Utility function to emit the low-level va_arg code for X86-64.
     MachineBasicBlock *EmitVAARG64WithCustomInserter(
                        MachineInstr *MI,
                        MachineBasicBlock *MBB) const;
-    // @LOCALMOD-END
 
     /// Utility function to emit the xmm reg save portion of va_start.
     MachineBasicBlock *EmitVAStartSaveXMMRegsWithCustomInserter(

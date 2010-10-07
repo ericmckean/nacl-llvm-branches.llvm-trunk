@@ -122,6 +122,13 @@ public:
     return *this;
   }
 
+  const MachineInstrBuilder &setMemRefs(MachineInstr::mmo_iterator b,
+                                        MachineInstr::mmo_iterator e) const {
+    MI->setMemRefs(b, e);
+    return *this;
+  }
+
+
   const MachineInstrBuilder &addOperand(const MachineOperand &MO) const {
     MI->addOperand(MO);
     return *this;
@@ -137,8 +144,7 @@ public:
     return *this;
   }
 
-  // @LOCALMOD-START
-  // copy displacement from a machine operand to this new machine instruction
+  // Add a displacement from an existing MachineOperand with an added offset.
   const MachineInstrBuilder &addDisp(const MachineOperand &Disp,
                                      int64_t off) const {
     switch (Disp.getType()) {
@@ -150,7 +156,6 @@ public:
         return this->addGlobalAddress(Disp.getGlobal(), off);
     }
   }
-  // @LOCALMOD-END
 };
 
 /// BuildMI - Builder interface.  Specify how to create the initial instruction
