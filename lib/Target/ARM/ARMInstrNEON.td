@@ -132,13 +132,13 @@ def nModImm : Operand<i32> {
 // Use VLDM to load a Q register as a D register pair.
 // This is a pseudo instruction that is expanded to VLDMD after reg alloc.
 def VLDMQ
-  : PseudoVFPLdStM<(outs QPR:$dst), (ins addrmode4:$addr), IIC_fpLoadm, "",
+  : PseudoVFPLdStM<(outs QPR:$dst), (ins addrmode4:$addr), IIC_fpLoad_m, "",
                    [(set QPR:$dst, (v2f64 (load addrmode4:$addr)))]>;
 
 // Use VSTM to store a Q register as a D register pair.
 // This is a pseudo instruction that is expanded to VSTMD after reg alloc.
 def VSTMQ
-  : PseudoVFPLdStM<(outs), (ins QPR:$src, addrmode4:$addr), IIC_fpStorem, "",
+  : PseudoVFPLdStM<(outs), (ins QPR:$src, addrmode4:$addr), IIC_fpStore_m, "",
                    [(store (v2f64 QPR:$src), addrmode4:$addr)]>;
 
 let mayLoad = 1, neverHasSideEffects = 1, hasExtraDefRegAllocReq = 1 in {
@@ -3609,14 +3609,9 @@ def : Pat<(v4f32 (NEONvduplane (v4f32 QPR:$src), imm:$lane)),
                                    (DSubReg_i32_reg imm:$lane))),
                            (SubReg_i32_lane imm:$lane)))>;
 
-def  VDUPfdf  : N2V<0b11, 0b11, {?,1}, {0,0}, 0b11000, 0, 0,
-                    (outs DPR:$dst), (ins SPR:$src),
-                    IIC_VMOVD, "vdup", "32", "$dst, ${src:lane}", "",
+def  VDUPfdf : PseudoNeonI<(outs DPR:$dst), (ins SPR:$src), IIC_VMOVD, "",
                     [(set DPR:$dst, (v2f32 (NEONvdup (f32 SPR:$src))))]>;
-
-def  VDUPfqf  : N2V<0b11, 0b11, {?,1}, {0,0}, 0b11000, 1, 0,
-                    (outs QPR:$dst), (ins SPR:$src),
-                    IIC_VMOVQ, "vdup", "32", "$dst, ${src:lane}", "",
+def  VDUPfqf : PseudoNeonI<(outs QPR:$dst), (ins SPR:$src), IIC_VMOVD, "",
                     [(set QPR:$dst, (v4f32 (NEONvdup (f32 SPR:$src))))]>;
 
 //   VMOVN    : Vector Narrowing Move
@@ -3816,11 +3811,11 @@ def  VTBL4
 } // hasExtraSrcRegAllocReq = 1
 
 def  VTBL2Pseudo
-  : PseudoNeonI<(outs DPR:$dst), (ins QPR:$tbl, DPR:$src), IIC_VTB2, "">;
+  : PseudoNeonI<(outs DPR:$dst), (ins QPR:$tbl, DPR:$src), IIC_VTB2, "", []>;
 def  VTBL3Pseudo
-  : PseudoNeonI<(outs DPR:$dst), (ins QQPR:$tbl, DPR:$src), IIC_VTB3, "">;
+  : PseudoNeonI<(outs DPR:$dst), (ins QQPR:$tbl, DPR:$src), IIC_VTB3, "", []>;
 def  VTBL4Pseudo
-  : PseudoNeonI<(outs DPR:$dst), (ins QQPR:$tbl, DPR:$src), IIC_VTB4, "">;
+  : PseudoNeonI<(outs DPR:$dst), (ins QQPR:$tbl, DPR:$src), IIC_VTB4, "", []>;
 
 //   VTBX     : Vector Table Extension
 def  VTBX1
@@ -3849,13 +3844,13 @@ def  VTBX4
 
 def  VTBX2Pseudo
   : PseudoNeonI<(outs DPR:$dst), (ins DPR:$orig, QPR:$tbl, DPR:$src),
-                IIC_VTBX2, "$orig = $dst">;
+                IIC_VTBX2, "$orig = $dst", []>;
 def  VTBX3Pseudo
   : PseudoNeonI<(outs DPR:$dst), (ins DPR:$orig, QQPR:$tbl, DPR:$src),
-                IIC_VTBX3, "$orig = $dst">;
+                IIC_VTBX3, "$orig = $dst", []>;
 def  VTBX4Pseudo
   : PseudoNeonI<(outs DPR:$dst), (ins DPR:$orig, QQPR:$tbl, DPR:$src),
-                IIC_VTBX4, "$orig = $dst">;
+                IIC_VTBX4, "$orig = $dst", []>;
 
 //===----------------------------------------------------------------------===//
 // NEON instructions for single-precision FP math

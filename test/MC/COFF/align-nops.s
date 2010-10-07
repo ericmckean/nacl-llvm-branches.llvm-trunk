@@ -1,6 +1,5 @@
-// RUN: llvm-mc -filetype=obj -triple i686-pc-win32 %s -o %t
-// RUN: coff-dump.py %abs_tmp | FileCheck %s
-        
+// RUN: llvm-mc -filetype=obj -triple i686-pc-win32 %s -o - | coff-dump.py | FileCheck %s
+
 // Test that we get optimal nops in text
     .text
 f0:
@@ -27,7 +26,7 @@ f0:
 //CHECK-NEXT:    NumberOfLineNumbers
 //CHECK-NEXT:    Charateristics           = 0x400001
 //CHECK-NEXT:        IMAGE_SCN_ALIGN_8BYTES
-//CHECK-NEXT:      SectionData              = 
+//CHECK-NEXT:      SectionData              =
 //CHECK-NEXT:        00 00 00 00 0F 1F 40 00 - 00 00 00 00 0F 1F 40 00
 
 //CHECK:         Name                     = .data
@@ -41,5 +40,5 @@ f0:
 //CHECK-NEXT:      NumberOfLineNumbers
 //CHECK-NEXT:      Charateristics           = 0x400001
 //CHECK-NEXT:        IMAGE_SCN_ALIGN_8BYTES
-//CHECK-NEXT:      SectionData              = 
+//CHECK-NEXT:      SectionData              =
 //CHECK-NEXT:        00 00 00 00 90 90 90 90 - 00 00 00 00 00 00 00 00

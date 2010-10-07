@@ -1112,7 +1112,7 @@ X86InstrInfo::convertToThreeAddressWithLEA(unsigned MIOpc,
   unsigned Opc = TM.getSubtarget<X86Subtarget>().is64Bit()
     ? X86::LEA64_32r : X86::LEA32r;
   MachineRegisterInfo &RegInfo = MFI->getParent()->getRegInfo();
-  unsigned leaInReg = RegInfo.createVirtualRegister(&X86::GR32RegClass);
+  unsigned leaInReg = RegInfo.createVirtualRegister(&X86::GR32_NOSPRegClass);
   unsigned leaOutReg = RegInfo.createVirtualRegister(&X86::GR32RegClass);
             
   // Build and insert into an implicit UNDEF value. This is OK because
@@ -1162,7 +1162,7 @@ X86InstrInfo::convertToThreeAddressWithLEA(unsigned MIOpc,
       // just a single insert_subreg.
       addRegReg(MIB, leaInReg, true, leaInReg, false);
     } else {
-      leaInReg2 = RegInfo.createVirtualRegister(&X86::GR32RegClass);
+      leaInReg2 = RegInfo.createVirtualRegister(&X86::GR32_NOSPRegClass);
       // Build and insert into an implicit UNDEF value. This is OK because
       // well be shifting and then extracting the lower 16-bits. 
       BuildMI(*MFI, MIB, MI->getDebugLoc(), get(X86::IMPLICIT_DEF), leaInReg2);
@@ -1249,6 +1249,11 @@ X86InstrInfo::convertToThreeAddress(MachineFunction::iterator &MFI,
     unsigned ShAmt = MI->getOperand(2).getImm();
     if (ShAmt == 0 || ShAmt >= 4) return 0;
 
+    // LEA can't handle RSP.
+    if (TargetRegisterInfo::isVirtualRegister(Src) &&
+        !MF.getRegInfo().constrainRegClass(Src, &X86::GR64_NOSPRegClass))
+      return 0;
+
     NewMI = BuildMI(MF, MI->getDebugLoc(), get(X86::LEA64r))
       .addReg(Dest, RegState::Define | getDeadRegState(isDead))
       .addReg(0).addImm(1 << ShAmt)
@@ -1262,6 +1267,11 @@ X86InstrInfo::convertToThreeAddress(MachineFunction::iterator &MFI,
     // the flags produced by a shift yet, so this is safe.
     unsigned ShAmt = MI->getOperand(2).getImm();
     if (ShAmt == 0 || ShAmt >= 4) return 0;
+
+    // LEA can't handle ESP.
+    if (TargetRegisterInfo::isVirtualRegister(Src) &&
+        !MF.getRegInfo().constrainRegClass(Src, &X86::GR32_NOSPRegClass))
+      return 0;
 
     unsigned Opc = is64Bit ? X86::LEA64_32r : X86::LEA32r;
     NewMI = BuildMI(MF, MI->getDebugLoc(), get(Opc))
@@ -1301,6 +1311,14 @@ X86InstrInfo::convertToThreeAddress(MachineFunction::iterator &MFI,
       assert(MI->getNumOperands() >= 2 && "Unknown inc instruction!");
       unsigned Opc = MIOpc == X86::INC64r ? X86::LEA64r
         : (is64Bit ? X86::LEA64_32r : X86::LEA32r);
+
+      // LEA can't handle RSP.
+      if (TargetRegisterInfo::isVirtualRegister(Src) &&
+          !MF.getRegInfo().constrainRegClass(Src,
+                            MIOpc == X86::INC64r ? X86::GR64_NOSPRegisterClass :
+                                                   X86::GR32_NOSPRegisterClass))
+        return 0;
+
       NewMI = addRegOffset(BuildMI(MF, MI->getDebugLoc(), get(Opc))
                               .addReg(Dest, RegState::Define |
                                       getDeadRegState(isDead)),
@@ -1323,6 +1341,13 @@ X86InstrInfo::convertToThreeAddress(MachineFunction::iterator &MFI,
       assert(MI->getNumOperands() >= 2 && "Unknown dec instruction!");
       unsigned Opc = MIOpc == X86::DEC64r ? X86::LEA64r
         : (is64Bit ? X86::LEA64_32r : X86::LEA32r);
+      // LEA can't handle RSP.
+      if (TargetRegisterInfo::isVirtualRegister(Src) &&
+          !MF.getRegInfo().constrainRegClass(Src,
+                            MIOpc == X86::DEC64r ? X86::GR64_NOSPRegisterClass :
+                                                   X86::GR32_NOSPRegisterClass))
+        return 0;
+
       NewMI = addRegOffset(BuildMI(MF, MI->getDebugLoc(), get(Opc))
                               .addReg(Dest, RegState::Define |
                                       getDeadRegState(isDead)),
@@ -1346,6 +1371,14 @@ X86InstrInfo::convertToThreeAddress(MachineFunction::iterator &MFI,
         : (is64Bit ? X86::LEA64_32r : X86::LEA32r);
       unsigned Src2 = MI->getOperand(2).getReg();
       bool isKill2 = MI->getOperand(2).isKill();
+
+      // LEA can't handle RSP.
+      if (TargetRegisterInfo::isVirtualRegister(Src2) &&
+          !MF.getRegInfo().constrainRegClass(Src2,
+                           MIOpc == X86::ADD64rr ? X86::GR64_NOSPRegisterClass :
+                                                   X86::GR32_NOSPRegisterClass))
+        return 0;
+
       NewMI = addRegReg(BuildMI(MF, MI->getDebugLoc(), get(Opc))
                         .addReg(Dest, RegState::Define |
                                 getDeadRegState(isDead)),
