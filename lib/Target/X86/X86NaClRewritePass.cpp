@@ -230,7 +230,10 @@ static void DumpInstructionVerbose(const MachineInstr &MI) {
   dbgs() << "\n";
 }
 
-
+static bool IsSafeReg(unsigned reg) {
+  return (reg == X86::RSP || reg == X86::RBP ||
+          reg == X86::R15 || reg == X86::RIP);
+}
 
 /*
  * A primitive validator to catch problems at compile time
@@ -267,11 +270,17 @@ void X86NaClRewritePass::PassLightWeightValidator(MachineBasicBlock &MBB,
         bool found;
         unsigned memOperand = FindMemoryOperand(MI, found);
         assert (found && "Load / Store without mem operand?");
-        MachineOperand &BaseReg  = MI.getOperand(memOperand + 0);
-        const unsigned breg = BaseReg.getReg();
         // Base should be a safe reg.
-        if ((breg != X86::RSP && breg != X86::RBP &&
-             breg != X86::R15 && breg != X86::RIP)) {
+        // If not, base should be unspecified, index should be a safe reg,
+        // and Scale should be one.
+        MachineOperand &BaseReg  = MI.getOperand(memOperand + 0);
+        MachineOperand &Scale     = MI.getOperand(memOperand + 1);
+        MachineOperand &IndexReg  = MI.getOperand(memOperand + 2);
+        unsigned base_reg = BaseReg.getReg();
+        unsigned maybe_safe_reg =
+            base_reg ? base_reg : IndexReg.getReg();
+        bool scale_safe = base_reg ? true : Scale.getImm() == 1;
+        if (!scale_safe || !IsSafeReg(maybe_safe_reg)) {
           // TODO(robertm): add proper test
           dbgs() << "@VALIDATOR: MEM OP WITH BAD BASE\n\n";
           DumpInstructionVerbose(MI);
@@ -313,7 +322,7 @@ static bool MatchesSPAdj(const MachineInstr &MI) {
   const MachineOperand &Offset = MI.getOperand(4);
   return (DestReg.isReg() && DestReg.getReg() == X86::RSP &&
           BaseReg.isReg() && BaseReg.getReg() == X86::RBP &&
-          Scale.isImm() && Scale.getImm() == 1 &&
+          Scale.getImm() == 1 &&
           IndexReg.isReg() && IndexReg.getReg() == 0 &&
           Offset.isImm());
 }
@@ -352,6 +361,30 @@ bool X86NaClRewritePass::PassSandboxingStack(MachineBasicBlock &MBB,
          DEBUG(DumpInstructionVerbose(MI));
          Modified = true;
          break;
+
+       // For a 64-bit mov, change to 32-bit mov
+       // (get lower 32-bits from the reg; upper 32-bits will be filled by r15)
+       case X86::MOV64rr: {
+         DEBUG(dbgs() << "@PassSandboxingStack: BEFORE\n");
+         DEBUG(DumpInstructionVerbose(MI));
+         MI.setDesc(TII->get(X86::NACL_SET_SPr));
+         MachineOperand &DestReg = MI.getOperand(0);
+         unsigned reg32 = getX86SubSuperRegister(DestReg.getReg(),
+                                                       MVT::i32,
+                                                       false);
+         assert (reg32 != 0);
+         DestReg.setReg(reg32);
+         MachineOperand &SrcReg = MI.getOperand(1);
+         reg32 = getX86SubSuperRegister(SrcReg.getReg(),
+                                        MVT::i32,
+                                        false);
+         assert (reg32 != 0);
+         SrcReg.setReg(reg32);
+         DEBUG(dbgs() << "@PassSandboxingStack: AFTER\n");
+         DEBUG(DumpInstructionVerbose(MI));
+         Modified = true;
+         break;
+       }
        case X86::MOV32rm:
          DEBUG(dbgs() << "@PassSandboxingStack: BEFORE\n");
          DEBUG(DumpInstructionVerbose(MI));
