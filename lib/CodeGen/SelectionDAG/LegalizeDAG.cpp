@@ -2682,41 +2682,39 @@ void SelectionDAGLegalize::ExpandNode(SDNode *Node,
   }
   case ISD::VAARG: {
     const Value *V = cast<SrcValueSDNode>(Node->getOperand(2))->getValue();
-    EVT VarArgVT = Node->getValueType(0);
-    SDValue Chain = Node->getOperand(0);
-    SDValue SrcPtr = Node->getOperand(1);
+    EVT VT = Node->getValueType(0);
+    Tmp1 = Node->getOperand(0);
+    Tmp2 = Node->getOperand(1);
     unsigned Align = Node->getConstantOperandVal(3);
-    EVT PointerTy = TLI.getPointerTy();
 
-    // Load the contents of the VAList
-    SDValue VAList = DAG.getLoad(PointerTy, dl, Chain, SrcPtr,
-                                 MachinePointerInfo(V), false, false, 0);
-    Chain =  VAList.getValue(1);
+    SDValue VAListLoad = DAG.getLoad(TLI.getPointerTy(), dl, Tmp1, Tmp2,
+                                     MachinePointerInfo(V), false, false, 0);
+    SDValue VAList = VAListLoad;
+
     if (Align > TLI.getMinStackArgumentAlignment()) {
-      // Align must be a power of 2 for this code to work.
       assert(((Align & (Align-1)) == 0) && "Expected Align to be a power of 2");
 
-      VAList = DAG.getNode(ISD::ADD, dl, PointerTy, VAList,
-			   DAG.getConstant(Align - 1, PointerTy));
+      VAList = DAG.getNode(ISD::ADD, dl, TLI.getPointerTy(), VAList,
+                           DAG.getConstant(Align - 1,
+                                           TLI.getPointerTy()));
 
-      VAList = DAG.getNode(ISD::AND, dl, PointerTy, VAList,
-			   DAG.getConstant(-Align, PointerTy));
+      VAList = DAG.getNode(ISD::AND, dl, TLI.getPointerTy(), VAList,
+                           DAG.getConstant(-Align,
+                                           TLI.getPointerTy()));
     }
 
     // Increment the pointer, VAList, to the next vaarg
-    const Type *VarArgTy = VarArgVT.getTypeForEVT(*DAG.getContext());
-    uint64_t VarSize = TLI.getTargetData()->getTypeAllocSize(VarArgTy);
-    SDValue VAListNext = DAG.getNode(ISD::ADD, dl, PointerTy, VAList,
-                                    DAG.getConstant(VarSize, PointerTy));
+    Tmp3 = DAG.getNode(ISD::ADD, dl, TLI.getPointerTy(), VAList,
+                       DAG.getConstant(TLI.getTargetData()->
+                          getTypeAllocSize(VT.getTypeForEVT(*DAG.getContext())),
+                                       TLI.getPointerTy()));
     // Store the incremented VAList to the legalized pointer
-    Chain = DAG.getStore(Chain, dl, VAListNext, SrcPtr, 
-                         MachinePointerInfo(V), false, false, 0);
+    Tmp3 = DAG.getStore(VAListLoad.getValue(1), dl, Tmp3, Tmp2,
+                        MachinePointerInfo(V), false, false, 0);
     // Load the actual argument out of the pointer VAList
-    SDValue ArgLoad = DAG.getLoad(VarArgVT, dl, Chain, VAList, 
-                                  MachinePointerInfo(), false, false, 0);
-    Chain = ArgLoad.getValue(1);
-    Results.push_back(ArgLoad);
-    Results.push_back(Chain);
+    Results.push_back(DAG.getLoad(VT, dl, Tmp3, VAList, MachinePointerInfo(),
+                                  false, false, 0));
+    Results.push_back(Results[0].getValue(1));
     break;
   }
   case ISD::VACOPY: {
