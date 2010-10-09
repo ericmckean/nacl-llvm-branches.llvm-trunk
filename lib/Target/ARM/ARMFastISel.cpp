@@ -629,6 +629,9 @@ bool ARMFastISel::ARMComputeRegOffset(const Value *Obj, unsigned &Reg,
 bool ARMFastISel::ARMLoadAlloca(const Instruction *I, EVT VT) {
   Value *Op0 = I->getOperand(0);
 
+  // Promote load/store types.
+  if (VT == MVT::i8 || VT == MVT::i16) VT = MVT::i32;
+
   // Verify it's an alloca.
   if (const AllocaInst *AI = dyn_cast<AllocaInst>(Op0)) {
     DenseMap<const AllocaInst*, int>::iterator SI =
@@ -658,20 +661,19 @@ bool ARMFastISel::ARMEmitLoad(EVT VT, unsigned &ResultReg,
     default:
       // This is mostly going to be Neon/vector support.
       return false;
-    // Using thumb1 instructions for now, use the appropriate RC.
     case MVT::i16:
-      Opc = isThumb ? ARM::tLDRH : ARM::LDRH;
-      RC = isThumb ? ARM::tGPRRegisterClass : ARM::GPRRegisterClass;
+      Opc = isThumb ? ARM::t2LDRHi8 : ARM::LDRH;
+      RC = ARM::GPRRegisterClass;
       VT = MVT::i32;
       break;
     case MVT::i8:
-      Opc = isThumb ? ARM::tLDRB : ARM::LDRB;
-      RC = isThumb ? ARM::tGPRRegisterClass : ARM::GPRRegisterClass;
+      Opc = isThumb ? ARM::t2LDRBi8 : ARM::LDRB;
+      RC = ARM::GPRRegisterClass;
       VT = MVT::i32;
       break;
     case MVT::i32:
-      Opc = isThumb ? ARM::tLDR : ARM::LDR;
-      RC = isThumb ? ARM::tGPRRegisterClass : ARM::GPRRegisterClass;
+      Opc = isThumb ? ARM::t2LDRi8 : ARM::LDR;
+      RC = ARM::GPRRegisterClass;
       break;
     case MVT::f32:
       Opc = ARM::VLDRS;
@@ -687,18 +689,16 @@ bool ARMFastISel::ARMEmitLoad(EVT VT, unsigned &ResultReg,
 
   ResultReg = createResultReg(RC);
 
-  // TODO: Fix the Addressing modes so that these can share some code.
-  // Since this is a Thumb1 load this will work in Thumb1 or 2 mode.
-  // The thumb addressing mode has operands swapped from the arm addressing
-  // mode, the floating point one only has two operands.
-  if (isFloat)
+  // For now with the additions above the offset should be zero - thus we
+  // can always fit into an i8.
+  assert(Offset == 0 && "Offset not zero!");
+  
+  // The thumb and floating point instructions both take 2 operands, ARM takes
+  // another register.
+  if (isFloat || isThumb)
     AddOptionalDefs(BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DL,
                             TII.get(Opc), ResultReg)
                     .addReg(Reg).addImm(Offset));
-  else if (isThumb)
-    AddOptionalDefs(BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DL,
-                            TII.get(Opc), ResultReg)
-                    .addReg(Reg).addImm(Offset).addReg(0));
   else
     AddOptionalDefs(BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DL,
                             TII.get(Opc), ResultReg)
@@ -735,6 +735,9 @@ bool ARMFastISel::SelectLoad(const Instruction *I) {
 bool ARMFastISel::ARMStoreAlloca(const Instruction *I, unsigned SrcReg, EVT VT){
   Value *Op1 = I->getOperand(1);
 
+  // Promote load/store types.
+  if (VT == MVT::i8 || VT == MVT::i16) VT = MVT::i32;
+
   // Verify it's an alloca.
   if (const AllocaInst *AI = dyn_cast<AllocaInst>(Op1)) {
     DenseMap<const AllocaInst*, int>::iterator SI =
@@ -759,9 +762,9 @@ bool ARMFastISel::ARMEmitStore(EVT VT, unsigned SrcReg,
   switch (VT.getSimpleVT().SimpleTy) {
     default: return false;
     case MVT::i1:
-    case MVT::i8: StrOpc = isThumb ? ARM::tSTRB : ARM::STRB; break;
-    case MVT::i16: StrOpc = isThumb ? ARM::tSTRH : ARM::STRH; break;
-    case MVT::i32: StrOpc = isThumb ? ARM::tSTR : ARM::STR; break;
+    case MVT::i8: StrOpc = isThumb ? ARM::t2STRBi8 : ARM::STRB; break;
+    case MVT::i16: StrOpc = isThumb ? ARM::t2STRHi8 : ARM::STRH; break;
+    case MVT::i32: StrOpc = isThumb ? ARM::t2STRi8 : ARM::STR; break;
     case MVT::f32:
       if (!Subtarget->hasVFP2()) return false;
       StrOpc = ARM::VSTRS;
@@ -776,15 +779,10 @@ bool ARMFastISel::ARMEmitStore(EVT VT, unsigned SrcReg,
 
   // The thumb addressing mode has operands swapped from the arm addressing
   // mode, the floating point one only has two operands.
-  if (isFloat)
+  if (isFloat || isThumb)
     AddOptionalDefs(BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DL,
                             TII.get(StrOpc))
                     .addReg(SrcReg).addReg(DstReg).addImm(Offset));
-  else if (isThumb)
-    AddOptionalDefs(BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DL,
-                            TII.get(StrOpc))
-                    .addReg(SrcReg).addReg(DstReg).addImm(Offset).addReg(0));
-
   else
     AddOptionalDefs(BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DL,
                             TII.get(StrOpc))
