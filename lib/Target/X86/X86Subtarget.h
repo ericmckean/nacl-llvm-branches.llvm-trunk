@@ -136,6 +136,9 @@ public:
 
   bool is64Bit() const { return Is64Bit; }
 
+  // @LOCALMOD
+  bool has64BitPointers() const { return is64Bit() && !isTargetNaCl(); }
+
   PICStyles::Style getPICStyle() const { return PICStyle; }
   void setPICStyle(PICStyles::Style Style)  { PICStyle = Style; }
 
@@ -167,6 +170,10 @@ public:
     return !isTargetDarwin() && !isTargetWindows() && !isTargetCygMing();
   }
   bool isTargetLinux() const { return TargetTriple.getOS() == Triple::Linux; }
+
+  bool isTargetNaCl() const { return TargetTriple.getOS() == Triple::NativeClient; }
+  bool isTargetNaCl32() const { return isTargetNaCl() && !is64Bit(); }
+  bool isTargetNaCl64() const { return isTargetNaCl() && is64Bit(); }
 
   bool isTargetWindows() const { return TargetTriple.getOS() == Triple::Win32; }
   bool isTargetMingw() const { 

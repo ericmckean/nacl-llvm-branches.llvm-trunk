@@ -91,11 +91,13 @@ X86_32TargetMachine::X86_32TargetMachine(const Target &T, const std::string &TT,
                                          const std::string &FS)
   : X86TargetMachine(T, TT, FS, false),
     DataLayout(getSubtargetImpl()->isTargetDarwin() ?
-               "e-p:32:32-f64:32:64-i64:32:64-f80:128:128-n8:16:32" :
-               (getSubtargetImpl()->isTargetCygMing() ||
-                getSubtargetImpl()->isTargetWindows()) ?
-               "e-p:32:32-f64:64:64-i64:64:64-f80:32:32-n8:16:32" :
-               "e-p:32:32-f64:32:64-i64:32:64-f80:32:32-n8:16:32"),
+      "e-p:32:32-f64:32:64-i64:32:64-f80:128:128-n8:16:32" :
+      (getSubtargetImpl()->isTargetCygMing() ||
+       getSubtargetImpl()->isTargetWindows()) ?
+      "e-p:32:32-f64:64:64-i64:64:64-f80:32:32-n8:16:32" :
+      getSubtargetImpl()->isTargetNaCl() ?
+      "e-p:32:32-s:32-f64:64:64-f32:32:32-f80:128:128-i64:64:64-n8:16:32" :
+      "e-p:32:32-f64:32:64-i64:32:64-f80:32:32-n8:16:32"),
     InstrInfo(*this),
     TSInfo(*this),
     TLInfo(*this),
@@ -106,7 +108,9 @@ X86_32TargetMachine::X86_32TargetMachine(const Target &T, const std::string &TT,
 X86_64TargetMachine::X86_64TargetMachine(const Target &T, const std::string &TT,
                                          const std::string &FS)
   : X86TargetMachine(T, TT, FS, true),
-    DataLayout("e-p:64:64-s:64-f64:64:64-i64:64:64-f80:128:128-n8:16:32:64"),
+    DataLayout(getSubtargetImpl()->isTargetNaCl() ?
+      "e-p:32:32-s:64-f64:64:64-f32:32:32-f80:128:128-i64:64:64-n8:16:32:64" :
+      "e-p:64:64-s:64-f64:64:64-i64:64:64-f80:128:128-n8:16:32:64"),
     InstrInfo(*this),
     TSInfo(*this),
     TLInfo(*this),
@@ -218,11 +222,20 @@ bool X86TargetMachine::addPostRegAlloc(PassManagerBase &PM,
 
 bool X86TargetMachine::addPreEmitPass(PassManagerBase &PM,
                                       CodeGenOpt::Level OptLevel) {
+  bool Modified = false;
   if (OptLevel != CodeGenOpt::None && Subtarget.hasSSE2()) {
     PM.add(createSSEDomainFixPass());
-    return true;
+    Modified = true;
   }
-  return false;
+
+  // @LOCALMOD-START
+  if (Subtarget.isTargetNaCl()) {
+    PM.add(createX86NaClRewritePass());
+    Modified = true;
+  }
+  // @LOCALMOD-END
+
+  return Modified;
 }
 
 bool X86TargetMachine::addCodeEmitter(PassManagerBase &PM,

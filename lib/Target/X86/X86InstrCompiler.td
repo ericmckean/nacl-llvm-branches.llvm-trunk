@@ -78,6 +78,21 @@ def VASTART_SAVE_XMM_REGS : I<0, Pseudo,
                                                          imm:$regsavefi,
                                                          imm:$offset)]>;
 
+// @LOCALMOD-BEGIN
+// The VAARG_64 pseudo-instruction takes the address of the va_list,
+// and places the next element address into a register.
+let Defs = [EFLAGS] in
+def VAARG_64 : I<0, Pseudo,
+                 (outs GR64:$dst),
+                 (ins i8mem:$ap, i32imm:$size, i8imm:$mode, i32imm:$align),
+                 "#VAARG_64 $dst, $ap, $size, $mode, $align",
+                 [(set GR64:$dst,
+                    (X86vaarg64 addr:$ap, imm:$size, imm:$mode, imm:$align)),
+                  (implicit EFLAGS)]>,
+                 Requires<[NotNaCl]>;
+// @LOCALMOD-END
+
+
 // Dynamic stack allocation yields _alloca call for Cygwin/Mingw targets.  Calls
 // to _alloca is needed to probe the stack when allocating more than 4k bytes in
 // one go. Touching the stack at 4K increments is necessary to ensure that the
@@ -807,9 +822,9 @@ def : Pat<(load (i64 (X86Wrapper tglobaltlsaddr :$dst))),
 // Direct PC relative function call for small code model. 32-bit displacement
 // sign extended to 64-bit.
 def : Pat<(X86call (i64 tglobaladdr:$dst)),
-          (CALL64pcrel32 tglobaladdr:$dst)>, Requires<[NotWin64]>;
+          (CALL64pcrel32 tglobaladdr:$dst)>, Requires<[NotWin64, NotNaCl]>;
 def : Pat<(X86call (i64 texternalsym:$dst)),
-          (CALL64pcrel32 texternalsym:$dst)>, Requires<[NotWin64]>;
+          (CALL64pcrel32 texternalsym:$dst)>, Requires<[NotWin64, NotNaCl]>;
 
 def : Pat<(X86call (i64 tglobaladdr:$dst)),
           (WINCALL64pcrel32 tglobaladdr:$dst)>, Requires<[IsWin64]>;
@@ -819,46 +834,46 @@ def : Pat<(X86call (i64 texternalsym:$dst)),
 // tailcall stuff
 def : Pat<(X86tcret GR32_TC:$dst, imm:$off),
           (TCRETURNri GR32_TC:$dst, imm:$off)>,
-	  Requires<[In32BitMode]>;
+	  Requires<[In32BitMode, NotNaCl]>;
 
 // FIXME: This is disabled for 32-bit PIC mode because the global base
 // register which is part of the address mode may be assigned a 
 // callee-saved register.
 def : Pat<(X86tcret (load addr:$dst), imm:$off),
           (TCRETURNmi addr:$dst, imm:$off)>,
-	  Requires<[In32BitMode, IsNotPIC]>;
+	  Requires<[In32BitMode, IsNotPIC, NotNaCl]>;
 
 def : Pat<(X86tcret (i32 tglobaladdr:$dst), imm:$off),
           (TCRETURNdi texternalsym:$dst, imm:$off)>,
-	  Requires<[In32BitMode]>;
+	  Requires<[In32BitMode, NotNaCl]>;
 
 def : Pat<(X86tcret (i32 texternalsym:$dst), imm:$off),
           (TCRETURNdi texternalsym:$dst, imm:$off)>,
-	  Requires<[In32BitMode]>;
+	  Requires<[In32BitMode, NotNaCl]>;
 
 def : Pat<(X86tcret GR64_TC:$dst, imm:$off),
           (TCRETURNri64 GR64_TC:$dst, imm:$off)>,
-	  Requires<[In64BitMode]>;
+	  Requires<[In64BitMode, NotNaCl]>;
 
 def : Pat<(X86tcret (load addr:$dst), imm:$off),
           (TCRETURNmi64 addr:$dst, imm:$off)>,
-	  Requires<[In64BitMode]>;
+	  Requires<[In64BitMode, NotNaCl]>;
 
 def : Pat<(X86tcret (i64 tglobaladdr:$dst), imm:$off),
           (TCRETURNdi64 tglobaladdr:$dst, imm:$off)>,
-	  Requires<[In64BitMode]>;
+	  Requires<[In64BitMode, NotNaCl]>;
 
 def : Pat<(X86tcret (i64 texternalsym:$dst), imm:$off),
           (TCRETURNdi64 texternalsym:$dst, imm:$off)>,
-	  Requires<[In64BitMode]>;
+	  Requires<[In64BitMode, NotNaCl]>;
 
 // Normal calls, with various flavors of addresses.
 def : Pat<(X86call (i32 tglobaladdr:$dst)),
-          (CALLpcrel32 tglobaladdr:$dst)>;
+          (CALLpcrel32 tglobaladdr:$dst)>, Requires<[NotNaCl]>;
 def : Pat<(X86call (i32 texternalsym:$dst)),
-          (CALLpcrel32 texternalsym:$dst)>;
+          (CALLpcrel32 texternalsym:$dst)>, Requires<[NotNaCl]>;
 def : Pat<(X86call (i32 imm:$dst)),
-          (CALLpcrel32 imm:$dst)>, Requires<[CallImmAddr]>;
+          (CALLpcrel32 imm:$dst)>, Requires<[CallImmAddr, NotNaCl]>;
 
 // X86 specific add which produces a flag.
 def : Pat<(addc GR32:$src1, GR32:$src2),
@@ -1293,19 +1308,19 @@ def : Pat<(store (i8 (trunc_su (srl_su GR64:$src, (i8 8)))), addr:$dst),
           (MOV8mr_NOREX
             addr:$dst,
             (EXTRACT_SUBREG (i64 (COPY_TO_REGCLASS GR64:$src, GR64_ABCD)),
-                            sub_8bit_hi))>;
+                            sub_8bit_hi))>, Requires<[NotNaCl]>;
 def : Pat<(store (i8 (trunc_su (srl_su GR32:$src, (i8 8)))), addr:$dst),
           (MOV8mr_NOREX
             addr:$dst,
             (EXTRACT_SUBREG (i32 (COPY_TO_REGCLASS GR32:$src, GR32_ABCD)),
                             sub_8bit_hi))>,
-      Requires<[In64BitMode]>;
+      Requires<[In64BitMode, NotNaCl]>;
 def : Pat<(store (i8 (trunc_su (srl_su GR16:$src, (i8 8)))), addr:$dst),
           (MOV8mr_NOREX
             addr:$dst,
             (EXTRACT_SUBREG (i16 (COPY_TO_REGCLASS GR16:$src, GR16_ABCD)),
                             sub_8bit_hi))>,
-      Requires<[In64BitMode]>;
+      Requires<[In64BitMode, NotNaCl]>;
       
       
 // (shl x, 1) ==> (add x, x)

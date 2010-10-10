@@ -942,6 +942,7 @@ void AsmPrinter::EmitConstantPool() {
 /// by the current function to the current output stream.  
 ///
 void AsmPrinter::EmitJumpTableInfo() {
+  OutStreamer.EmitRawText(Twine("# @LOCALMOD: JUMPTABLE\n")); // @LOCALMOD
   const MachineJumpTableInfo *MJTI = MF->getJumpTableInfo();
   if (MJTI == 0) return;
   if (MJTI->getEntryKind() == MachineJumpTableInfo::EK_Inline) return;
@@ -960,7 +961,16 @@ void AsmPrinter::EmitJumpTableInfo() {
       // in discardable section
       // FIXME: this isn't the right predicate, should be based on the MCSection
       // for the function.
-      F->isWeakForLinker()) {
+      // @LOCALMOD-START
+      // the original code is a hack
+      // jumptables usually end up in .rodata
+      // but for functions with weak linkage there is a chance that the are 
+      // not needed. So in order to be discard the function AND the jumptable
+      // they keep them both in .text. This fix only works if we never discard
+      // weak functions. This is guaranteed because the bitcode linker already
+      // throws out unused ones.
+      // @LOCALMOD-END
+      false /* F->isWeakForLinker()  */) { // @LOCALMOD
     OutStreamer.SwitchSection(getObjFileLowering().SectionForGlobal(F,Mang,TM));
   } else {
     // Otherwise, drop it in the readonly section.
@@ -1879,4 +1889,3 @@ GCMetadataPrinter *AsmPrinter::GetOrCreateGCPrinter(GCStrategy *S) {
   report_fatal_error("no GCMetadataPrinter registered for GC: " + Twine(Name));
   return 0;
 }
-

@@ -25,10 +25,14 @@
 using namespace llvm;
 
 // Determine the platform we're running on
+// @LOCALMOD - This disables the JIT related inline asm code 
+//             from getting compiled into llvm-tools
+#if !defined(__native_client__)
 #if defined (__x86_64__) || defined (_M_AMD64) || defined (_M_X64)
 # define X86_64_JIT
 #elif defined(__i386__) || defined(i386) || defined(_M_IX86)
 # define X86_32_JIT
+#endif
 #endif
 
 void X86JITInfo::replaceMachineCodeForFunction(void *Old, void *New) {

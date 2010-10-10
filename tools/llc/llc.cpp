@@ -26,7 +26,9 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/FormattedStream.h"
 #include "llvm/Support/ManagedStatic.h"
+#if !defined(__native_client__)
 #include "llvm/Support/PluginLoader.h"
+#endif
 #include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/ToolOutputFile.h"
 #include "llvm/System/Host.h"

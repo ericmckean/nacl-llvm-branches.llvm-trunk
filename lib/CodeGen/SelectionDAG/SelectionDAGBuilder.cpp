@@ -5882,7 +5882,10 @@ void SelectionDAGBuilder::visitVAArg(const VAArgInst &I) {
   SDValue V = DAG.getVAArg(TLI.getValueType(I.getType()), getCurDebugLoc(),
                            getRoot(), getValue(I.getOperand(0)),
                            DAG.getSrcValue(I.getOperand(0)),
-                           TD.getABITypeAlignment(I.getType()));
+// @LOCALMOD-BEGIN
+                           TD.getCallFrameTypeAlignment(I.getType()));
+// @LOCALMOD-END
+
   setValue(&I, V);
   DAG.setRoot(V.getValue(1));
 }

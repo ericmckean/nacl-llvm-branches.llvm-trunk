@@ -310,7 +310,11 @@ namespace llvm {
       /// slots. This corresponds to the X86::FST32m / X86::FST64m. It takes a
       /// chain operand, value to store, address, and a ValueType to store it
       /// as.
-      FST
+      FST,
+
+      /// VAARG_64 - This instruction grabs the address of the next argument
+      /// from a va_list. (reads and modifies the va_list in memory)
+      VAARG_64
       
       // WARNING: Do not add anything in the end unless you want the node to
       // have memop! In fact, starting from ATOMADD64_DAG all opcodes will be
@@ -423,6 +427,7 @@ namespace llvm {
   //===--------------------------------------------------------------------===//
   //  X86TargetLowering - X86 Implementation of the TargetLowering interface
   class X86TargetLowering : public TargetLowering {
+
   public:
     explicit X86TargetLowering(X86TargetMachine &TM);
 
@@ -662,7 +667,7 @@ namespace llvm {
 
     /// X86StackPtr - X86 physical register used as stack ptr.
     unsigned X86StackPtr;
-   
+
     /// X86ScalarSSEf32, X86ScalarSSEf64 - Select between SSE or x87 
     /// floating point ops.
     /// When SSE is available, use it for f32 operations.
@@ -783,7 +788,7 @@ namespace llvm {
 
     // Utility functions to help LowerVECTOR_SHUFFLE
     SDValue LowerVECTOR_SHUFFLEv8i16(SDValue Op, SelectionDAG &DAG) const;
-
+    
     virtual SDValue
       LowerFormalArguments(SDValue Chain,
                            CallingConv::ID CallConv, bool isVarArg,
@@ -852,6 +857,11 @@ namespace llvm {
     MachineBasicBlock *EmitAtomicMinMaxWithCustomInserter(MachineInstr *BInstr,
                                                           MachineBasicBlock *BB,
                                                         unsigned cmovOpc) const;
+
+    // Utility function to emit the low-level va_arg code for X86-64.
+    MachineBasicBlock *EmitVAARG64WithCustomInserter(
+                       MachineInstr *MI,
+                       MachineBasicBlock *MBB) const;
 
     /// Utility function to emit the xmm reg save portion of va_start.
     MachineBasicBlock *EmitVAStartSaveXMMRegsWithCustomInserter(

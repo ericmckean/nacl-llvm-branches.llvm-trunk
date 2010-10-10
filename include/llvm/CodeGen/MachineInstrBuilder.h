@@ -122,6 +122,13 @@ public:
     return *this;
   }
 
+  const MachineInstrBuilder &setMemRefs(MachineInstr::mmo_iterator b,
+                                        MachineInstr::mmo_iterator e) const {
+    MI->setMemRefs(b, e);
+    return *this;
+  }
+
+
   const MachineInstrBuilder &addOperand(const MachineOperand &MO) const {
     MI->addOperand(MO);
     return *this;
@@ -135,6 +142,19 @@ public:
   const MachineInstrBuilder &addSym(MCSymbol *Sym) const {
     MI->addOperand(MachineOperand::CreateMCSymbol(Sym));
     return *this;
+  }
+
+  // Add a displacement from an existing MachineOperand with an added offset.
+  const MachineInstrBuilder &addDisp(const MachineOperand &Disp,
+                                     int64_t off) const {
+    switch (Disp.getType()) {
+      default:
+        assert (false && "addDisp not yet handling a displacement case");
+      case MachineOperand::MO_Immediate:
+        return this->addImm(Disp.getImm() + off);
+      case MachineOperand::MO_GlobalAddress:
+        return this->addGlobalAddress(Disp.getGlobal(), off);
+    }
   }
 };
 

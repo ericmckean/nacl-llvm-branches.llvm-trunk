@@ -245,87 +245,95 @@ X86InstrInfo::X86InstrInfo(X86TargetMachine &tm)
     MemOp2RegOpTable[MemOp] = std::make_pair(RegOp, AuxInfo);
   }
 
+  // NaCl needs indirect calls to go through a reg to align the target,
+  // so, skip Reg2Mem in some cases.
+  bool isNaCl = TM.getSubtarget<X86Subtarget>().isTargetNaCl();
+
   // If the third value is 1, then it's folding either a load or a store.
-  static const unsigned OpTbl0[][4] = {
-    { X86::BT16ri8,     X86::BT16mi8, 1, 0 },
-    { X86::BT32ri8,     X86::BT32mi8, 1, 0 },
-    { X86::BT64ri8,     X86::BT64mi8, 1, 0 },
-    { X86::CALL32r,     X86::CALL32m, 1, 0 },
-    { X86::CALL64r,     X86::CALL64m, 1, 0 },
-    { X86::WINCALL64r,  X86::WINCALL64m, 1, 0 },
-    { X86::CMP16ri,     X86::CMP16mi, 1, 0 },
-    { X86::CMP16ri8,    X86::CMP16mi8, 1, 0 },
-    { X86::CMP16rr,     X86::CMP16mr, 1, 0 },
-    { X86::CMP32ri,     X86::CMP32mi, 1, 0 },
-    { X86::CMP32ri8,    X86::CMP32mi8, 1, 0 },
-    { X86::CMP32rr,     X86::CMP32mr, 1, 0 },
-    { X86::CMP64ri32,   X86::CMP64mi32, 1, 0 },
-    { X86::CMP64ri8,    X86::CMP64mi8, 1, 0 },
-    { X86::CMP64rr,     X86::CMP64mr, 1, 0 },
-    { X86::CMP8ri,      X86::CMP8mi, 1, 0 },
-    { X86::CMP8rr,      X86::CMP8mr, 1, 0 },
-    { X86::DIV16r,      X86::DIV16m, 1, 0 },
-    { X86::DIV32r,      X86::DIV32m, 1, 0 },
-    { X86::DIV64r,      X86::DIV64m, 1, 0 },
-    { X86::DIV8r,       X86::DIV8m, 1, 0 },
-    { X86::EXTRACTPSrr, X86::EXTRACTPSmr, 0, 16 },
-    { X86::FsMOVAPDrr,  X86::MOVSDmr | TB_NOT_REVERSABLE , 0, 0 },
-    { X86::FsMOVAPSrr,  X86::MOVSSmr | TB_NOT_REVERSABLE , 0, 0 },
-    { X86::IDIV16r,     X86::IDIV16m, 1, 0 },
-    { X86::IDIV32r,     X86::IDIV32m, 1, 0 },
-    { X86::IDIV64r,     X86::IDIV64m, 1, 0 },
-    { X86::IDIV8r,      X86::IDIV8m, 1, 0 },
-    { X86::IMUL16r,     X86::IMUL16m, 1, 0 },
-    { X86::IMUL32r,     X86::IMUL32m, 1, 0 },
-    { X86::IMUL64r,     X86::IMUL64m, 1, 0 },
-    { X86::IMUL8r,      X86::IMUL8m, 1, 0 },
-    { X86::JMP32r,      X86::JMP32m, 1, 0 },
-    { X86::JMP64r,      X86::JMP64m, 1, 0 },
-    { X86::MOV16ri,     X86::MOV16mi, 0, 0 },
-    { X86::MOV16rr,     X86::MOV16mr, 0, 0 },
-    { X86::MOV32ri,     X86::MOV32mi, 0, 0 },
-    { X86::MOV32rr,     X86::MOV32mr, 0, 0 },
-    { X86::MOV32rr_TC,  X86::MOV32mr_TC, 0, 0 },
-    { X86::MOV64ri32,   X86::MOV64mi32, 0, 0 },
-    { X86::MOV64rr,     X86::MOV64mr, 0, 0 },
-    { X86::MOV8ri,      X86::MOV8mi, 0, 0 },
-    { X86::MOV8rr,      X86::MOV8mr, 0, 0 },
-    { X86::MOV8rr_NOREX, X86::MOV8mr_NOREX, 0, 0 },
-    { X86::MOVAPDrr,    X86::MOVAPDmr, 0, 16 },
-    { X86::MOVAPSrr,    X86::MOVAPSmr, 0, 16 },
-    { X86::MOVDQArr,    X86::MOVDQAmr, 0, 16 },
-    { X86::MOVPDI2DIrr, X86::MOVPDI2DImr, 0, 0 },
-    { X86::MOVPQIto64rr,X86::MOVPQI2QImr, 0, 0 },
-    { X86::MOVSDto64rr, X86::MOVSDto64mr, 0, 0 },
-    { X86::MOVSS2DIrr,  X86::MOVSS2DImr, 0, 0 },
-    { X86::MOVUPDrr,    X86::MOVUPDmr, 0, 0 },
-    { X86::MOVUPSrr,    X86::MOVUPSmr, 0, 0 },
-    { X86::MUL16r,      X86::MUL16m, 1, 0 },
-    { X86::MUL32r,      X86::MUL32m, 1, 0 },
-    { X86::MUL64r,      X86::MUL64m, 1, 0 },
-    { X86::MUL8r,       X86::MUL8m, 1, 0 },
-    { X86::SETAEr,      X86::SETAEm, 0, 0 },
-    { X86::SETAr,       X86::SETAm, 0, 0 },
-    { X86::SETBEr,      X86::SETBEm, 0, 0 },
-    { X86::SETBr,       X86::SETBm, 0, 0 },
-    { X86::SETEr,       X86::SETEm, 0, 0 },
-    { X86::SETGEr,      X86::SETGEm, 0, 0 },
-    { X86::SETGr,       X86::SETGm, 0, 0 },
-    { X86::SETLEr,      X86::SETLEm, 0, 0 },
-    { X86::SETLr,       X86::SETLm, 0, 0 },
-    { X86::SETNEr,      X86::SETNEm, 0, 0 },
-    { X86::SETNOr,      X86::SETNOm, 0, 0 },
-    { X86::SETNPr,      X86::SETNPm, 0, 0 },
-    { X86::SETNSr,      X86::SETNSm, 0, 0 },
-    { X86::SETOr,       X86::SETOm, 0, 0 },
-    { X86::SETPr,       X86::SETPm, 0, 0 },
-    { X86::SETSr,       X86::SETSm, 0, 0 },
-    { X86::TAILJMPr,    X86::TAILJMPm, 1, 0 },
-    { X86::TAILJMPr64,  X86::TAILJMPm64, 1, 0 },
-    { X86::TEST16ri,    X86::TEST16mi, 1, 0 },
-    { X86::TEST32ri,    X86::TEST32mi, 1, 0 },
-    { X86::TEST64ri32,  X86::TEST64mi32, 1, 0 },
-    { X86::TEST8ri,     X86::TEST8mi, 1, 0 }
+  // The fourth value is alignment.
+  // If the fifth value is true reg2mem is allowed.
+  // If the sixth value is true mem2reg is allowed.
+  static const unsigned OpTbl0[][6] = {
+    { X86::BT16ri8,       X86::BT16mi8,       1, 0,  true,    true },
+    { X86::BT32ri8,       X86::BT32mi8,       1, 0,  true,    true },
+    { X86::BT64ri8,       X86::BT64mi8,       1, 0,  true,    true },
+    { X86::CALL32r,       X86::CALL32m,       1, 0,  !isNaCl, true },
+    { X86::CALL64r,       X86::CALL64m,       1, 0,  !isNaCl, true },
+    { X86::WINCALL64r,    X86::WINCALL64m,    1, 0,  true,    true },
+    { X86::CMP16ri,       X86::CMP16mi,       1, 0,  true,    true },
+    { X86::CMP16ri8,      X86::CMP16mi8,      1, 0,  true,    true },
+    { X86::CMP16rr,       X86::CMP16mr,       1, 0,  true,    true },
+    { X86::CMP32ri,       X86::CMP32mi,       1, 0,  true,    true },
+    { X86::CMP32ri8,      X86::CMP32mi8,      1, 0,  true,    true },
+    { X86::CMP32rr,       X86::CMP32mr,       1, 0,  true,    true },
+    { X86::CMP64ri32,     X86::CMP64mi32,     1, 0,  true,    true },
+    { X86::CMP64ri8,      X86::CMP64mi8,      1, 0,  true,    true },
+    { X86::CMP64rr,       X86::CMP64mr,       1, 0,  true,    true },
+    { X86::CMP8ri,        X86::CMP8mi,        1, 0,  true,    true },
+    { X86::CMP8rr,        X86::CMP8mr,        1, 0,  true,    true },
+    { X86::DIV16r,        X86::DIV16m,        1, 0,  true,    true },
+    { X86::DIV32r,        X86::DIV32m,        1, 0,  true,    true },
+    { X86::DIV64r,        X86::DIV64m,        1, 0,  true,    true },
+    { X86::DIV8r,         X86::DIV8m,         1, 0,  true,    true },
+    { X86::EXTRACTPSrr,   X86::EXTRACTPSmr,   0, 16, true,    true },
+    { X86::FsMOVAPDrr,    X86::MOVSDmr | TB_NOT_REVERSABLE,       0, 0,  true,    false },
+    { X86::FsMOVAPSrr,    X86::MOVSSmr | TB_NOT_REVERSABLE,       0, 0,  true,    false },
+    { X86::IDIV16r,       X86::IDIV16m,       1, 0,  true,    true },
+    { X86::IDIV32r,       X86::IDIV32m,       1, 0,  true,    true },
+    { X86::IDIV64r,       X86::IDIV64m,       1, 0,  true,    true },
+    { X86::IDIV8r,        X86::IDIV8m,        1, 0,  true,    true },
+    { X86::IMUL16r,       X86::IMUL16m,       1, 0,  true,    true },
+    { X86::IMUL32r,       X86::IMUL32m,       1, 0,  true,    true },
+    { X86::IMUL64r,       X86::IMUL64m,       1, 0,  true,    true },
+    { X86::IMUL8r,        X86::IMUL8m,        1, 0,  true,    true },
+    { X86::JMP32r,        X86::JMP32m,        1, 0,  !isNaCl, true },
+    { X86::JMP64r,        X86::JMP64m,        1, 0,  !isNaCl, true },
+    { X86::MOV16ri,       X86::MOV16mi,       0, 0,  true,    true },
+    { X86::MOV16rr,       X86::MOV16mr,       0, 0,  true,    true },
+    { X86::MOV32ri,       X86::MOV32mi,       0, 0,  true,    true },
+    { X86::MOV32rr,       X86::MOV32mr,       0, 0,  true,    true },
+    { X86::MOV32rr_TC,    X86::MOV32mr_TC,    0, 0,  true,    true },
+    { X86::MOV32rr_TC_64, X86::MOV32mr_TC_64, 0, 0,  true,    true },//@LOCALMOD
+    { X86::MOV64ri32,     X86::MOV64mi32,     0, 0,  true,    true },
+    { X86::MOV64rr,       X86::MOV64mr,       0, 0,  true,    true },
+    { X86::MOV8ri,        X86::MOV8mi,        0, 0,  true,    true },
+    { X86::MOV8rr,        X86::MOV8mr,        0, 0,  true,    true },
+    { X86::MOV8rr_NOREX,  X86::MOV8mr_NOREX,  0, 0,  true,    true },
+    { X86::MOVAPDrr,      X86::MOVAPDmr,      0, 16, true,    true },
+    { X86::MOVAPSrr,      X86::MOVAPSmr,      0, 16, true,    true },
+    { X86::MOVDQArr,      X86::MOVDQAmr,      0, 16, true,    true },
+    { X86::MOVPDI2DIrr,   X86::MOVPDI2DImr,   0, 0,  true,    true },
+    { X86::MOVPQIto64rr,  X86::MOVPQI2QImr,   0, 0,  true,    true },
+    { X86::MOVSDto64rr,   X86::MOVSDto64mr,   0, 0,  true,    true },
+    { X86::MOVSS2DIrr,    X86::MOVSS2DImr,    0, 0,  true,    true },
+    { X86::MOVUPDrr,      X86::MOVUPDmr,      0, 0,  true,    true },
+    { X86::MOVUPSrr,      X86::MOVUPSmr,      0, 0,  true,    true },
+    { X86::MUL16r,        X86::MUL16m,        1, 0,  true,    true },
+    { X86::MUL32r,        X86::MUL32m,        1, 0,  true,    true },
+    { X86::MUL64r,        X86::MUL64m,        1, 0,  true,    true },
+    { X86::MUL8r,         X86::MUL8m,         1, 0,  true,    true },
+    { X86::SETAEr,        X86::SETAEm,        0, 0,  true,    true },
+    { X86::SETAr,         X86::SETAm,         0, 0,  true,    true },
+    { X86::SETBEr,        X86::SETBEm,        0, 0,  true,    true },
+    { X86::SETBr,         X86::SETBm,         0, 0,  true,    true },
+    { X86::SETEr,         X86::SETEm,         0, 0,  true,    true },
+    { X86::SETGEr,        X86::SETGEm,        0, 0,  true,    true },
+    { X86::SETGr,         X86::SETGm,         0, 0,  true,    true },
+    { X86::SETLEr,        X86::SETLEm,        0, 0,  true,    true },
+    { X86::SETLr,         X86::SETLm,         0, 0,  true,    true },
+    { X86::SETNEr,        X86::SETNEm,        0, 0,  true,    true },
+    { X86::SETNOr,        X86::SETNOm,        0, 0,  true,    true },
+    { X86::SETNPr,        X86::SETNPm,        0, 0,  true,    true },
+    { X86::SETNSr,        X86::SETNSm,        0, 0,  true,    true },
+    { X86::SETOr,         X86::SETOm,         0, 0,  true,    true },
+    { X86::SETPr,         X86::SETPm,         0, 0,  true,    true },
+    { X86::SETSr,         X86::SETSm,         0, 0,  true,    true },
+    { X86::TAILJMPr,      X86::TAILJMPm,      1, 0,  !isNaCl, true },
+    { X86::TAILJMPr64,    X86::TAILJMPm64,    1, 0,  !isNaCl, true },
+    { X86::TEST16ri,      X86::TEST16mi,      1, 0,  true,    true },
+    { X86::TEST32ri,      X86::TEST32mi,      1, 0,  true,    true },
+    { X86::TEST64ri32,    X86::TEST64mi32,    1, 0,  true,    true },
+    { X86::TEST8ri,       X86::TEST8mi,       1, 0,  true,    true }
   };
 
   for (unsigned i = 0, e = array_lengthof(OpTbl0); i != e; ++i) {
@@ -333,8 +341,12 @@ X86InstrInfo::X86InstrInfo(X86TargetMachine &tm)
     unsigned MemOp      = OpTbl0[i][1] & ~TB_FLAGS;
     unsigned FoldedLoad = OpTbl0[i][2];
     unsigned Align      = OpTbl0[i][3];
+    unsigned AllowReg2Mem = OpTbl0[i][4];
+    unsigned AllowMem2Reg = OpTbl0[i][5];
+
     assert(!RegOp2MemOpTable0.count(RegOp) && "Duplicated entries?");
-    RegOp2MemOpTable0[RegOp] = std::make_pair(MemOp, Align);
+    if (AllowReg2Mem)
+      RegOp2MemOpTable0[RegOp] = std::make_pair(MemOp, Align);
     
     // If this is not a reversable operation (because there is a many->one)
     // mapping, don't insert the reverse of the operation into MemOp2RegOpTable.
@@ -401,6 +413,7 @@ X86InstrInfo::X86InstrInfo(X86TargetMachine &tm)
     { X86::MOV16rr,         X86::MOV16rm, 0 },
     { X86::MOV32rr,         X86::MOV32rm, 0 },
     { X86::MOV32rr_TC,      X86::MOV32rm_TC, 0 },
+    { X86::MOV32rr_TC_64,   X86::MOV32rm_TC_64, 0 }, // @LOCALMOD
     { X86::MOV64rr,         X86::MOV64rm, 0 },
     { X86::MOV64toPQIrr,    X86::MOVQI2PQIrm, 0 },
     { X86::MOV64toSDrr,     X86::MOV64toSDrm, 0 },
@@ -2014,6 +2027,7 @@ void X86InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
 
   DEBUG(dbgs() << "Cannot copy " << RI.getName(SrcReg)
                << " to " << RI.getName(DestReg) << '\n');
+  MBB.dump();
   llvm_unreachable("Cannot emit physreg copy instruction");
 }
 
@@ -2068,6 +2082,8 @@ static unsigned getLoadStoreRegOpcode(unsigned Reg,
     return load ? X86::MOV64rm_TC : X86::MOV64mr_TC;
   case X86::GR32_TCRegClassID:
     return load ? X86::MOV32rm_TC : X86::MOV32mr_TC;
+  case X86::GR32_TC_64RegClassID:
+    return load ? X86::MOV32rm_TC_64 : X86::MOV32mr_TC_64;
   case X86::RFP80RegClassID:
     return load ? X86::LD_Fp80m : X86::ST_FpP80m;
   case X86::RFP64RegClassID:
