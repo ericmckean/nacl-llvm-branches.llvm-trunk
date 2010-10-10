@@ -17,8 +17,11 @@
 #include "llvm/MC/MCCodeEmitter.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
+#include "llvm/ADT/Statistic.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace llvm;
+
+STATISTIC(MCNumEmitted, "Number of MC instructions emitted");
 
 namespace {
 class ARMMCCodeEmitter : public MCCodeEmitter {
@@ -31,10 +34,20 @@ class ARMMCCodeEmitter : public MCCodeEmitter {
 public:
   ARMMCCodeEmitter(TargetMachine &tm, MCContext &ctx)
     : TM(tm), TII(*TM.getInstrInfo()), Ctx(ctx) {
-    assert(0 && "ARMMCCodeEmitter::ARMMCCodeEmitter() not yet implemented.");
   }
 
   ~ARMMCCodeEmitter() {}
+
+  // getBinaryCodeForInstr - TableGen'erated function for getting the
+  // binary encoding for an instruction.
+  unsigned getBinaryCodeForInstr(const MCInst &MI) const;
+
+  /// getMachineOpValue - Return binary encoding of operand. If the machine
+  /// operand requires relocation, record the relocation and return zero.
+  unsigned getMachineOpValue(const MCInst &MI,const MCOperand &MO) const;
+  unsigned getMachineOpValue(const MCInst &MI, unsigned OpIdx) const {
+    return getMachineOpValue(MI, MI.getOperand(OpIdx));
+  }
 
   unsigned getNumFixupKinds() const {
     assert(0 && "ARMMCCodeEmitter::getNumFixupKinds() not yet implemented.");
@@ -75,10 +88,6 @@ public:
 
   void EncodeInstruction(const MCInst &MI, raw_ostream &OS,
                          SmallVectorImpl<MCFixup> &Fixups) const;
-
-  void EmitOpcodePrefix(uint64_t TSFlags, unsigned &CurByte, int MemOperand,
-                        const MCInst &MI, const TargetInstrDesc &Desc,
-                        raw_ostream &OS) const;
 };
 
 } // end anonymous namespace
@@ -97,19 +106,54 @@ EmitImmediate(const MCOperand &DispOp, unsigned Size, MCFixupKind FixupKind,
   assert(0 && "ARMMCCodeEmitter::EmitImmediate() not yet implemented.");
 }
 
-/// EmitOpcodePrefix - Emit all instruction prefixes prior to the opcode.
-///
-/// MemOperand is the operand # of the start of a memory operand if present.  If
-/// Not present, it is -1.
-void ARMMCCodeEmitter::EmitOpcodePrefix(uint64_t TSFlags, unsigned &CurByte,
-                                        int MemOperand, const MCInst &MI,
-                                        const TargetInstrDesc &Desc,
-                                        raw_ostream &OS) const {
-  assert(0 && "ARMMCCodeEmitter::EmitOpcodePrefix() not yet implemented.");
+/// getMachineOpValue - Return binary encoding of operand. If the machine
+/// operand requires relocation, record the relocation and return zero.
+unsigned ARMMCCodeEmitter::getMachineOpValue(const MCInst &MI,
+                                             const MCOperand &MO) const {
+  if (MO.isReg())
+    // FIXME: Should shifted register stuff be handled as part of this? Maybe.
+    return getARMRegisterNumbering(MO.getReg());
+  else if (MO.isImm())
+    // FIXME: This is insufficient. Shifted immediates and all that... (blech).
+    return static_cast<unsigned>(MO.getImm());
+  else {
+#ifndef NDEBUG
+    errs() << MO;
+#endif
+    llvm_unreachable(0);
+  }
+  return 0;
 }
 
 void ARMMCCodeEmitter::
 EncodeInstruction(const MCInst &MI, raw_ostream &OS,
                   SmallVectorImpl<MCFixup> &Fixups) const {
-  assert(0 && "ARMMCCodeEmitter::EncodeInstruction() not yet implemented.");
+  unsigned Opcode = MI.getOpcode();
+  const TargetInstrDesc &Desc = TII.get(Opcode);
+  uint64_t TSFlags = Desc.TSFlags;
+  // Keep track of the current byte being emitted.
+  unsigned CurByte = 0;
+
+  // Pseudo instructions don't get encoded.
+  if ((TSFlags & ARMII::FormMask) == ARMII::Pseudo)
+    return;
+
+  ++MCNumEmitted;  // Keep track of the # of mi's emitted
+  switch (Opcode) {
+  //FIXME: Any non-pseudos that need special handling, if there are any...
+  default: {
+    unsigned Value = getBinaryCodeForInstr(MI);
+    EmitConstant(Value, 4, CurByte, OS);
+    break;
+  }
+  }
 }
+
+// FIXME: These #defines shouldn't be necessary. Instead, tblgen should
+// be able to generate code emitter helpers for either variant, like it
+// does for the AsmWriter.
+#define ARMCodeEmitter ARMMCCodeEmitter
+#define MachineInstr MCInst
+#include "ARMGenCodeEmitter.inc"
+#undef ARMCodeEmitter
+#undef MachineInstr
