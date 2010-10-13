@@ -1910,8 +1910,9 @@ Classifications</a> </div>
   &lt; &lt;# elements&gt; x &lt;elementtype&gt; &gt;
 </pre>
 
-<p>The number of elements is a constant integer value; elementtype may be any
-   integer or floating point type.</p>
+<p>The number of elements is a constant integer value larger than 0; elementtype
+   may be any integer or floating point type.  Vectors of size zero are not
+   allowed, and pointers are not allowed as the element type.</p>
 
 <h5>Examples:</h5>
 <table class="layout">
@@ -7717,7 +7718,7 @@ LLVM</a>.</p>
 
   <a href="mailto:sabre@nondot.org">Chris Lattner</a><br>
   <a href="http://llvm.org">The LLVM Compiler Infrastructure</a><br>
-  Last modified: $Date: 2010-09-30 18:07:02 -0700 (Thu, 30 Sep 2010) $
+  Last modified: $Date: 2010-10-10 11:20:35 -0700 (Sun, 10 Oct 2010) $
 </address>
 
 </body>

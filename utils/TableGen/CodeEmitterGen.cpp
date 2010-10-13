@@ -128,7 +128,7 @@ void CodeEmitterGen::run(raw_ostream &o) {
 
     // Loop over all of the fields in the instruction, determining which are the
     // operands to the instruction.
-    unsigned op = 0;
+    unsigned NumberedOp = 0;
     for (unsigned i = 0, e = Vals.size(); i != e; ++i) {
       if (!Vals[i].getPrefix() && !Vals[i].getValue()->isComplete()) {
         // Is the operand continuous? If so, we can just mask and OR it in
@@ -154,14 +154,42 @@ void CodeEmitterGen::run(raw_ostream &o) {
             }
 
             if (!gotOp) {
-              /// If this operand is not supposed to be emitted by the generated
-              /// emitter, skip it.
-              while (CGI.isFlatOperandNotEmitted(op))
-                ++op;
+              // If the operand matches by name, reference according to that
+              // operand number. Non-matching operands are assumed to be in
+              // order.
+              unsigned OpIdx;
+              if (CGI.hasOperandNamed(VarName, OpIdx)) {
+                // Get the machine operand number for the indicated operand.
+                OpIdx = CGI.OperandList[OpIdx].MIOperandNo;
+                assert (!CGI.isFlatOperandNotEmitted(OpIdx) &&
+                        "Explicitly used operand also marked as not emitted!");
+              } else {
+                /// If this operand is not supposed to be emitted by the
+                /// generated emitter, skip it.
+                while (CGI.isFlatOperandNotEmitted(NumberedOp))
+                  ++NumberedOp;
+                OpIdx = NumberedOp++;
+              }
+              std::pair<unsigned, unsigned> SO = CGI.getSubOperandNumber(OpIdx);
+              std::string &EncoderMethodName =
+                CGI.OperandList[SO.first].EncoderMethodName;
 
-              Case += "      // op: " + VarName + "\n"
-                   +  "      op = getMachineOpValue(MI, MI.getOperand("
-                   +  utostr(op++) + "));\n";
+              // If the source operand has a custom encoder, use it. This will
+              // get the encoding for all of the suboperands.
+              if (!EncoderMethodName.empty()) {
+                // A custom encoder has all of the information for the
+                // sub-operands, if there are more than one, so only
+                // query the encoder once per source operand.
+                if (SO.second == 0) {
+                  Case += "      // op: " + VarName + "\n"
+                       + "      op = " + EncoderMethodName + "(MI, "
+                       + utostr(OpIdx) + ");\n";
+                }
+              } else {
+                Case += "      // op: " + VarName + "\n"
+                     +  "      op = getMachineOpValue(MI, MI.getOperand("
+                     +  utostr(OpIdx) + "));\n";
+              }
               gotOp = true;
             }
 

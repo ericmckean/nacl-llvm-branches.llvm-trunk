@@ -78,6 +78,10 @@ namespace llvm {
       /// the asmprinter.
       std::string PrinterMethodName;
 
+      /// EncoderMethodName - The method used to get the machine operand value
+      /// for binary encoding. "getMachineOpValue" by default.
+      std::string EncoderMethodName;
+
       /// MIOperandNo - Currently (this is meant to be phased out), some logical
       /// operands correspond to multiple MachineInstr operands.  In the X86
       /// target for example, one address operand is represented as 4
@@ -101,9 +105,10 @@ namespace llvm {
       std::vector<ConstraintInfo> Constraints;
 
       OperandInfo(Record *R, const std::string &N, const std::string &PMN,
-                  unsigned MION, unsigned MINO, DagInit *MIOI)
-        : Rec(R), Name(N), PrinterMethodName(PMN), MIOperandNo(MION),
-          MINumOperands(MINO), MIOperandInfo(MIOI) {}
+                  const std::string &EMN, unsigned MION, unsigned MINO,
+                  DagInit *MIOI)
+        : Rec(R), Name(N), PrinterMethodName(PMN), EncoderMethodName(EMN),
+          MIOperandNo(MION), MINumOperands(MINO), MIOperandInfo(MIOI) {}
     };
 
     /// NumDefs - Number of def operands declared, this is the number of
@@ -185,6 +190,11 @@ namespace llvm {
     /// non-empty name.  If the instruction does not have an operand with the
     /// specified name, throw an exception.
     unsigned getOperandNamed(const std::string &Name) const;
+
+    /// hasOperandNamed - Query whether the instruction has an operand of the
+    /// given name. If so, return true and set OpIdx to the index of the
+    /// operand. Otherwise, return false.
+    bool hasOperandNamed(const std::string &Name, unsigned &OpIdx) const;
 
     /// HasOneImplicitDefWithKnownVT - If the instruction has at least one
     /// implicit def and it has a known VT, return the VT, otherwise return
