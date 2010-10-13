@@ -240,24 +240,6 @@ def i32mem_TC_64 : Operand<i32> {
   let ParserMatchClass = X86MemAsmOperand;
 }
 
-/// Versions of MOV32rr, MOV32rm, and MOV32mr for i32mem_TC_64 and GR32_TC_64.
-let neverHasSideEffects = 1 in
-def MOV32rr_TC_64 : I<0x89, MRMDestReg, (outs GR32_TC_64:$dst),
-                    (ins GR32_TC_64:$src),
-                    "mov{l}\t{$src, $dst|$dst, $src}", []>;
-
-let mayLoad = 1, canFoldAsLoad = 1, isReMaterializable = 1 in
-def MOV32rm_TC_64 : I<0x8B, MRMSrcMem, (outs GR32_TC_64:$dst),
-                    (ins i32mem_TC_64:$src),
-                    "mov{l}\t{$src, $dst|$dst, $src}",
-                    []>;
-
-let mayStore = 1 in
-def MOV32mr_TC_64 : I<0x89, MRMDestMem, (outs),
-                    (ins i32mem_TC_64:$dst, GR32_TC_64:$src),
-                    "mov{l}\t{$src, $dst|$dst, $src}",
-                    []>;
-
 let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
   def NACL_JMP64r     : I<0, Pseudo, (outs), (ins GR32:$dst),
                         "nacljmp\t$dst, %r15",
