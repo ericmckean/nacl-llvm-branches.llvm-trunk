@@ -313,6 +313,7 @@ def shift_imm : Operand<i32> {
 def so_reg : Operand<i32>,    // reg reg imm
              ComplexPattern<i32, 3, "SelectShifterOperandReg",
                             [shl,srl,sra,rotr]> {
+  string EncoderMethod = "getSORegOpValue";
   let PrintMethod = "printSORegOperand";
   let MIOperandInfo = (ops GPR, GPR, i32imm);
 }
@@ -323,6 +324,7 @@ def so_reg : Operand<i32>,    // reg reg imm
 // into so_imm instructions: the 8-bit immediate is the least significant bits
 // [bits 0-7], the 4-bit shift amount is the next 4 bits [bits 8-11].
 def so_imm : Operand<i32>, PatLeaf<(imm), [{ return Pred_so_imm(N); }]> {
+  string EncoderMethod = "getSOImmOpValue";
   let PrintMethod = "printSOImmOperand";
 }
 
@@ -476,31 +478,41 @@ multiclass AsI1_bin_irs<bits<4> opcod, string opc,
   // The register-immediate version is re-materializable. This is useful
   // in particular for taking the address of a local.
   let isReMaterializable = 1 in {
-  def ri : AsI1<opcod, (outs GPR:$dst), (ins GPR:$a, so_imm:$b), DPFrm,
-               iii, opc, "\t$dst, $a, $b",
-               [(set GPR:$dst, (opnode GPR:$a, so_imm:$b))]> {
+  def ri : AsI1<opcod, (outs GPR:$Rd), (ins GPR:$Rn, so_imm:$imm), DPFrm,
+               iii, opc, "\t$Rd, $Rn, $imm",
+               [(set GPR:$Rd, (opnode GPR:$Rn, so_imm:$imm))]> {
+    bits<4> Rd;
+    bits<4> Rn;
+    bits<12> imm;
     let Inst{25} = 1;
+    let Inst{15-12} = Rd;
+    let Inst{19-16} = Rn;
+    let Inst{11-0} = imm;
   }
   }
-  def rr : AsI1<opcod, (outs GPR:$dst), (ins GPR:$a, GPR:$b), DPFrm,
-               iir, opc, "\t$dst, $a, $b",
-               [(set GPR:$dst, (opnode GPR:$a, GPR:$b))]> {
+  def rr : AsI1<opcod, (outs GPR:$Rd), (ins GPR:$Rn, GPR:$Rm), DPFrm,
+               iir, opc, "\t$Rd, $Rn, $Rm",
+               [(set GPR:$Rd, (opnode GPR:$Rn, GPR:$Rm))]> {
     bits<4> Rd;
     bits<4> Rn;
     bits<4> Rm;
-    bits<4> Cond;
     let Inst{11-4} = 0b00000000;
     let Inst{25} = 0;
     let isCommutable = Commutable;
     let Inst{3-0} = Rm;
     let Inst{15-12} = Rd;
     let Inst{19-16} = Rn;
-    let Inst{31-28} = Cond;
   }
-  def rs : AsI1<opcod, (outs GPR:$dst), (ins GPR:$a, so_reg:$b), DPSoRegFrm,
-               iis, opc, "\t$dst, $a, $b",
-               [(set GPR:$dst, (opnode GPR:$a, so_reg:$b))]> {
+  def rs : AsI1<opcod, (outs GPR:$Rd), (ins GPR:$Rn, so_reg:$shift), DPSoRegFrm,
+               iis, opc, "\t$Rd, $Rn, $shift",
+               [(set GPR:$Rd, (opnode GPR:$Rn, so_reg:$shift))]> {
+    bits<4> Rd;
+    bits<4> Rn;
+    bits<12> shift;
     let Inst{25} = 0;
+    let Inst{11-0} = shift;
+    let Inst{15-12} = Rd;
+    let Inst{19-16} = Rn;
   }
 }
 
@@ -510,25 +522,43 @@ let Defs = [CPSR] in {
 multiclass AI1_bin_s_irs<bits<4> opcod, string opc,
                      InstrItinClass iii, InstrItinClass iir, InstrItinClass iis,
                          PatFrag opnode, bit Commutable = 0> {
-  def ri : AI1<opcod, (outs GPR:$dst), (ins GPR:$a, so_imm:$b), DPFrm,
-               iii, opc, "\t$dst, $a, $b",
-               [(set GPR:$dst, (opnode GPR:$a, so_imm:$b))]> {
-    let Inst{20} = 1;
+  def ri : AI1<opcod, (outs GPR:$Rd), (ins GPR:$Rn, so_imm:$imm), DPFrm,
+               iii, opc, "\t$Rd, $Rn, $imm",
+               [(set GPR:$Rd, (opnode GPR:$Rn, so_imm:$imm))]> {
+    bits<4> Rd;
+    bits<4> Rn;
+    bits<12> imm;
     let Inst{25} = 1;
+    let Inst{15-12} = Rd;
+    let Inst{19-16} = Rn;
+    let Inst{11-0} = imm;
+    let Inst{20} = 1;
   }
-  def rr : AI1<opcod, (outs GPR:$dst), (ins GPR:$a, GPR:$b), DPFrm,
-               iir, opc, "\t$dst, $a, $b",
-               [(set GPR:$dst, (opnode GPR:$a, GPR:$b))]> {
-    let isCommutable = Commutable;
+  def rr : AI1<opcod, (outs GPR:$Rd), (ins GPR:$Rn, GPR:$Rm), DPFrm,
+               iir, opc, "\t$Rd, $Rn, $Rm",
+               [(set GPR:$Rd, (opnode GPR:$Rn, GPR:$Rm))]> {
+    bits<4> Rd;
+    bits<4> Rn;
+    bits<4> Rm;
     let Inst{11-4} = 0b00000000;
-    let Inst{20} = 1;
     let Inst{25} = 0;
+    let isCommutable = Commutable;
+    let Inst{3-0} = Rm;
+    let Inst{15-12} = Rd;
+    let Inst{19-16} = Rn;
+    let Inst{20} = 1;
   }
-  def rs : AI1<opcod, (outs GPR:$dst), (ins GPR:$a, so_reg:$b), DPSoRegFrm,
-               iis, opc, "\t$dst, $a, $b",
-               [(set GPR:$dst, (opnode GPR:$a, so_reg:$b))]> {
-    let Inst{20} = 1;
+  def rs : AI1<opcod, (outs GPR:$Rd), (ins GPR:$Rn, so_reg:$shift), DPSoRegFrm,
+               iis, opc, "\t$Rd, $Rn, $shift",
+               [(set GPR:$Rd, (opnode GPR:$Rn, so_reg:$shift))]> {
+    bits<4> Rd;
+    bits<4> Rn;
+    bits<12> shift;
     let Inst{25} = 0;
+    let Inst{11-0} = shift;
+    let Inst{15-12} = Rd;
+    let Inst{19-16} = Rn;
+    let Inst{20} = 1;
   }
 }
 }
@@ -540,25 +570,44 @@ let isCompare = 1, Defs = [CPSR] in {
 multiclass AI1_cmp_irs<bits<4> opcod, string opc,
                      InstrItinClass iii, InstrItinClass iir, InstrItinClass iis,
                        PatFrag opnode, bit Commutable = 0> {
-  def ri : AI1<opcod, (outs), (ins GPR:$a, so_imm:$b), DPFrm, iii,
-               opc, "\t$a, $b",
-               [(opnode GPR:$a, so_imm:$b)]> {
-    let Inst{20} = 1;
+  def ri : AI1<opcod, (outs), (ins GPR:$Rn, so_imm:$imm), DPFrm, iii,
+               opc, "\t$Rn, $imm",
+               [(opnode GPR:$Rn, so_imm:$imm)]> {
+    bits<4> Rd;
+    bits<4> Rn;
+    bits<12> imm;
     let Inst{25} = 1;
-  }
-  def rr : AI1<opcod, (outs), (ins GPR:$a, GPR:$b), DPFrm, iir,
-               opc, "\t$a, $b",
-               [(opnode GPR:$a, GPR:$b)]> {
-    let Inst{11-4} = 0b00000000;
+    let Inst{15-12} = Rd;
+    let Inst{19-16} = Rn;
+    let Inst{11-0} = imm;
     let Inst{20} = 1;
+    let Inst{20} = 1;
+  }
+  def rr : AI1<opcod, (outs), (ins GPR:$Rn, GPR:$Rm), DPFrm, iir,
+               opc, "\t$Rn, $Rm",
+               [(opnode GPR:$Rn, GPR:$Rm)]> {
+    bits<4> Rd;
+    bits<4> Rn;
+    bits<4> Rm;
+    let Inst{11-4} = 0b00000000;
     let Inst{25} = 0;
     let isCommutable = Commutable;
-  }
-  def rs : AI1<opcod, (outs), (ins GPR:$a, so_reg:$b), DPSoRegFrm, iis,
-               opc, "\t$a, $b",
-               [(opnode GPR:$a, so_reg:$b)]> {
+    let Inst{3-0} = Rm;
+    let Inst{15-12} = Rd;
+    let Inst{19-16} = Rn;
     let Inst{20} = 1;
+  }
+  def rs : AI1<opcod, (outs), (ins GPR:$Rn, so_reg:$shift), DPSoRegFrm, iis,
+               opc, "\t$Rn, $shift",
+               [(opnode GPR:$Rn, so_reg:$shift)]> {
+    bits<4> Rd;
+    bits<4> Rn;
+    bits<12> shift;
     let Inst{25} = 0;
+    let Inst{11-0} = shift;
+    let Inst{15-12} = Rd;
+    let Inst{19-16} = Rn;
+    let Inst{20} = 1;
   }
 }
 }
@@ -966,24 +1015,20 @@ let isReturn = 1, isTerminator = 1, isBarrier = 1 in {
   def BX_RET : AI<(outs), (ins), BrMiscFrm, IIC_Br,
                   "bx", "\tlr", [(ARMretflag)]>,
                Requires<[IsARM, HasV4T]> {
-    bits<4> Cond;
     let Inst{3-0}   = 0b1110;
     let Inst{7-4}   = 0b0001;
     let Inst{19-8}  = 0b111111111111;
     let Inst{27-20} = 0b00010010;
-    let Inst{31-28} = Cond;
   }
 
   // ARMV4 only
   def MOVPCLR : AI<(outs), (ins), BrMiscFrm, IIC_Br, 
                   "mov", "\tpc, lr", [(ARMretflag)]>,
                Requires<[IsARM, NoV4T]> {
-    bits<4> Cond;
     let Inst{11-0}  = 0b000000001110;
     let Inst{15-12} = 0b1111;
     let Inst{19-16} = 0b0000;
     let Inst{27-20} = 0b00011010;
-    let Inst{31-28} = Cond;
   }
 }
 
@@ -993,27 +1038,25 @@ let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
   def BRIND : AXI<(outs), (ins GPR:$dst), BrMiscFrm, IIC_Br, "bx\t$dst",
                   [(brind GPR:$dst)]>,
               Requires<[IsARM, HasV4T]> {
-    bits<4> Rm;
-
+    bits<4> dst;
     let Inst{7-4}   = 0b0001;
     let Inst{19-8}  = 0b111111111111;
     let Inst{27-20} = 0b00010010;
     let Inst{31-28} = 0b1110;
-    let Inst{3-0}   = Rm;
+    let Inst{3-0}   = dst;
   }
 
   // ARMV4 only
   def MOVPCRX : AXI<(outs), (ins GPR:$dst), BrMiscFrm, IIC_Br, "mov\tpc, $dst",
                   [(brind GPR:$dst)]>,
               Requires<[IsARM, NoV4T]> {
-    bits<4> Rm;
-
+    bits<4> dst;
     let Inst{11-4}  = 0b00000000;
     let Inst{15-12} = 0b1111;
     let Inst{19-16} = 0b0000;
     let Inst{27-20} = 0b00011010;
     let Inst{31-28} = 0b1110;
-    let Inst{3-0}   = Rm;
+    let Inst{3-0}   = dst;
   }
 }
 
@@ -1050,11 +1093,11 @@ let isCall = 1,
                 IIC_Br, "blx\t$func",
                 [(ARMcall GPR:$func)]>,
             Requires<[IsARM, HasV5T, IsNotDarwin]> {
-    bits<4> Rm;
+    bits<4> func;
     let Inst{7-4}   = 0b0011;
     let Inst{19-8}  = 0b111111111111;
     let Inst{27-20} = 0b00010010;
-    let Inst{3-0}   = Rm;
+    let Inst{3-0}   = func;
   }
 
   // ARMv4T
@@ -1562,8 +1605,8 @@ def STM_UPD : AXI4st<(outs GPR:$wb), (ins addrmode4:$addr, pred:$p,
 //
 
 let neverHasSideEffects = 1 in
-def MOVr : AsI1<0b1101, (outs GPR:$dst), (ins GPR:$src), DPFrm, IIC_iMOVr,
-                "mov", "\t$dst, $src", []>, UnaryDP {
+def MOVr : AsI1<0b1101, (outs GPR:$Rd), (ins GPR:$Rm), DPFrm, IIC_iMOVr,
+                "mov", "\t$Rd, $Rm", []>, UnaryDP {
   bits<4> Rd;
   bits<4> Rm;
 
@@ -1575,8 +1618,8 @@ def MOVr : AsI1<0b1101, (outs GPR:$dst), (ins GPR:$src), DPFrm, IIC_iMOVr,
 
 // A version for the smaller set of tail call registers.
 let neverHasSideEffects = 1 in
-def MOVr_TC : AsI1<0b1101, (outs tcGPR:$dst), (ins tcGPR:$src), DPFrm, 
-                IIC_iMOVr, "mov", "\t$dst, $src", []>, UnaryDP {
+def MOVr_TC : AsI1<0b1101, (outs tcGPR:$Rd), (ins tcGPR:$Rm), DPFrm, 
+                IIC_iMOVr, "mov", "\t$Rd, $Rm", []>, UnaryDP {
   bits<4> Rd;
   bits<4> Rm;
 
@@ -1586,16 +1629,21 @@ def MOVr_TC : AsI1<0b1101, (outs tcGPR:$dst), (ins tcGPR:$src), DPFrm,
   let Inst{15-12} = Rd;
 }
 
-def MOVs : AsI1<0b1101, (outs GPR:$dst), (ins so_reg:$src),
+def MOVs : AsI1<0b1101, (outs GPR:$Rd), (ins so_reg:$src),
                 DPSoRegFrm, IIC_iMOVsr,
-                "mov", "\t$dst, $src", [(set GPR:$dst, so_reg:$src)]>, UnaryDP {
+                "mov", "\t$Rd, $src", [(set GPR:$Rd, so_reg:$src)]>, UnaryDP {
   let Inst{25} = 0;
 }
 
 let isReMaterializable = 1, isAsCheapAsAMove = 1 in
-def MOVi : AsI1<0b1101, (outs GPR:$dst), (ins so_imm:$src), DPFrm, IIC_iMOVi,
-                "mov", "\t$dst, $src", [(set GPR:$dst, so_imm:$src)]>, UnaryDP {
+def MOVi : AsI1<0b1101, (outs GPR:$Rd), (ins so_imm:$imm), DPFrm, IIC_iMOVi,
+                "mov", "\t$Rd, $imm", [(set GPR:$Rd, so_imm:$imm)]>, UnaryDP {
+  bits<4> Rd;
+  bits<12> imm;
   let Inst{25} = 1;
+  let Inst{15-12} = Rd;
+  let Inst{19-16} = 0b0000;
+  let Inst{11-0} = imm;
 }
 
 let isReMaterializable = 1, isAsCheapAsAMove = 1 in
@@ -2503,10 +2551,17 @@ def BCCZi64 : PseudoInst<(outs),
 //        the normal MOV instructions. That would fix the dependency on
 //        special casing them in tblgen.
 let neverHasSideEffects = 1 in {
-def MOVCCr : AI1<0b1101, (outs GPR:$dst), (ins GPR:$false, GPR:$true), DPFrm,
-                IIC_iCMOVr, "mov", "\t$dst, $true",
-      [/*(set GPR:$dst, (ARMcmov GPR:$false, GPR:$true, imm:$cc, CCR:$ccr))*/]>,
-                RegConstraint<"$false = $dst">, UnaryDP {
+def MOVCCr : AI1<0b1101, (outs GPR:$Rd), (ins GPR:$false, GPR:$Rm), DPFrm,
+                IIC_iCMOVr, "mov", "\t$Rd, $Rm",
+      [/*(set GPR:$Rd, (ARMcmov GPR:$false, GPR:$Rm, imm:$cc, CCR:$ccr))*/]>,
+                RegConstraint<"$false = $Rd">, UnaryDP {
+  bits<4> Rd;
+  bits<4> Rm;
+
+  let Inst{11-4} = 0b00000000;
+  let Inst{25} = 0;
+  let Inst{3-0} = Rm;
+  let Inst{15-12} = Rd;
   let Inst{11-4} = 0b00000000;
   let Inst{25} = 0;
 }

@@ -138,60 +138,166 @@ def VSTMS_UPD : AXSI4<(outs GPR:$wb), (ins addrmode4:$addr, pred:$p,
 
 // FLDMX, FSTMX - mixing S/D registers for pre-armv6 cores
 
+
+// FIXME: Can these be placed into the base class?
+class ADbI_Encode<bits<5> opcod1, bits<2> opcod2, bit op6, bit op4, dag oops,
+                  dag iops, InstrItinClass itin, string opc, string asm,
+                  list<dag> pattern>
+  : ADbI<opcod1, opcod2, op6, op4, oops, iops, itin, opc, asm, pattern> {
+  // Instruction operands.
+  bits<5> Dd;
+  bits<5> Dn;
+  bits<5> Dm;
+
+  // Encode instruction operands.
+  let Inst{3-0}   = Dm{3-0};
+  let Inst{5}     = Dm{4};
+  let Inst{19-16} = Dn{3-0};
+  let Inst{7}     = Dn{4};
+  let Inst{15-12} = Dd{3-0};
+  let Inst{22}    = Dd{4};
+}
+
+class ADuI_Encode<bits<5> opcod1, bits<2> opcod2, bits<4> opcod3,
+                  bits<2> opcod4, bit opcod5, dag oops, dag iops,
+                  InstrItinClass itin, string opc, string asm,
+                  list<dag> pattern>
+  : ADuI<opcod1, opcod2, opcod3, opcod4, opcod5, oops, iops, itin, opc,
+         asm, pattern> {
+  // Instruction operands.
+  bits<5> Dd;
+  bits<5> Dm;
+
+  // Encode instruction operands.
+  let Inst{3-0}   = Dm{3-0};
+  let Inst{5}     = Dm{4};
+  let Inst{15-12} = Dd{3-0};
+  let Inst{22}    = Dd{4};
+}
+
+class ASbI_Encode<bits<5> opcod1, bits<2> opcod2, bit op6, bit op4, dag oops,
+                  dag iops, InstrItinClass itin, string opc, string asm,
+                  list<dag> pattern>
+  : ASbI<opcod1, opcod2, op6, op4, oops, iops, itin, opc, asm, pattern> {
+  // Instruction operands.
+  bits<5> Sd;
+  bits<5> Sn;
+  bits<5> Sm;
+
+  // Encode instruction operands.
+  let Inst{3-0}   = Sm{4-1};
+  let Inst{5}     = Sm{0};
+  let Inst{19-16} = Sn{4-1};
+  let Inst{7}     = Sn{0};
+  let Inst{15-12} = Sd{4-1};
+  let Inst{22}    = Sd{0};
+}
+
+class ASbIn_Encode<bits<5> opcod1, bits<2> opcod2, bit op6, bit op4, dag oops,
+                   dag iops, InstrItinClass itin, string opc, string asm,
+                   list<dag> pattern>
+  : ASbIn<opcod1, opcod2, op6, op4, oops, iops, itin, opc, asm, pattern> {
+  // Instruction operands.
+  bits<5> Sd;
+  bits<5> Sn;
+  bits<5> Sm;
+
+  // Encode instruction operands.
+  let Inst{3-0}   = Sm{4-1};
+  let Inst{5}     = Sm{0};
+  let Inst{19-16} = Sn{4-1};
+  let Inst{7}     = Sn{0};
+  let Inst{15-12} = Sd{4-1};
+  let Inst{22}    = Sd{0};
+}
+
+class ASuI_Encode<bits<5> opcod1, bits<2> opcod2, bits<4> opcod3,
+                  bits<2> opcod4, bit opcod5, dag oops, dag iops,
+                  InstrItinClass itin, string opc, string asm,
+                  list<dag> pattern>
+  : ASuI<opcod1, opcod2, opcod3, opcod4, opcod5, oops, iops, itin, opc,
+         asm, pattern> {
+  // Instruction operands.
+  bits<5> Sd;
+  bits<5> Sm;
+
+  // Encode instruction operands.
+  let Inst{3-0}   = Sm{4-1};
+  let Inst{5}     = Sm{0};
+  let Inst{15-12} = Sd{4-1};
+  let Inst{22}    = Sd{0};
+}
+
+class ASuIn_Encode<bits<5> opcod1, bits<2> opcod2, bits<4> opcod3,
+                   bits<2> opcod4, bit opcod5, dag oops, dag iops,
+                   InstrItinClass itin, string opc, string asm,
+                   list<dag> pattern>
+  : ASuIn<opcod1, opcod2, opcod3, opcod4, opcod5, oops, iops, itin, opc,
+          asm, pattern> {
+  // Instruction operands.
+  bits<5> Sd;
+  bits<5> Sm;
+
+  // Encode instruction operands.
+  let Inst{3-0}   = Sm{4-1};
+  let Inst{5}     = Sm{0};
+  let Inst{15-12} = Sd{4-1};
+  let Inst{22}    = Sd{0};
+}
+
 //===----------------------------------------------------------------------===//
 // FP Binary Operations.
 //
 
-def VADDD  : ADbI<0b11100, 0b11, 0, 0, (outs DPR:$dst), (ins DPR:$a, DPR:$b),
-                 IIC_fpALU64, "vadd", ".f64\t$dst, $a, $b",
-                 [(set DPR:$dst, (fadd DPR:$a, (f64 DPR:$b)))]>;
+def VADDD  : ADbI_Encode<0b11100, 0b11, 0, 0,
+                        (outs DPR:$Dd), (ins DPR:$Dn, DPR:$Dm),
+                        IIC_fpALU64, "vadd", ".f64\t$Dd, $Dn, $Dm",
+                        [(set DPR:$Dd, (fadd DPR:$Dn, (f64 DPR:$Dm)))]>;
 
-def VADDS  : ASbIn<0b11100, 0b11, 0, 0, (outs SPR:$dst), (ins SPR:$a, SPR:$b),
-                  IIC_fpALU32, "vadd", ".f32\t$dst, $a, $b",
-                  [(set SPR:$dst, (fadd SPR:$a, SPR:$b))]>;
+def VADDS  : ASbIn_Encode<0b11100, 0b11, 0, 0,
+                          (outs SPR:$Sd), (ins SPR:$Sn, SPR:$Sm),
+                          IIC_fpALU32, "vadd", ".f32\t$Sd, $Sn, $Sm",
+                          [(set SPR:$Sd, (fadd SPR:$Sn, SPR:$Sm))]>;
 
-// These are encoded as unary instructions.
-let Defs = [FPSCR] in {
-def VCMPED : ADuI<0b11101, 0b11, 0b0100, 0b11, 0, (outs), (ins DPR:$a, DPR:$b),
-                 IIC_fpCMP64, "vcmpe", ".f64\t$a, $b",
-                 [(arm_cmpfp DPR:$a, (f64 DPR:$b))]>;
+def VSUBD  : ADbI_Encode<0b11100, 0b11, 1, 0,
+                         (outs DPR:$Dd), (ins DPR:$Dn, DPR:$Dm),
+                         IIC_fpALU64, "vsub", ".f64\t$Dd, $Dn, $Dm",
+                         [(set DPR:$Dd, (fsub DPR:$Dn, (f64 DPR:$Dm)))]>;
 
-def VCMPD  : ADuI<0b11101, 0b11, 0b0100, 0b01, 0, (outs), (ins DPR:$a, DPR:$b),
-                 IIC_fpCMP64, "vcmp", ".f64\t$a, $b",
-                 [/* For disassembly only; pattern left blank */]>;
+def VSUBS  : ASbIn_Encode<0b11100, 0b11, 1, 0,
+                          (outs SPR:$Sd), (ins SPR:$Sn, SPR:$Sm),
+                          IIC_fpALU32, "vsub", ".f32\t$Sd, $Sn, $Sm",
+                          [(set SPR:$Sd, (fsub SPR:$Sn, SPR:$Sm))]>;
 
-def VCMPES : ASuI<0b11101, 0b11, 0b0100, 0b11, 0, (outs), (ins SPR:$a, SPR:$b),
-                 IIC_fpCMP32, "vcmpe", ".f32\t$a, $b",
-                 [(arm_cmpfp SPR:$a, SPR:$b)]>;
+def VDIVD  : ADbI_Encode<0b11101, 0b00, 0, 0,
+                         (outs DPR:$Dd), (ins DPR:$Dn, DPR:$Dm),
+                         IIC_fpDIV64, "vdiv", ".f64\t$Dd, $Dn, $Dm",
+                         [(set DPR:$Dd, (fdiv DPR:$Dn, (f64 DPR:$Dm)))]>;
 
-def VCMPS  : ASuI<0b11101, 0b11, 0b0100, 0b01, 0, (outs), (ins SPR:$a, SPR:$b),
-                 IIC_fpCMP32, "vcmp", ".f32\t$a, $b",
-                 [/* For disassembly only; pattern left blank */]>;
-}
+def VDIVS  : ASbI_Encode<0b11101, 0b00, 0, 0,
+                         (outs SPR:$Sd), (ins SPR:$Sn, SPR:$Sm),
+                         IIC_fpDIV32, "vdiv", ".f32\t$Sd, $Sn, $Sm",
+                         [(set SPR:$Sd, (fdiv SPR:$Sn, SPR:$Sm))]>;
 
-def VDIVD  : ADbI<0b11101, 0b00, 0, 0, (outs DPR:$dst), (ins DPR:$a, DPR:$b),
-                 IIC_fpDIV64, "vdiv", ".f64\t$dst, $a, $b",
-                 [(set DPR:$dst, (fdiv DPR:$a, (f64 DPR:$b)))]>;
+def VMULD  : ADbI_Encode<0b11100, 0b10, 0, 0,
+                         (outs DPR:$Dd), (ins DPR:$Dn, DPR:$Dm),
+                         IIC_fpMUL64, "vmul", ".f64\t$Dd, $Dn, $Dm",
+                         [(set DPR:$Dd, (fmul DPR:$Dn, (f64 DPR:$Dm)))]>;
 
-def VDIVS  : ASbI<0b11101, 0b00, 0, 0, (outs SPR:$dst), (ins SPR:$a, SPR:$b),
-                 IIC_fpDIV32, "vdiv", ".f32\t$dst, $a, $b",
-                 [(set SPR:$dst, (fdiv SPR:$a, SPR:$b))]>;
+def VMULS  : ASbIn_Encode<0b11100, 0b10, 0, 0,
+                          (outs SPR:$Sd), (ins SPR:$Sn, SPR:$Sm),
+                          IIC_fpMUL32, "vmul", ".f32\t$Sd, $Sn, $Sm",
+                          [(set SPR:$Sd, (fmul SPR:$Sn, SPR:$Sm))]>;
 
-def VMULD  : ADbI<0b11100, 0b10, 0, 0, (outs DPR:$dst), (ins DPR:$a, DPR:$b),
-                 IIC_fpMUL64, "vmul", ".f64\t$dst, $a, $b",
-                 [(set DPR:$dst, (fmul DPR:$a, (f64 DPR:$b)))]>;
+def VNMULD : ADbI_Encode<0b11100, 0b10, 1, 0,
+                         (outs DPR:$Dd), (ins DPR:$Dn, DPR:$Dm),
+                         IIC_fpMUL64, "vnmul", ".f64\t$Dd, $Dn, $Dm",
+                         [(set DPR:$Dd, (fneg (fmul DPR:$Dn, (f64 DPR:$Dm))))]>;
 
-def VMULS  : ASbIn<0b11100, 0b10, 0, 0, (outs SPR:$dst), (ins SPR:$a, SPR:$b),
-                  IIC_fpMUL32, "vmul", ".f32\t$dst, $a, $b",
-                  [(set SPR:$dst, (fmul SPR:$a, SPR:$b))]>;
-
-def VNMULD  : ADbI<0b11100, 0b10, 1, 0, (outs DPR:$dst), (ins DPR:$a, DPR:$b),
-                  IIC_fpMUL64, "vnmul", ".f64\t$dst, $a, $b",
-                  [(set DPR:$dst, (fneg (fmul DPR:$a, (f64 DPR:$b))))]>;
-
-def VNMULS  : ASbI<0b11100, 0b10, 1, 0, (outs SPR:$dst), (ins SPR:$a, SPR:$b),
-                  IIC_fpMUL32, "vnmul", ".f32\t$dst, $a, $b",
-                  [(set SPR:$dst, (fneg (fmul SPR:$a, SPR:$b)))]>;
+def VNMULS : ASbI_Encode<0b11100, 0b10, 1, 0,
+                         (outs SPR:$Sd), (ins SPR:$Sn, SPR:$Sm),
+                         IIC_fpMUL32, "vnmul", ".f32\t$Sd, $Sn, $Sm",
+                         [(set SPR:$Sd, (fneg (fmul SPR:$Sn, SPR:$Sm)))]>;
 
 // Match reassociated forms only if not sign dependent rounding.
 def : Pat<(fmul (fneg DPR:$a), (f64 DPR:$b)),
@@ -199,53 +305,96 @@ def : Pat<(fmul (fneg DPR:$a), (f64 DPR:$b)),
 def : Pat<(fmul (fneg SPR:$a), SPR:$b),
           (VNMULS SPR:$a, SPR:$b)>, Requires<[NoHonorSignDependentRounding]>;
 
+// These are encoded as unary instructions.
+let Defs = [FPSCR] in {
+def VCMPED : ADuI_Encode<0b11101, 0b11, 0b0100, 0b11, 0,
+                         (outs),(ins DPR:$Dd, DPR:$Dm),
+                         IIC_fpCMP64, "vcmpe", ".f64\t$Dd, $Dm",
+                         [(arm_cmpfp DPR:$Dd, (f64 DPR:$Dm))]>;
 
-def VSUBD  : ADbI<0b11100, 0b11, 1, 0, (outs DPR:$dst), (ins DPR:$a, DPR:$b),
-                 IIC_fpALU64, "vsub", ".f64\t$dst, $a, $b",
-                 [(set DPR:$dst, (fsub DPR:$a, (f64 DPR:$b)))]>;
+def VCMPES : ASuI_Encode<0b11101, 0b11, 0b0100, 0b11, 0,
+                         (outs),(ins SPR:$Sd, SPR:$Sm),
+                         IIC_fpCMP32, "vcmpe", ".f32\t$Sd, $Sm",
+                         [(arm_cmpfp SPR:$Sd, SPR:$Sm)]>;
 
-def VSUBS  : ASbIn<0b11100, 0b11, 1, 0, (outs SPR:$dst), (ins SPR:$a, SPR:$b),
-                  IIC_fpALU32, "vsub", ".f32\t$dst, $a, $b",
-                  [(set SPR:$dst, (fsub SPR:$a, SPR:$b))]>;
+def VCMPD  : ADuI<0b11101, 0b11, 0b0100, 0b01, 0, (outs), (ins DPR:$a, DPR:$b),
+                 IIC_fpCMP64, "vcmp", ".f64\t$a, $b",
+                 [/* For disassembly only; pattern left blank */]>;
+
+def VCMPS  : ASuI<0b11101, 0b11, 0b0100, 0b01, 0, (outs), (ins SPR:$a, SPR:$b),
+                 IIC_fpCMP32, "vcmp", ".f32\t$a, $b",
+                 [/* For disassembly only; pattern left blank */]>;
+}
 
 //===----------------------------------------------------------------------===//
 // FP Unary Operations.
 //
 
-def VABSD  : ADuI<0b11101, 0b11, 0b0000, 0b11, 0, (outs DPR:$dst), (ins DPR:$a),
-                 IIC_fpUNA64, "vabs", ".f64\t$dst, $a",
-                 [(set DPR:$dst, (fabs (f64 DPR:$a)))]>;
+def VABSD  : ADuI_Encode<0b11101, 0b11, 0b0000, 0b11, 0,
+                         (outs DPR:$Dd), (ins DPR:$Dm),
+                         IIC_fpUNA64, "vabs", ".f64\t$Dd, $Dm",
+                         [(set DPR:$Dd, (fabs (f64 DPR:$Dm)))]>;
 
-def VABSS  : ASuIn<0b11101, 0b11, 0b0000, 0b11, 0,(outs SPR:$dst), (ins SPR:$a),
-                  IIC_fpUNA32, "vabs", ".f32\t$dst, $a",
-                  [(set SPR:$dst, (fabs SPR:$a))]>;
+def VABSS  : ASuIn_Encode<0b11101, 0b11, 0b0000, 0b11, 0,
+                          (outs SPR:$Sd), (ins SPR:$Sm),
+                          IIC_fpUNA32, "vabs", ".f32\t$Sd, $Sm",
+                          [(set SPR:$Sd, (fabs SPR:$Sm))]>;
 
 let Defs = [FPSCR] in {
-def VCMPEZD : ADuI<0b11101, 0b11, 0b0101, 0b11, 0, (outs), (ins DPR:$a),
-                  IIC_fpCMP64, "vcmpe", ".f64\t$a, #0",
-                  [(arm_cmpfp0 (f64 DPR:$a))]>;
+def VCMPEZD : ADuI_Encode<0b11101, 0b11, 0b0101, 0b11, 0,
+                          (outs), (ins DPR:$Dd),
+                          IIC_fpCMP64, "vcmpe", ".f64\t$Dd, #0",
+                          [(arm_cmpfp0 (f64 DPR:$Dd))]> {
+  let Inst{3-0}   = 0b0000;
+  let Inst{5}     = 0;
+}
+
+def VCMPEZS : ASuI_Encode<0b11101, 0b11, 0b0101, 0b11, 0,
+                         (outs), (ins SPR:$Sd),
+                         IIC_fpCMP32, "vcmpe", ".f32\t$Sd, #0",
+                         [(arm_cmpfp0 SPR:$Sd)]> {
+  let Inst{3-0}   = 0b0000;
+  let Inst{5}     = 0;
+}
 
 def VCMPZD  : ADuI<0b11101, 0b11, 0b0101, 0b01, 0, (outs), (ins DPR:$a),
                   IIC_fpCMP64, "vcmp", ".f64\t$a, #0",
                   [/* For disassembly only; pattern left blank */]>;
-
-def VCMPEZS : ASuI<0b11101, 0b11, 0b0101, 0b11, 0, (outs), (ins SPR:$a),
-                  IIC_fpCMP32, "vcmpe", ".f32\t$a, #0",
-                  [(arm_cmpfp0 SPR:$a)]>;
 
 def VCMPZS  : ASuI<0b11101, 0b11, 0b0101, 0b01, 0, (outs), (ins SPR:$a),
                   IIC_fpCMP32, "vcmp", ".f32\t$a, #0",
                   [/* For disassembly only; pattern left blank */]>;
 }
 
-def VCVTDS : ASuI<0b11101, 0b11, 0b0111, 0b11, 0, (outs DPR:$dst), (ins SPR:$a),
-                 IIC_fpCVTDS, "vcvt", ".f64.f32\t$dst, $a",
-                 [(set DPR:$dst, (fextend SPR:$a))]>;
+def VCVTDS  : ASuI<0b11101, 0b11, 0b0111, 0b11, 0,
+                   (outs DPR:$Dd), (ins SPR:$Sm),
+                   IIC_fpCVTDS, "vcvt", ".f64.f32\t$Dd, $Sm",
+                   [(set DPR:$Dd, (fextend SPR:$Sm))]> {
+  // Instruction operands.
+  bits<5> Dd;
+  bits<5> Sm;
+
+  // Encode instruction operands.
+  let Inst{3-0}   = Sm{4-1};
+  let Inst{5}     = Sm{0};
+  let Inst{15-12} = Dd{3-0};
+  let Inst{22}    = Dd{4};
+}
 
 // Special case encoding: bits 11-8 is 0b1011.
-def VCVTSD : VFPAI<(outs SPR:$dst), (ins DPR:$a), VFPUnaryFrm,
-                   IIC_fpCVTSD, "vcvt", ".f32.f64\t$dst, $a",
-                   [(set SPR:$dst, (fround DPR:$a))]> {
+def VCVTSD  : VFPAI<(outs SPR:$Sd), (ins DPR:$Dm), VFPUnaryFrm,
+                    IIC_fpCVTSD, "vcvt", ".f32.f64\t$Sd, $Dm",
+                    [(set SPR:$Sd, (fround DPR:$Dm))]> {
+  // Instruction operands.
+  bits<5> Sd;
+  bits<5> Dm;
+
+  // Encode instruction operands.
+  let Inst{3-0}   = Dm{3-0};
+  let Inst{5}     = Dm{4};
+  let Inst{15-12} = Sd{4-1};
+  let Inst{22}    = Sd{0};
+
   let Inst{27-23} = 0b11101;
   let Inst{21-16} = 0b110111;
   let Inst{11-8}  = 0b1011;
@@ -278,28 +427,34 @@ def VCVTTHS: ASuI<0b11101, 0b11, 0b0011, 0b11, 0, (outs SPR:$dst), (ins SPR:$a),
                  [/* For disassembly only; pattern left blank */]>;
 
 let neverHasSideEffects = 1 in {
-def VMOVD: ADuI<0b11101, 0b11, 0b0000, 0b01, 0, (outs DPR:$dst), (ins DPR:$a),
-                 IIC_fpUNA64, "vmov", ".f64\t$dst, $a", []>;
+def VMOVD  : ADuI_Encode<0b11101, 0b11, 0b0000, 0b01, 0,
+                         (outs DPR:$Dd), (ins DPR:$Dm),
+                         IIC_fpUNA64, "vmov", ".f64\t$Dd, $Dm", []>;
 
-def VMOVS: ASuI<0b11101, 0b11, 0b0000, 0b01, 0, (outs SPR:$dst), (ins SPR:$a),
-                 IIC_fpUNA32, "vmov", ".f32\t$dst, $a", []>;
+def VMOVS  : ASuI_Encode<0b11101, 0b11, 0b0000, 0b01, 0,
+                         (outs SPR:$Sd), (ins SPR:$Sm),
+                         IIC_fpUNA32, "vmov", ".f32\t$Sd, $Sm", []>;
 } // neverHasSideEffects
 
-def VNEGD  : ADuI<0b11101, 0b11, 0b0001, 0b01, 0, (outs DPR:$dst), (ins DPR:$a),
-                 IIC_fpUNA64, "vneg", ".f64\t$dst, $a",
-                 [(set DPR:$dst, (fneg (f64 DPR:$a)))]>;
+def VNEGD  : ADuI_Encode<0b11101, 0b11, 0b0001, 0b01, 0,
+                         (outs DPR:$Dd), (ins DPR:$Dm),
+                         IIC_fpUNA64, "vneg", ".f64\t$Dd, $Dm",
+                         [(set DPR:$Dd, (fneg (f64 DPR:$Dm)))]>;
 
-def VNEGS  : ASuIn<0b11101, 0b11, 0b0001, 0b01, 0,(outs SPR:$dst), (ins SPR:$a),
-                  IIC_fpUNA32, "vneg", ".f32\t$dst, $a",
-                  [(set SPR:$dst, (fneg SPR:$a))]>;
+def VNEGS  : ASuIn_Encode<0b11101, 0b11, 0b0001, 0b01, 0,
+                          (outs SPR:$Sd), (ins SPR:$Sm),
+                          IIC_fpUNA32, "vneg", ".f32\t$Sd, $Sm",
+                          [(set SPR:$Sd, (fneg SPR:$Sm))]>;
 
-def VSQRTD : ADuI<0b11101, 0b11, 0b0001, 0b11, 0, (outs DPR:$dst), (ins DPR:$a),
-                 IIC_fpSQRT64, "vsqrt", ".f64\t$dst, $a",
-                 [(set DPR:$dst, (fsqrt (f64 DPR:$a)))]>;
+def VSQRTD : ADuI_Encode<0b11101, 0b11, 0b0001, 0b11, 0,
+                         (outs DPR:$Dd), (ins DPR:$Dm),
+                         IIC_fpSQRT64, "vsqrt", ".f64\t$Dd, $Dm",
+                         [(set DPR:$Dd, (fsqrt (f64 DPR:$Dm)))]>;
 
-def VSQRTS : ASuI<0b11101, 0b11, 0b0001, 0b11, 0, (outs SPR:$dst), (ins SPR:$a),
-                 IIC_fpSQRT32, "vsqrt", ".f32\t$dst, $a",
-                 [(set SPR:$dst, (fsqrt SPR:$a))]>;
+def VSQRTS : ASuI_Encode<0b11101, 0b11, 0b0001, 0b11, 0,
+                         (outs SPR:$Sd), (ins SPR:$Sm),
+                         IIC_fpSQRT32, "vsqrt", ".f32\t$Sd, $Sm",
+                         [(set SPR:$Sd, (fsqrt SPR:$Sm))]>;
 
 //===----------------------------------------------------------------------===//
 // FP <-> GPR Copies.  Int <-> FP Conversions.

@@ -18,6 +18,7 @@
 #define LLVM_CODEGEN_MACHINEINSTRBUILDER_H
 
 #include "llvm/CodeGen/MachineFunction.h"
+#include "llvm/Support/ErrorHandling.h"
 
 namespace llvm {
 
@@ -149,11 +150,11 @@ public:
                                      int64_t off) const {
     switch (Disp.getType()) {
       default:
-        assert (false && "addDisp not yet handling a displacement case");
+        llvm_unreachable("Unhandled operand type in addDisp()");
       case MachineOperand::MO_Immediate:
-        return this->addImm(Disp.getImm() + off);
+        return addImm(Disp.getImm() + off);
       case MachineOperand::MO_GlobalAddress:
-        return this->addGlobalAddress(Disp.getGlobal(), off);
+        return addGlobalAddress(Disp.getGlobal(), Disp.getOffset() + off);
     }
   }
 };
