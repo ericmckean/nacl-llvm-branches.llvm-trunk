@@ -257,6 +257,11 @@ namespace llvm {
     virtual bool
     isBlockOnlyReachableByFallthrough(const MachineBasicBlock *MBB) const;
 
+    // @LOCALMOD-START
+    /// UseReadOnlyJumpTables() - true if JumpTableInfo must be in rodata.
+    virtual bool UseReadOnlyJumpTables() const { return false; }
+    // @LOCALMOD-END
+
     //===------------------------------------------------------------------===//
     // Symbol Lowering Routines.
     //===------------------------------------------------------------------===//
