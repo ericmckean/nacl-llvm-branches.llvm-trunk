@@ -648,7 +648,14 @@ void AsmPrinter::EmitFunctionBody() {
       case TargetOpcode::PROLOG_LABEL:
       case TargetOpcode::EH_LABEL:
       case TargetOpcode::GC_LABEL:
-        OutStreamer.EmitLabel(II->getOperand(0).getMCSymbol());
+       // @LOCALMOD-START
+       // These labels may indicate an indirect entry point
+       // that is externally reachable and hence must be bundle aligned.
+       // Note: these labels appear to be always at bundle beginnings
+       //       but it is unclear whether this always holds
+       EmitAlignment(5);
+       // @LOCALMOD-END
+       OutStreamer.EmitLabel(II->getOperand(0).getMCSymbol());
         break;
       case TargetOpcode::INLINEASM:
         EmitInlineAsm(II);
