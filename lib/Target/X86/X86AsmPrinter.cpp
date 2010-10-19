@@ -84,6 +84,10 @@ void X86AsmPrinter::EmitFunctionBodyEnd() {
   if (Subtarget->isTargetNaCl())
     EmitAlignment(5);
 }
+
+bool X86AsmPrinter::UseReadOnlyJumpTables() const {
+  return Subtarget->isTargetNaCl();
+}
 // @LOCALMOD-END
 
 /// printSymbolOperand - Print a raw symbol reference operand.  This handles

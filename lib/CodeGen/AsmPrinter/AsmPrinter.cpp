@@ -963,7 +963,7 @@ void AsmPrinter::EmitJumpTableInfo() {
   if (// In PIC mode, we need to emit the jump table to the same section as the
       // function body itself, otherwise the label differences won't make sense.
       // FIXME: Need a better predicate for this: what about custom entries?
-      MJTI->getEntryKind() == MachineJumpTableInfo::EK_LabelDifference32 ||
+      (MJTI->getEntryKind() == MachineJumpTableInfo::EK_LabelDifference32 ||
       // We should also do if the section name is NULL or function is declared
       // in discardable section
       // FIXME: this isn't the right predicate, should be based on the MCSection
@@ -971,13 +971,17 @@ void AsmPrinter::EmitJumpTableInfo() {
       // @LOCALMOD-START
       // the original code is a hack
       // jumptables usually end up in .rodata
-      // but for functions with weak linkage there is a chance that the are 
+      // but for functions with weak linkage there is a chance that the are
       // not needed. So in order to be discard the function AND the jumptable
       // they keep them both in .text. This fix only works if we never discard
       // weak functions. This is guaranteed because the bitcode linker already
       // throws out unused ones.
+      // TODO: Investigate the other case of concern -- PIC code.
+      // Concern is about jumptables being in a different section: can the
+      // rodata and text be too far apart for a RIP-relative offset?
+       F->isWeakForLinker())
+      && !UseReadOnlyJumpTables()) {
       // @LOCALMOD-END
-      false /* F->isWeakForLinker()  */) { // @LOCALMOD
     OutStreamer.SwitchSection(getObjFileLowering().SectionForGlobal(F,Mang,TM));
   } else {
     // Otherwise, drop it in the readonly section.
@@ -999,7 +1003,7 @@ void AsmPrinter::EmitJumpTableInfo() {
     // .set directive for each unique entry.  This reduces the number of
     // relocations the assembler will generate for the jump table.
     if (MJTI->getEntryKind() == MachineJumpTableInfo::EK_LabelDifference32 &&
-        MAI->hasSetDirective()) {
+        MAI->hasSetDirective() && !UseReadOnlyJumpTables()) { // @LOCALMOD
       SmallPtrSet<const MachineBasicBlock*, 16> EmittedSets;
       const TargetLowering *TLI = TM.getTargetLowering();
       const MCExpr *Base = TLI->getPICJumpTableRelocBaseExpr(MF,JTI,OutContext);
@@ -1070,7 +1074,7 @@ void AsmPrinter::EmitJumpTableEntry(const MachineJumpTableInfo *MJTI,
     // If we have emitted set directives for the jump table entries, print 
     // them rather than the entries themselves.  If we're emitting PIC, then
     // emit the table entries as differences between two text section labels.
-    if (MAI->hasSetDirective()) {
+    if (MAI->hasSetDirective() && !UseReadOnlyJumpTables()) { // @LOCALMOD
       // If we used .set, reference the .set's symbol.
       Value = MCSymbolRefExpr::Create(GetJTSetSymbol(UID, MBB->getNumber()),
                                       OutContext);
