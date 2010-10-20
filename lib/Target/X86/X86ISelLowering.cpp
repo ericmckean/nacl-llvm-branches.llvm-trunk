@@ -2681,13 +2681,16 @@ SDValue X86TargetLowering::getReturnAddressFrameIndex(SelectionDAG &DAG) const {
 
   if (ReturnAddrIndex == 0) {
     // Set up a frame object for the return address.
-    uint64_t SlotSize = TD->getPointerSize();
+    // @LOCALMOD-START
+    uint64_t SlotSize = Subtarget->is64Bit() ? 8 : 4;
     ReturnAddrIndex = MF.getFrameInfo()->CreateFixedObject(SlotSize, -SlotSize,
                                                            false);
     FuncInfo->setRAIndex(ReturnAddrIndex);
   }
 
-  return DAG.getFrameIndex(ReturnAddrIndex, getPointerTy());
+  return DAG.getFrameIndex(ReturnAddrIndex,
+                           Subtarget->is64Bit() ? MVT::i64 : MVT::i32);
+  // @LOCALMOD-END
 }
 
 
