@@ -994,7 +994,7 @@ void X86RegisterInfo::emitPrologue(MachineFunction &MF) const {
   std::vector<MachineMove> &Moves = MMI.getFrameMoves();
   const TargetData *TD = MF.getTarget().getTargetData();
   uint64_t NumBytes = 0;
-  int stackGrowth = -TD->getPointerSize();
+  int stackGrowth = - SlotSize;   // @LOCALMOD
 
   if (HasFP) {
     // Calculate required stack adjustment.
