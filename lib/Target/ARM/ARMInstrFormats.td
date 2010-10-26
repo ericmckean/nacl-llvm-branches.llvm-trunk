@@ -165,6 +165,9 @@ def s_cc_out : OptionalDefOperand<OtherVT, (ops CCR), (ops (i32 CPSR))> {
 
 // ARM special operands for disassembly only.
 //
+def setend_op : Operand<i32> {
+  let PrintMethod = "printSetendOperand";
+}
 
 def cps_opt : Operand<i32> {
   let PrintMethod = "printCPSOptionOperand";
@@ -281,7 +284,7 @@ class sI<dag oops, dag iops, AddrMode am, SizeFlagVal sz,
 
   let OutOperandList = oops;
   let InOperandList = !con(iops, (ins pred:$p, cc_out:$s));
-  let AsmString = !strconcat(opc, "${p}${s}", asm);
+  let AsmString = !strconcat(opc, "${s}${p}", asm);
   let Pattern = pattern;
   list<Predicate> Predicates = [IsARM];
 }
@@ -908,24 +911,65 @@ class AsMul1I<bits<7> opcod, dag oops, dag iops, InstrItinClass itin,
 }
 
 // Most significant word multiply
-class AMul2I<bits<7> opcod, dag oops, dag iops, InstrItinClass itin,
-             string opc, string asm, list<dag> pattern>
+class AMul2I<bits<7> opcod, bits<4> opc7_4, dag oops, dag iops,
+             InstrItinClass itin, string opc, string asm, list<dag> pattern>
   : I<oops, iops, AddrModeNone, Size4Bytes, IndexModeNone, MulFrm, itin,
       opc, asm, "", pattern> {
-  let Inst{7-4}   = 0b1001;
+  bits<4> Rd;
+  bits<4> Rn;
+  bits<4> Rm;
+  let Inst{7-4}   = opc7_4;
   let Inst{20}    = 1;
   let Inst{27-21} = opcod;
+  let Inst{19-16} = Rd;
+  let Inst{11-8}  = Rm;
+  let Inst{3-0}   = Rn;
+}
+// MSW multiple w/ Ra operand
+class AMul2Ia<bits<7> opcod, bits<4> opc7_4, dag oops, dag iops,
+              InstrItinClass itin, string opc, string asm, list<dag> pattern>
+  : AMul2I<opcod, opc7_4, oops, iops, itin, opc, asm, pattern> {
+  bits<4> Ra;
+  let Inst{15-12} = Ra;
 }
 
 // SMUL<x><y> / SMULW<y> / SMLA<x><y> / SMLAW<x><y>
-class AMulxyI<bits<7> opcod, dag oops, dag iops, InstrItinClass itin,
-              string opc, string asm, list<dag> pattern>
+class AMulxyIbase<bits<7> opcod, bits<2> bit6_5, dag oops, dag iops,
+              InstrItinClass itin, string opc, string asm, list<dag> pattern>
   : I<oops, iops, AddrModeNone, Size4Bytes, IndexModeNone, MulFrm, itin,
       opc, asm, "", pattern> {
+  bits<4> Rn;
+  bits<4> Rm;
   let Inst{4}     = 0;
   let Inst{7}     = 1;
   let Inst{20}    = 0;
   let Inst{27-21} = opcod;
+  let Inst{6-5}   = bit6_5;
+  let Inst{11-8}  = Rm;
+  let Inst{3-0}   = Rn;
+}
+class AMulxyI<bits<7> opcod, bits<2> bit6_5, dag oops, dag iops,
+              InstrItinClass itin, string opc, string asm, list<dag> pattern>
+  : AMulxyIbase<opcod, bit6_5, oops, iops, itin, opc, asm, pattern> {
+  bits<4> Rd;
+  let Inst{19-16} = Rd;
+}
+
+// AMulxyI with Ra operand
+class AMulxyIa<bits<7> opcod, bits<2> bit6_5, dag oops, dag iops,
+              InstrItinClass itin, string opc, string asm, list<dag> pattern>
+  : AMulxyI<opcod, bit6_5, oops, iops, itin, opc, asm, pattern> {
+  bits<4> Ra;
+  let Inst{15-12} = Ra;
+}
+// SMLAL*
+class AMulxyI64<bits<7> opcod, bits<2> bit6_5, dag oops, dag iops,
+              InstrItinClass itin, string opc, string asm, list<dag> pattern>
+  : AMulxyIbase<opcod, bit6_5, oops, iops, itin, opc, asm, pattern> {
+  bits<4> RdLo;
+  bits<4> RdHi;
+  let Inst{19-16} = RdHi;
+  let Inst{15-12} = RdLo;
 }
 
 // Extend instructions.
@@ -933,16 +977,47 @@ class AExtI<bits<8> opcod, dag oops, dag iops, InstrItinClass itin,
             string opc, string asm, list<dag> pattern>
   : I<oops, iops, AddrModeNone, Size4Bytes, IndexModeNone, ExtFrm, itin,
       opc, asm, "", pattern> {
+  // All AExtI instructions have Rd and Rm register operands.
+  bits<4> Rd;
+  bits<4> Rm;
+  let Inst{15-12} = Rd;
+  let Inst{3-0}   = Rm;
   let Inst{7-4}   = 0b0111;
+  let Inst{9-8}   = 0b00;
   let Inst{27-20} = opcod;
 }
 
 // Misc Arithmetic instructions.
-class AMiscA1I<bits<8> opcod, dag oops, dag iops, InstrItinClass itin,
-               string opc, string asm, list<dag> pattern>
+class AMiscA1I<bits<8> opcod, bits<4> opc7_4, dag oops, dag iops,
+               InstrItinClass itin, string opc, string asm, list<dag> pattern>
   : I<oops, iops, AddrModeNone, Size4Bytes, IndexModeNone, ArithMiscFrm, itin,
       opc, asm, "", pattern> {
+  bits<4> Rd;
+  bits<4> Rm;
   let Inst{27-20} = opcod;
+  let Inst{19-16} = 0b1111;
+  let Inst{15-12} = Rd;
+  let Inst{11-8}  = 0b1111;
+  let Inst{7-4}   = opc7_4;
+  let Inst{3-0}   = Rm;
+}
+
+// PKH instructions
+class APKHI<bits<8> opcod, bit tb, dag oops, dag iops, InstrItinClass itin,
+            string opc, string asm, list<dag> pattern>
+  : I<oops, iops, AddrModeNone, Size4Bytes, IndexModeNone, ArithMiscFrm, itin,
+      opc, asm, "", pattern> {
+  bits<4> Rd;
+  bits<4> Rn;
+  bits<4> Rm;
+  bits<8> sh;
+  let Inst{27-20} = opcod;
+  let Inst{19-16} = Rn;
+  let Inst{15-12} = Rd;
+  let Inst{11-7}  = sh{7-3};
+  let Inst{6}     = tb;
+  let Inst{5-4}   = 0b01;
+  let Inst{3-0}   = Rm;
 }
 
 //===----------------------------------------------------------------------===//
@@ -1143,7 +1218,7 @@ class Thumb2I<dag oops, dag iops, AddrMode am, SizeFlagVal sz,
 // Same as Thumb2I except it can optionally modify CPSR. Note it's modeled as an
 // input operand since by default it's a zero register. It will become an
 // implicit def once it's "flipped".
-// 
+//
 // FIXME: This uses unified syntax so {s} comes before {p}. We should make it
 // more consistent.
 class Thumb2sI<dag oops, dag iops, AddrMode am, SizeFlagVal sz,
@@ -1623,6 +1698,15 @@ class N2V<bits<2> op24_23, bits<2> op21_20, bits<2> op19_18, bits<2> op17_16,
   let Inst{11-7}  = op11_7;
   let Inst{6}     = op6;
   let Inst{4}     = op4;
+  
+  // Instruction operands.
+  bits<5> Vd;
+  bits<5> Vm;
+
+  let Inst{15-12} = Vd{3-0};
+  let Inst{22}    = Vd{4};
+  let Inst{3-0}   = Vm{3-0};
+  let Inst{5}     = Vm{4};
 }
 
 // Same as N2V except it doesn't have a datatype suffix.
@@ -1638,6 +1722,15 @@ class N2VX<bits<2> op24_23, bits<2> op21_20, bits<2> op19_18, bits<2> op17_16,
   let Inst{11-7}  = op11_7;
   let Inst{6}     = op6;
   let Inst{4}     = op4;
+  
+  // Instruction operands.
+  bits<5> Vd;
+  bits<5> Vm;
+
+  let Inst{15-12} = Vd{3-0};
+  let Inst{22}    = Vd{4};
+  let Inst{3-0}   = Vm{3-0};
+  let Inst{5}     = Vm{4};
 }
 
 // NEON 2 vector register with immediate.
@@ -1664,6 +1757,18 @@ class N3V<bit op24, bit op23, bits<2> op21_20, bits<4> op11_8, bit op6, bit op4,
   let Inst{11-8}  = op11_8;
   let Inst{6}     = op6;
   let Inst{4}     = op4;
+  
+  // Instruction operands.
+  bits<5> Vd;
+  bits<5> Vn;
+  bits<5> Vm;
+
+  let Inst{15-12} = Vd{3-0};
+  let Inst{22}    = Vd{4};
+  let Inst{19-16} = Vn{3-0};
+  let Inst{7}     = Vn{4};
+  let Inst{3-0}   = Vm{3-0};
+  let Inst{5}     = Vm{4};
 }
 
 // Same as N3V except it doesn't have a data type suffix.
@@ -1678,13 +1783,25 @@ class N3VX<bit op24, bit op23, bits<2> op21_20, bits<4> op11_8, bit op6,
   let Inst{11-8}  = op11_8;
   let Inst{6}     = op6;
   let Inst{4}     = op4;
+  
+  // Instruction operands.
+  bits<5> Vd;
+  bits<5> Vn;
+  bits<5> Vm;
+
+  let Inst{15-12} = Vd{3-0};
+  let Inst{22}    = Vd{4};
+  let Inst{19-16} = Vn{3-0};
+  let Inst{7}     = Vn{4};
+  let Inst{3-0}   = Vm{3-0};
+  let Inst{5}     = Vm{4};
 }
 
 // NEON VMOVs between scalar and core registers.
 class NVLaneOp<bits<8> opcod1, bits<4> opcod2, bits<2> opcod3,
                dag oops, dag iops, Format f, InstrItinClass itin,
                string opc, string dt, string asm, list<dag> pattern>
-  : InstARM<AddrModeNone, Size4Bytes, IndexModeNone, f, GenericDomain,
+  : InstARM<AddrModeNone, Size4Bytes, IndexModeNone, f, NeonDomain,
             "", itin> {
   let Inst{27-20} = opcod1;
   let Inst{11-8}  = opcod2;

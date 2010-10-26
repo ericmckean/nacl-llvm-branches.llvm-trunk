@@ -1011,6 +1011,12 @@ API changes are:</p>
   LLVM.  The Triple::normalize utility method has been added to help front-ends
   deal with funky triples.
 </li>
+<li>
+  The signature of the <tt>GCMetadataPrinter::finishAssembly</tt> virtual
+  function changed: the <tt>raw_ostream</tt> and <tt>MCAsmInfo</tt> arguments
+  were dropped.  GC plugins which compute stack maps must be updated to avoid
+  having the old definition overload the new signature.
+</li>
   
 <li>
   Some APIs were renamed:
@@ -1288,7 +1294,7 @@ lists</a>.</p>
   src="http://www.w3.org/Icons/valid-html401-blue" alt="Valid HTML 4.01"></a>
 
   <a href="http://llvm.org/">LLVM Compiler Infrastructure</a><br>
-  Last modified: $Date: 2010-10-10 22:44:40 -0700 (Sun, 10 Oct 2010) $
+  Last modified: $Date: 2010-10-21 07:40:02 -0700 (Thu, 21 Oct 2010) $
 </address>
 
 </body>
