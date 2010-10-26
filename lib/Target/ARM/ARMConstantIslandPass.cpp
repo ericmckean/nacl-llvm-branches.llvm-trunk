@@ -1328,7 +1328,8 @@ void ARMConstantIslands::CreateNewWater(unsigned CPUserIndex,
   MachineBasicBlock *UserMBB = UserMI->getParent();
   unsigned OffsetOfNextBlock = BBOffsets[UserMBB->getNumber()] +
                                BBSizes[UserMBB->getNumber()];
-  assert(OffsetOfNextBlock== BBOffsets[UserMBB->getNumber()+1]);
+  // @LOCALMOD
+  // assert(OffsetOfNextBlock== BBOffsets[UserMBB->getNumber()+1]);
 
   // If the block does not end in an unconditional branch already, and if the
   // end of the block is within range, make new water there.  (The addition
