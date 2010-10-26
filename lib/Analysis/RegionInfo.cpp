@@ -45,7 +45,7 @@ STATISTIC(numSimpleRegions, "The # of simple regions");
 /// PrintStyle - Print region in difference ways.
 enum PrintStyle { PrintNone, PrintBB, PrintRN  };
 
-cl::opt<enum PrintStyle> printStyle("print-region-style", cl::Hidden,
+static cl::opt<enum PrintStyle> printStyle("print-region-style", cl::Hidden,
   cl::desc("style of printing regions"),
   cl::values(
     clEnumValN(PrintNone, "none",  "print no details"),
@@ -140,8 +140,7 @@ bool Region::isSimple() const {
 
   BasicBlock *entry = getEntry(), *exit = getExit();
 
-  // TopLevelRegion
-  if (!exit)
+  if (isTopLevelRegion())
     return false;
 
   for (pred_iterator PI = pred_begin(entry), PE = pred_end(entry); PI != PE;
@@ -663,6 +662,7 @@ void RegionInfo::releaseMemory() {
 }
 
 RegionInfo::RegionInfo() : FunctionPass(ID) {
+  initializeRegionInfoPass(*PassRegistry::getPassRegistry());
   TopLevelRegion = 0;
 }
 
@@ -810,9 +810,10 @@ RegionInfo::getCommonRegion(SmallVectorImpl<BasicBlock*> &BBs) const {
 void RegionInfo::splitBlock(BasicBlock* NewBB, BasicBlock *OldBB)
 {
   Region *R = getRegionFor(OldBB);
+
   setRegionFor(NewBB, R);
 
-  while (R->getEntry() == OldBB && R->getParent()) {
+  while (R->getEntry() == OldBB && !R->isTopLevelRegion()) {
     R->replaceEntry(NewBB);
     R = R->getParent();
   }

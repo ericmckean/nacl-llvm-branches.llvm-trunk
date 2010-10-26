@@ -21,8 +21,10 @@ add_llvm_library(LLVMCodeGen
   LatencyPriorityQueue.cpp
   LiveInterval.cpp
   LiveIntervalAnalysis.cpp
+  LiveIntervalUnion.cpp
   LiveStackAnalysis.cpp
   LiveVariables.cpp
+  LiveRangeEdit.cpp
   LocalStackSlotAllocation.cpp
   LowerSubregs.cpp
   MachineBasicBlock.cpp
@@ -54,6 +56,7 @@ add_llvm_library(LLVMCodeGen
   ProcessImplicitDefs.cpp
   PrologEpilogInserter.cpp
   PseudoSourceValue.cpp
+  RegAllocBasic.cpp
   RegAllocFast.cpp
   RegAllocLinearScan.cpp
   RegAllocPBQP.cpp

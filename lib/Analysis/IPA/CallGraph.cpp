@@ -43,7 +43,9 @@ class BasicCallGraph : public ModulePass, public CallGraph {
 public:
   static char ID; // Class identification, replacement for typeinfo
   BasicCallGraph() : ModulePass(ID), Root(0), 
-    ExternalCallingNode(0), CallsExternalNode(0) {}
+    ExternalCallingNode(0), CallsExternalNode(0) {
+      initializeBasicCallGraphPass(*PassRegistry::getPassRegistry());
+    }
 
   // runOnModule - Compute the call graph for the specified module.
   virtual bool runOnModule(Module &M) {
@@ -171,7 +173,7 @@ private:
 
 } //End anonymous namespace
 
-INITIALIZE_ANALYSIS_GROUP(CallGraph, "Call Graph")
+INITIALIZE_ANALYSIS_GROUP(CallGraph, "Call Graph", BasicCallGraph)
 INITIALIZE_AG_PASS(BasicCallGraph, CallGraph, "basiccg",
                    "Basic CallGraph Construction", false, true, true)
 

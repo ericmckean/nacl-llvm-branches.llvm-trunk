@@ -29,7 +29,7 @@ namespace llvm {
 }
 
 // Register the ProfileInfo interface, providing a nice name to refer to.
-INITIALIZE_ANALYSIS_GROUP(ProfileInfo, "Profile Information")
+INITIALIZE_ANALYSIS_GROUP(ProfileInfo, "Profile Information", NoProfileInfo)
 
 namespace llvm {
 
@@ -1077,7 +1077,9 @@ raw_ostream& operator<<(raw_ostream &O, std::pair<const MachineBasicBlock *, con
 namespace {
   struct NoProfileInfo : public ImmutablePass, public ProfileInfo {
     static char ID; // Class identification, replacement for typeinfo
-    NoProfileInfo() : ImmutablePass(ID) {}
+    NoProfileInfo() : ImmutablePass(ID) {
+      initializeNoProfileInfoPass(*PassRegistry::getPassRegistry());
+    }
     
     /// getAdjustedAnalysisPointer - This method is used when a pass implements
     /// an analysis interface through multiple inheritance.  If needed, it
