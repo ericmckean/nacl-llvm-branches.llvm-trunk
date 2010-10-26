@@ -41,7 +41,9 @@ STATISTIC(NumNoAlias, "Number of function returns marked noalias");
 namespace {
   struct FunctionAttrs : public CallGraphSCCPass {
     static char ID; // Pass identification, replacement for typeid
-    FunctionAttrs() : CallGraphSCCPass(ID) {}
+    FunctionAttrs() : CallGraphSCCPass(ID) {
+      initializeFunctionAttrsPass(*PassRegistry::getPassRegistry());
+    }
 
     // runOnSCC - Analyze the SCC, performing the transformation if possible.
     bool runOnSCC(CallGraphSCC &SCC);
@@ -69,7 +71,10 @@ namespace {
 }
 
 char FunctionAttrs::ID = 0;
-INITIALIZE_PASS(FunctionAttrs, "functionattrs",
+INITIALIZE_PASS_BEGIN(FunctionAttrs, "functionattrs",
+                "Deduce function attributes", false, false)
+INITIALIZE_AG_DEPENDENCY(CallGraph)
+INITIALIZE_PASS_END(FunctionAttrs, "functionattrs",
                 "Deduce function attributes", false, false)
 
 Pass *llvm::createFunctionAttrsPass() { return new FunctionAttrs(); }

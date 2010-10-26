@@ -74,6 +74,22 @@ public:
   /// getSORegOpValue - Return an encoded so_reg shifted register value.
   unsigned getSORegOpValue(const MCInst &MI, unsigned Op) const;
 
+  unsigned getRotImmOpValue(const MCInst &MI, unsigned Op) const {
+    switch (MI.getOperand(Op).getImm()) {
+    default: assert (0 && "Not a valid rot_imm value!");
+    case 0:  return 0;
+    case 8:  return 1;
+    case 16: return 2;
+    case 24: return 3;
+    }
+  }
+
+  unsigned getImmMinusOneOpValue(const MCInst &MI, unsigned Op) const {
+    return MI.getOperand(Op).getImm() - 1;
+  }
+
+  unsigned getBitfieldInvertedMaskOpValue(const MCInst &MI, unsigned Op) const;
+
   unsigned getNumFixupKinds() const {
     assert(0 && "ARMMCCodeEmitter::getNumFixupKinds() not yet implemented.");
     return 0;
@@ -128,10 +144,24 @@ EmitImmediate(const MCOperand &DispOp, unsigned Size, MCFixupKind FixupKind,
 /// operand requires relocation, record the relocation and return zero.
 unsigned ARMMCCodeEmitter::getMachineOpValue(const MCInst &MI,
                                              const MCOperand &MO) const {
-  if (MO.isReg())
-    return getARMRegisterNumbering(MO.getReg());
-  else if (MO.isImm()) {
+  if (MO.isReg()) {
+    unsigned regno = getARMRegisterNumbering(MO.getReg());
+    
+    // Q registers are encodes as 2x their register number.
+    switch (MO.getReg()) {
+      case ARM::Q0: case ARM::Q1: case ARM::Q2: case ARM::Q3:
+      case ARM::Q4: case ARM::Q5: case ARM::Q6: case ARM::Q7:
+      case ARM::Q8: case ARM::Q9: case ARM::Q10: case ARM::Q11:
+      case ARM::Q12: case ARM::Q13: case ARM::Q14: case ARM::Q15:
+        return 2 * regno;
+      default:
+        return regno;
+    }
+  } else if (MO.isImm()) {
     return static_cast<unsigned>(MO.getImm());
+  } else if (MO.isFPImm()) {
+    return static_cast<unsigned>(APFloat(MO.getFPImm())
+                     .bitcastToAPInt().getHiBits(32).getLimitedValue());
   } else {
 #ifndef NDEBUG
     errs() << MO;
@@ -140,7 +170,6 @@ unsigned ARMMCCodeEmitter::getMachineOpValue(const MCInst &MI,
   }
   return 0;
 }
-
 
 unsigned ARMMCCodeEmitter::getSORegOpValue(const MCInst &MI,
                                            unsigned OpIdx) const {
@@ -209,6 +238,18 @@ unsigned ARMMCCodeEmitter::getSORegOpValue(const MCInst &MI,
 
   // Encode shift_imm bit[11:7].
   return Binary | ARM_AM::getSORegOffset(MO2.getImm()) << 7;
+}
+
+unsigned ARMMCCodeEmitter::getBitfieldInvertedMaskOpValue(const MCInst &MI,
+                                                          unsigned Op) const {
+  // 10 bits. lower 5 bits are are the lsb of the mask, high five bits are the
+  // msb of the mask.
+  const MCOperand &MO = MI.getOperand(Op);
+  uint32_t v = ~MO.getImm();
+  uint32_t lsb = CountTrailingZeros_32(v);
+  uint32_t msb = (32 - CountLeadingZeros_32 (v)) - 1;
+  assert (v != 0 && lsb < 32 && msb < 32 && "Illegal bitfield mask!");
+  return lsb | (msb << 5);
 }
 
 void ARMMCCodeEmitter::

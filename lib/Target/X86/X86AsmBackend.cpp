@@ -14,11 +14,13 @@
 #include "llvm/MC/ELFObjectWriter.h"
 #include "llvm/MC/MCAssembler.h"
 #include "llvm/MC/MCExpr.h"
+#include "llvm/MC/MCObjectFormat.h"
 #include "llvm/MC/MCObjectWriter.h"
 #include "llvm/MC/MCSectionCOFF.h"
 #include "llvm/MC/MCSectionELF.h"
 #include "llvm/MC/MCSectionMachO.h"
 #include "llvm/MC/MachObjectWriter.h"
+#include "llvm/Support/ELF.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetRegistry.h"
@@ -37,6 +39,7 @@ static unsigned getFixupKindLog2Size(unsigned Kind) {
   case X86::reloc_riprel_4byte:
   case X86::reloc_riprel_4byte_movq_load:
   case X86::reloc_signed_4byte:
+  case X86::reloc_global_offset_table:
   case FK_Data_4: return 2;
   case FK_Data_8: return 3;
   }
@@ -70,6 +73,11 @@ static unsigned getRelaxedOpcode(unsigned Op) {
   switch (Op) {
   default:
     return Op;
+
+  // This is used on i386 with things like addl $foo, %ebx
+  // FIXME: Should the other *i8 instructions be here too? If not, it might
+  // be better to just select X86::ADD32ri instead of X86::ADD32ri8.
+  case X86::ADD32ri8: return X86::ADD32ri;
 
   case X86::JAE_1: return X86::JAE_4;
   case X86::JA_1:  return X86::JA_4;
@@ -186,13 +194,18 @@ bool X86AsmBackend::WriteNopData(uint64_t Count, MCObjectWriter *OW) const {
 
 namespace {
 class ELFX86AsmBackend : public X86AsmBackend {
+  MCELFObjectFormat Format;
+
 public:
   Triple::OSType OSType;
   ELFX86AsmBackend(const Target &T, Triple::OSType _OSType)
     : X86AsmBackend(T), OSType(_OSType) {
-    HasAbsolutizedSet = true;
     HasScatteredSymbols = true;
     HasReliableSymbolDifference = true;
+  }
+
+  virtual const MCObjectFormat &getObjectFormat() const {
+    return Format;
   }
 
   virtual bool doesSectionRequireSymbols(const MCSection &Section) const {
@@ -217,7 +230,7 @@ public:
 
   MCObjectWriter *createObjectWriter(raw_ostream &OS) const {
     return new ELFObjectWriter(OS, /*Is64Bit=*/false,
-                               OSType,
+                               OSType, ELF::EM_386,
                                /*IsLittleEndian=*/true,
                                /*HasRelocationAddend=*/false);
   }
@@ -234,7 +247,7 @@ public:
 
   MCObjectWriter *createObjectWriter(raw_ostream &OS) const {
     return new ELFObjectWriter(OS, /*Is64Bit=*/true,
-                               OSType,
+                               OSType, ELF::EM_X86_64,
                                /*IsLittleEndian=*/true,
                                /*HasRelocationAddend=*/true);
   }
@@ -242,11 +255,17 @@ public:
 
 class WindowsX86AsmBackend : public X86AsmBackend {
   bool Is64Bit;
+  MCCOFFObjectFormat Format;
+
 public:
   WindowsX86AsmBackend(const Target &T, bool is64Bit)
     : X86AsmBackend(T)
     , Is64Bit(is64Bit) {
     HasScatteredSymbols = true;
+  }
+
+  virtual const MCObjectFormat &getObjectFormat() const {
+    return Format;
   }
 
   unsigned getPointerSize() const {
@@ -267,11 +286,16 @@ public:
 };
 
 class DarwinX86AsmBackend : public X86AsmBackend {
+  MCMachOObjectFormat Format;
+
 public:
   DarwinX86AsmBackend(const Target &T)
     : X86AsmBackend(T) {
-    HasAbsolutizedSet = true;
     HasScatteredSymbols = true;
+  }
+
+  virtual const MCObjectFormat &getObjectFormat() const {
+    return Format;
   }
 
   bool isVirtualSection(const MCSection &Section) const {

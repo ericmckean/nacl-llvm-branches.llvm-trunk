@@ -67,7 +67,9 @@ namespace {
     virtual bool runOnSCC(CallGraphSCC &SCC);
     static char ID; // Pass identification, replacement for typeid
     explicit ArgPromotion(unsigned maxElements = 3)
-      : CallGraphSCCPass(ID), maxElements(maxElements) {}
+        : CallGraphSCCPass(ID), maxElements(maxElements) {
+      initializeArgPromotionPass(*PassRegistry::getPassRegistry());
+    }
 
     /// A vector used to hold the indices of a single GEP instruction
     typedef std::vector<uint64_t> IndicesVector;
@@ -87,6 +89,7 @@ char ArgPromotion::ID = 0;
 INITIALIZE_PASS_BEGIN(ArgPromotion, "argpromotion",
                 "Promote 'by reference' arguments to scalars", false, false)
 INITIALIZE_AG_DEPENDENCY(AliasAnalysis)
+INITIALIZE_AG_DEPENDENCY(CallGraph)
 INITIALIZE_PASS_END(ArgPromotion, "argpromotion",
                 "Promote 'by reference' arguments to scalars", false, false)
 
@@ -448,7 +451,7 @@ bool ArgPromotion::isSafeToPromoteArgument(Argument *Arg, bool isByVal) const {
 
     const PointerType *LoadTy =
       cast<PointerType>(Load->getPointerOperand()->getType());
-    unsigned LoadSize =(unsigned)TD->getTypeStoreSize(LoadTy->getElementType());
+    uint64_t LoadSize = TD->getTypeStoreSize(LoadTy->getElementType());
 
     if (AA.canInstructionRangeModify(BB->front(), *Load, Arg, LoadSize))
       return false;  // Pointer is invalidated!

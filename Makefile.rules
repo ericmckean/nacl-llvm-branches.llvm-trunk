@@ -301,7 +301,7 @@ ifneq ($(REQUIRES_RTTI), 1)
   CXX.Flags += -fno-rtti
 endif
 
-ifdef ENABLE_COVERAGE
+ifeq ($(ENABLE_COVERAGE),1)
   BuildMode := $(BuildMode)+Coverage
   CXX.Flags += -ftest-coverage -fprofile-arcs
   C.Flags   += -ftest-coverage -fprofile-arcs
@@ -309,17 +309,17 @@ endif
 
 # If DISABLE_ASSERTIONS=1 is specified (make command line or configured),
 # then disable assertions by defining the appropriate preprocessor symbols.
-ifndef DISABLE_ASSERTIONS
+ifeq ($(DISABLE_ASSERTIONS),1)
+  CPP.Defines += -DNDEBUG
+else
   BuildMode := $(BuildMode)+Asserts
   CPP.Defines += -D_DEBUG
-else
-  CPP.Defines += -DNDEBUG
 endif
 
 # If ENABLE_EXPENSIVE_CHECKS=1 is specified (make command line or
 # configured), then enable expensive checks by defining the
 # appropriate preprocessor symbols.
-ifdef ENABLE_EXPENSIVE_CHECKS
+ifeq ($(ENABLE_EXPENSIVE_CHECKS),1)
   BuildMode := $(BuildMode)+Checks
   CPP.Defines += -D_GLIBCXX_DEBUG -DXDEBUG
 endif
@@ -548,15 +548,21 @@ ifndef KEEP_SYMBOLS
   Install.StripFlag += -s
 endif
 
+ifdef TOOL_NO_EXPORTS
+  DynamicFlags :=
+else
+  DynamicFlag := $(RDYNAMIC)
+endif
+
 # Adjust linker flags for building an executable
 ifneq ($(HOST_OS), $(filter $(HOST_OS), Cygwin MingW))
 ifneq ($(HOST_OS), Darwin)
 ifdef TOOLNAME
   LD.Flags += $(RPATH) -Wl,'$$ORIGIN/../lib'
   ifdef EXAMPLE_TOOL
-    LD.Flags += $(RPATH) -Wl,$(ExmplDir) $(RDYNAMIC)
+    LD.Flags += $(RPATH) -Wl,$(ExmplDir) $(DynamicFlag)
   else
-    LD.Flags += $(RPATH) -Wl,$(ToolDir) $(RDYNAMIC)
+    LD.Flags += $(RPATH) -Wl,$(ToolDir) $(DynamicFlag)
   endif
 endif
 else
@@ -1779,7 +1785,7 @@ $(INCTMPFiles) : $(TBLGEN) $(TDFiles)
 
 $(ObjDir)/%.inc.tmp: %.td $(ObjDir)/.dir
 	$(Echo) "Building LLVMC compilation graph description with tblgen"
-	$(Verb) $(TableGen) -gen-llvmc -llvmc-temp-hack -o $(call SYSPATH, $@) $<
+	$(Verb) $(TableGen) -gen-llvmc -o $(call SYSPATH, $@) $<
 
 clean-local::
 	-$(Verb) $(RM) -f $(INCFiles)
