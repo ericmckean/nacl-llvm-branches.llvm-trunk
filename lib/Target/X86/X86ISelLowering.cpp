@@ -8042,9 +8042,10 @@ SDValue X86TargetLowering::LowerEH_RETURN(SDValue Op, SelectionDAG &DAG) const {
                                      Has64BitPtrs ? X86::RBP : X86::EBP,
                                      getPointerTy());
   unsigned StoreAddrReg = (Has64BitPtrs ? X86::RCX : X86::ECX);
-  // @LOCALMOD-END
+  int SlotSize = Subtarget->is64Bit() ? 8 : 4;
   SDValue StoreAddr = DAG.getNode(ISD::ADD, dl, getPointerTy(), Frame,
-                                  DAG.getIntPtrConstant(TD->getPointerSize()));
+                                  DAG.getIntPtrConstant(SlotSize));
+  // @LOCALMOD-END
   StoreAddr = DAG.getNode(ISD::ADD, dl, getPointerTy(), StoreAddr, Offset);
   Chain = DAG.getStore(Chain, dl, Handler, StoreAddr, MachinePointerInfo(),
                        false, false, 0);
