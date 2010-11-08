@@ -1371,7 +1371,7 @@ void X86RegisterInfo::emitEpilogue(MachineFunction &MF,
                RetOpcode == X86::NACL_TCRETURNdi64) {
       // This particular (direct jump) is currently the same across NaCl
       // and non-NaCl targets, but a separate case is added for consistency.
-      BuildMI(MBB, MBBI, DL, TII.get((RetOpcode == X86::TCRETURNdi)
+      BuildMI(MBB, MBBI, DL, TII.get((RetOpcode == X86::NACL_TCRETURNdi)
                                      ? X86::NACL_TAILJMPd
                                      : X86::NACL_TAILJMPd64)).
         addGlobalAddress(JumpTarget.getGlobal(), JumpTarget.getOffset(),
