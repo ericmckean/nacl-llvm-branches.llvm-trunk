@@ -27,8 +27,7 @@ ARMConstantPoolValue::ARMConstantPoolValue(const Constant *cval, unsigned id,
                                            const char *Modif,
                                            bool AddCA)
   : MachineConstantPoolValue((const Type*)cval->getType()),
-    // @LOCALMOD
-    CVal(cval), S(NULL),  JumpTableIndex(0), LabelId(id), Kind(K), PCAdjust(PCAdj),
+    CVal(cval), S(NULL), LabelId(id), Kind(K), PCAdjust(PCAdj),
     Modifier(Modif), AddCurrentAddress(AddCA) {}
 
 ARMConstantPoolValue::ARMConstantPoolValue(LLVMContext &C,
@@ -37,24 +36,14 @@ ARMConstantPoolValue::ARMConstantPoolValue(LLVMContext &C,
                                            const char *Modif,
                                            bool AddCA)
   : MachineConstantPoolValue((const Type*)Type::getInt32Ty(C)),
-    // @LOCALMOD
-    CVal(NULL), S(strdup(s)), JumpTableIndex(0), LabelId(id), Kind(ARMCP::CPExtSymbol),
+    CVal(NULL), S(strdup(s)), LabelId(id), Kind(ARMCP::CPExtSymbol),
     PCAdjust(PCAdj), Modifier(Modif), AddCurrentAddress(AddCA) {}
 
 ARMConstantPoolValue::ARMConstantPoolValue(const GlobalValue *gv,
                                            const char *Modif)
   : MachineConstantPoolValue((const Type*)Type::getInt32Ty(gv->getContext())),
-    // @LOCALMOD
-    CVal(gv), S(NULL), JumpTableIndex(0), LabelId(0), Kind(ARMCP::CPValue), PCAdjust(0),
+    CVal(gv), S(NULL), LabelId(0), Kind(ARMCP::CPValue), PCAdjust(0),
     Modifier(Modif) {}
-
-// @LOCALMOD-START
-ARMConstantPoolValue::ARMConstantPoolValue(LLVMContext &C, unsigned jt)
-  : MachineConstantPoolValue((const Type*)Type::getInt32Ty(C)),
-      CVal(NULL), S(NULL), JumpTableIndex(jt), LabelId(0), Kind(ARMCP::CPJumpTable),
-    PCAdjust(0), Modifier(NULL) {}
-// @LOCALMOD-END
-
 
 
 const GlobalValue *ARMConstantPoolValue::getGV() const {
@@ -84,7 +73,6 @@ int ARMConstantPoolValue::getExistingMachineCPValue(MachineConstantPool *CP,
         (ARMConstantPoolValue *)Constants[i].Val.MachineCPVal;
       if (CPV->CVal == CVal &&
           CPV->LabelId == LabelId &&
-          CPV->JumpTableIndex == JumpTableIndex && // @LOCALMOD
           CPV->PCAdjust == PCAdjust &&
           CPV_streq(CPV->S, S) &&
           CPV_streq(CPV->Modifier, Modifier))
@@ -103,7 +91,6 @@ void
 ARMConstantPoolValue::AddSelectionDAGCSEId(FoldingSetNodeID &ID) {
   ID.AddPointer(CVal);
   ID.AddPointer(S);
-  ID.AddInteger(JumpTableIndex);   // @LOCALMOD
   ID.AddInteger(LabelId);
   ID.AddInteger(PCAdjust);
 }
@@ -112,7 +99,6 @@ bool
 ARMConstantPoolValue::hasSameValue(ARMConstantPoolValue *ACPV) {
   if (ACPV->Kind == Kind &&
       ACPV->CVal == CVal &&
-      ACPV->JumpTableIndex == JumpTableIndex && // @LOCALMOD
       ACPV->PCAdjust == PCAdjust &&
       CPV_streq(ACPV->S, S) &&
       CPV_streq(ACPV->Modifier, Modifier)) {
@@ -134,10 +120,6 @@ void ARMConstantPoolValue::dump() const {
 void ARMConstantPoolValue::print(raw_ostream &O) const {
   if (CVal)
     O << CVal->getName();
-  // @LOCALMOD-START
-  else if (isJumpTable())
-    O << "jumptable_" << JumpTableIndex;
-  // @LOCALMOD-END
   else
     O << S;
   if (Modifier) O << "(" << Modifier << ")";

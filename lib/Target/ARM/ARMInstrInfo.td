@@ -73,6 +73,12 @@ def SDT_ARMBFI : SDTypeProfile<1, 3, [SDTCisVT<0, i32>, SDTCisVT<1, i32>,
 // Node definitions.
 def ARMWrapper       : SDNode<"ARMISD::Wrapper",     SDTIntUnaryOp>;
 def ARMWrapperJT     : SDNode<"ARMISD::WrapperJT",   SDTIntBinOp>;
+// @LOCALMOD-START
+// support non-inline jumptables
+// we do not use the extre uid immediate that comes with ARMWrapperJT
+// TODO(robertm): figure out what it is used for
+def ARMWrapperJT2    : SDNode<"ARMISD::WrapperJT2",  SDTIntUnaryOp>;
+// @LOCALMOD-END
 
 def ARMcallseq_start : SDNode<"ISD::CALLSEQ_START", SDT_ARMCallSeqStart,
                               [SDNPHasChain, SDNPOutFlag]>;
@@ -3147,6 +3153,10 @@ def : ARMPat<(ARMWrapper  tglobaladdr :$dst), (LEApcrel tglobaladdr :$dst)>,
 def : ARMPat<(ARMWrapper  tconstpool  :$dst), (LEApcrel tconstpool  :$dst)>;
 def : ARMPat<(ARMWrapper  tglobaladdr :$dst), (MOVi32imm tglobaladdr :$dst)>,
             Requires<[IsARM, UseMovt]>;
+// @LOCALMOD-START
+def : ARMPat<(ARMWrapperJT2  tjumptable :$dst), (MOVi32imm tjumptable :$dst)>,
+            Requires<[IsARM, UseMovt]>;
+// @LOCALMOD-END
 def : ARMPat<(ARMWrapperJT tjumptable:$dst, imm:$id),
              (LEApcrelJT tjumptable:$dst, imm:$id)>;
 

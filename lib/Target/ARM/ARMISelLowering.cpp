@@ -739,6 +739,7 @@ const char *ARMTargetLowering::getTargetNodeName(unsigned Opcode) const {
   default: return 0;
   case ARMISD::Wrapper:       return "ARMISD::Wrapper";
   case ARMISD::WrapperJT:     return "ARMISD::WrapperJT";
+  case ARMISD::WrapperJT2:    return "ARMISD::WrapperJT2"; // @LOCALMOD
   case ARMISD::CALL:          return "ARMISD::CALL";
   case ARMISD::CALL_PRED:     return "ARMISD::CALL_PRED";
   case ARMISD::CALL_NOLINK:   return "ARMISD::CALL_NOLINK";
@@ -1783,20 +1784,11 @@ SDValue ARMTargetLowering::LowerBlockAddress(SDValue Op,
 SDValue ARMTargetLowering::LowerJumpTable(SDValue Op, SelectionDAG &DAG) const {
   assert(!Subtarget->useInlineJumpTables() &&
          "inline jump tables not custom lowered");
-  const MVT PTy = getPointerTy();
-  const JumpTableSDNode *JT = cast<JumpTableSDNode>(Op);
-  const SDValue JTI = DAG.getTargetJumpTable(JT->getIndex(), PTy);
   const DebugLoc dl = Op.getDebugLoc();
-
-  ARMConstantPoolValue *CPV = new ARMConstantPoolValue(*DAG.getContext(),
-                                                       JT->getIndex());
-  // TODO: factor this idiom to load a value from a CP into a new function
-  const SDValue PoolEntry = DAG.getTargetConstantPool(CPV, PTy, 4);
-  const SDValue PoolWrapper = DAG.getNode(ARMISD::Wrapper, dl, PTy, PoolEntry);
-  return DAG.getLoad(PTy, dl, DAG.getEntryNode(), PoolWrapper,
-                     MachinePointerInfo(),
-                     false, false, 0);
-
+  EVT PTy = getPointerTy();
+  JumpTableSDNode *JT = cast<JumpTableSDNode>(Op);
+  SDValue JTI = DAG.getTargetJumpTable(JT->getIndex(), PTy);
+  return DAG.getNode(ARMISD::WrapperJT2, dl, MVT::i32, JTI);
 }
 // @LOCALMOD-END
 
