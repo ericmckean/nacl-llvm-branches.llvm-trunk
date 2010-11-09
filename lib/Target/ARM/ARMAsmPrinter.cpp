@@ -232,6 +232,12 @@ namespace {
 
     MCSymbol *GetARMSJLJEHLabel(void) const;
 
+    // @LOCALMOD-START
+    virtual bool UseReadOnlyJumpTables() const {
+      return true; // should be IsNaCl
+    }
+    // @LOCALMOD-END
+
     /// EmitMachineConstantPoolValue - Print a machine constantpool value to
     /// the .s file.
     virtual void EmitMachineConstantPoolValue(MachineConstantPoolValue *MCPV) {
@@ -1458,4 +1464,3 @@ extern "C" void LLVMInitializeARMAsmPrinter() {
   TargetRegistry::RegisterMCInstPrinter(TheARMTarget, createARMMCInstPrinter);
   TargetRegistry::RegisterMCInstPrinter(TheThumbTarget, createARMMCInstPrinter);
 }
-

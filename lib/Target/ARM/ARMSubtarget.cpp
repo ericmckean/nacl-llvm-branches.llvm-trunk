@@ -28,9 +28,7 @@ UseMOVT("arm-use-movt",
         cl::init(true), cl::Hidden);
 
 // @LOCALMOD-START
-// TODO: * This does not currently work as expected for PIC mode:
-//         It does work, but the table still ends up in the .text section.
-//       * JITing has not been tested at all
+// TODO: * JITing has not been tested at all
 //       * Thumb mode operation is also not clear: it seems jump tables
 //         for thumb are broken independent of this option
 static cl::opt<bool>

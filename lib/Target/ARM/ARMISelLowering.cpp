@@ -1742,7 +1742,8 @@ unsigned ARMTargetLowering::getJumpTableEncoding() const {
   if (Subtarget->useInlineJumpTables()) { 
     return MachineJumpTableInfo::EK_Inline;
   } else {
-    return MachineJumpTableInfo::EK_BlockAddress;
+    // TODO: Find a better way to call the super-class.
+    return TargetLowering::getJumpTableEncoding();
   }
   // @LOCALMOD-END
 }
