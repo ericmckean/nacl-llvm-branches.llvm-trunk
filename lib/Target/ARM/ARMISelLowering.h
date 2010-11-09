@@ -35,6 +35,7 @@ namespace llvm {
       Wrapper,      // Wrapper - A wrapper node for TargetConstantPool,
                     // TargetExternalSymbol, and TargetGlobalAddress.
       WrapperJT,    // WrapperJT - A wrapper node for TargetJumpTable
+      WrapperJT2,   // @LOCALMOD like WrapperJT but without the UID
 
       CALL,         // Function call.
       CALL_PRED,    // Function call that's predicable.

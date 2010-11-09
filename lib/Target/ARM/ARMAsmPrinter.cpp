@@ -260,12 +260,6 @@ namespace {
 
       if (ACPV->isLSDA()) {
         O << MAI->getPrivateGlobalPrefix() << "_LSDA_" << getFunctionNumber();
-// @LOCALMOD-START
-      } else if (ACPV->isJumpTable()) {
-        O << std::string(MAI->getPrivateGlobalPrefix()) + "JTI" +
-               utostr(getFunctionNumber()) + '_' +
-               utostr(*ACPV->getJumpTableIndex());
-// @LOCALMOD-END
       } else if (ACPV->isBlockAddress()) {
         O << *GetBlockAddressSymbol(ACPV->getBlockAddress());
       } else if (ACPV->isGlobalValue()) {

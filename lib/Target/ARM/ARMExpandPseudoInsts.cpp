@@ -697,11 +697,19 @@ bool ARMExpandPseudo::ExpandMBB(MachineBasicBlock &MBB) {
         unsigned Hi16 = (Imm >> 16) & 0xffff;
         LO16 = LO16.addImm(Lo16);
         HI16 = HI16.addImm(Hi16);
-      } else {
+      } else if (MO.isGlobal()) { // @LOCALMOD
         const GlobalValue *GV = MO.getGlobal();
         unsigned TF = MO.getTargetFlags();
         LO16 = LO16.addGlobalAddress(GV, MO.getOffset(), TF | ARMII::MO_LO16);
         HI16 = HI16.addGlobalAddress(GV, MO.getOffset(), TF | ARMII::MO_HI16);
+      // @LOCALMOD-START - support for jumptable addresses
+      } else if (MO.isJTI()){
+        unsigned TF = MO.getTargetFlags();
+        LO16 = LO16.addJumpTableIndex(MO.getIndex(), TF | ARMII::MO_LO16);
+        HI16 = HI16.addJumpTableIndex(MO.getIndex(), TF | ARMII::MO_HI16);
+      } else {
+        assert (0 && "unexpected operand");
+      // @LOCALMOD-END
       }
       (*LO16).setMemRefs(MI.memoperands_begin(), MI.memoperands_end());
       (*HI16).setMemRefs(MI.memoperands_begin(), MI.memoperands_end());
