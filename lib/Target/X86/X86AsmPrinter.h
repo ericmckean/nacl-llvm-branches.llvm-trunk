@@ -53,6 +53,7 @@ class LLVM_LIBRARY_VISIBILITY X86AsmPrinter : public AsmPrinter {
 
   virtual void EmitFunctionBodyEnd(); // @LOCALMOD
   virtual bool UseReadOnlyJumpTables() const; // @LOCALMOD
+  virtual unsigned GetTargetLabelAlign(const MachineInstr *MI) const;//@LOCALMOD
 
   void printSymbolOperand(const MachineOperand &MO, raw_ostream &O);
 

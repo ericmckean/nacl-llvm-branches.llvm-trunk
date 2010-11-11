@@ -236,6 +236,7 @@ namespace {
     virtual bool UseReadOnlyJumpTables() const {
       return true; // should be IsNaCl
     }
+    virtual unsigned GetTargetLabelAlign(const MachineInstr *MI) const;
     // @LOCALMOD-END
 
     /// EmitMachineConstantPoolValue - Print a machine constantpool value to
@@ -303,13 +304,13 @@ namespace {
 // @LOCALMOD-START
 // Make sure all jump targets are aligned and also all constant pools
 void NaclAlignAllJumpTargetsAndConstantPools(MachineFunction &MF) {
-  // JUMP TABLE TARGETS  
+  // JUMP TABLE TARGETS
   MachineJumpTableInfo *jt_info = MF.getJumpTableInfo();
   if (jt_info) {
     const std::vector<MachineJumpTableEntry> &JT = jt_info->getJumpTables();
     for (unsigned i=0; i < JT.size(); ++i) {
       std::vector<MachineBasicBlock*> MBBs = JT[i].MBBs;
-      
+
       for (unsigned j=0; j < MBBs.size(); ++j) {
         if (MBBs[j]->begin()->getOpcode() == ARM::CONSTPOOL_ENTRY) {
           continue;
@@ -318,7 +319,7 @@ void NaclAlignAllJumpTargetsAndConstantPools(MachineFunction &MF) {
       }
     }
   }
-  
+
   // FIRST ENTRY IN A ConstanPool
   bool last_bb_was_constant_pool = false;
   for (MachineFunction::iterator I = MF.begin(), E = MF.end();
@@ -326,20 +327,36 @@ void NaclAlignAllJumpTargetsAndConstantPools(MachineFunction &MF) {
     if (I->isLandingPad()) {
         I->setAlignment(16);
     }
-    
+
     if (I->empty()) continue;
-    
+
     bool is_constant_pool = I->begin()->getOpcode() == ARM::CONSTPOOL_ENTRY;
 
     if (last_bb_was_constant_pool != is_constant_pool) {
       I->setAlignment(16);
     }
-    
+
     last_bb_was_constant_pool = is_constant_pool;
   }
 }
-// @LOCALMOD-END
 
+unsigned ARMAsmPrinter::GetTargetLabelAlign(const MachineInstr *MI) const {
+  if (true /* Subtarget->isTargetNaCl() */) {
+    switch (MI->getOpcode()) {
+      default: return 0;
+      // These labels may indicate an indirect entry point that is
+      // externally reachable and hence must be bundle aligned.
+      // Note: these labels appear to be always at basic block beginnings
+      // so it may be possible to simply set the MBB alignment.
+      // However, it is unclear whether this always holds.
+      case TargetOpcode::EH_LABEL:
+      case TargetOpcode::GC_LABEL:
+        return 4;
+    }
+  }
+  return 0;
+}
+// @LOCALMOD-END
 
 
 void ARMAsmPrinter::EmitFunctionEntryLabel() {
