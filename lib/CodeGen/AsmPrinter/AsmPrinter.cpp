@@ -647,16 +647,14 @@ void AsmPrinter::EmitFunctionBody() {
       switch (II->getOpcode()) {
       case TargetOpcode::PROLOG_LABEL:
       case TargetOpcode::EH_LABEL:
-      case TargetOpcode::GC_LABEL:
-       // @LOCALMOD-START
-       // These labels may indicate an indirect entry point
-       // that is externally reachable and hence must be bundle aligned.
-       // Note: these labels appear to be always at bundle beginnings
-       //       but it is unclear whether this always holds
-       EmitAlignment(5);
-       // @LOCALMOD-END
-       OutStreamer.EmitLabel(II->getOperand(0).getMCSymbol());
+      case TargetOpcode::GC_LABEL: {
+        // @LOCALMOD-START
+        unsigned LabelAlign = GetTargetLabelAlign(II);
+        if (LabelAlign) EmitAlignment(LabelAlign);
+        // @LOCALMOD-END
+        OutStreamer.EmitLabel(II->getOperand(0).getMCSymbol());
         break;
+      }
       case TargetOpcode::INLINEASM:
         EmitInlineAsm(II);
         break;
@@ -1093,7 +1091,6 @@ void AsmPrinter::EmitJumpTableEntry(const MachineJumpTableInfo *MJTI,
   unsigned EntrySize = MJTI->getEntrySize(*TM.getTargetData());
   OutStreamer.EmitValue(Value, EntrySize, /*addrspace*/0);
 }
-
 
 /// EmitSpecialLLVMGlobal - Check to see if the specified global is a
 /// special global used by LLVM.  If so, emit it and return true, otherwise
