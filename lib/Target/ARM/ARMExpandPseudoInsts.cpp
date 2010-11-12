@@ -110,6 +110,13 @@ namespace {
 }
 
 static const NEONLdStTableEntry NEONLdStTable[] = {
+{ ARM::VLD1LNq16Pseudo,     ARM::VLD1LNd16,     true, false, EvenDblSpc, 1, 4 },
+{ ARM::VLD1LNq16Pseudo_UPD, ARM::VLD1LNd16_UPD, true, true,  EvenDblSpc, 1, 4 },
+{ ARM::VLD1LNq32Pseudo,     ARM::VLD1LNd32,     true, false, EvenDblSpc, 1, 2 },
+{ ARM::VLD1LNq32Pseudo_UPD, ARM::VLD1LNd32_UPD, true, true,  EvenDblSpc, 1, 2 },
+{ ARM::VLD1LNq8Pseudo,      ARM::VLD1LNd8,      true, false, EvenDblSpc, 1, 8 },
+{ ARM::VLD1LNq8Pseudo_UPD,  ARM::VLD1LNd8_UPD,  true, true,  EvenDblSpc, 1, 8 },
+
 { ARM::VLD1d64QPseudo,      ARM::VLD1d64Q,     true,  false, SingleSpc,  4, 1 },
 { ARM::VLD1d64QPseudo_UPD,  ARM::VLD1d64Q_UPD, true,  true,  SingleSpc,  4, 1 },
 { ARM::VLD1d64TPseudo,      ARM::VLD1d64T,     true,  false, SingleSpc,  3, 1 },
@@ -198,6 +205,13 @@ static const NEONLdStTableEntry NEONLdStTable[] = {
 { ARM::VLD4q32oddPseudo_UPD, ARM::VLD4q32_UPD, true,  true,  OddDblSpc,  4, 2 },
 { ARM::VLD4q8Pseudo_UPD,     ARM::VLD4q8_UPD,  true,  true,  EvenDblSpc, 4, 8 },
 { ARM::VLD4q8oddPseudo_UPD,  ARM::VLD4q8_UPD,  true,  true,  OddDblSpc,  4, 8 },
+
+{ ARM::VST1LNq16Pseudo,     ARM::VST1LNd16,    false, false, EvenDblSpc, 1, 4 },
+{ ARM::VST1LNq16Pseudo_UPD, ARM::VST1LNd16_UPD,false, true,  EvenDblSpc, 1, 4 },
+{ ARM::VST1LNq32Pseudo,     ARM::VST1LNd32,    false, false, EvenDblSpc, 1, 2 },
+{ ARM::VST1LNq32Pseudo_UPD, ARM::VST1LNd32_UPD,false, true,  EvenDblSpc, 1, 2 },
+{ ARM::VST1LNq8Pseudo,      ARM::VST1LNd8,     false, false, EvenDblSpc, 1, 8 },
+{ ARM::VST1LNq8Pseudo_UPD,  ARM::VST1LNd8_UPD, false, true,  EvenDblSpc, 1, 8 },
 
 { ARM::VST1d64QPseudo,      ARM::VST1d64Q,     false, false, SingleSpc,  4, 1 },
 { ARM::VST1d64QPseudo_UPD,  ARM::VST1d64Q_UPD, false, true,  SingleSpc,  4, 1 },
@@ -476,8 +490,9 @@ void ARMExpandPseudo::ExpandLaneOp(MachineBasicBlock::iterator &MBBI) {
     DstIsDead = MI.getOperand(OpIdx).isDead();
     DstReg = MI.getOperand(OpIdx++).getReg();
     GetDSubRegs(DstReg, RegSpc, TRI, D0, D1, D2, D3);
-    MIB.addReg(D0, RegState::Define | getDeadRegState(DstIsDead))
-      .addReg(D1, RegState::Define | getDeadRegState(DstIsDead));
+    MIB.addReg(D0, RegState::Define | getDeadRegState(DstIsDead));
+    if (NumRegs > 1)
+      MIB.addReg(D1, RegState::Define | getDeadRegState(DstIsDead));
     if (NumRegs > 2)
       MIB.addReg(D2, RegState::Define | getDeadRegState(DstIsDead));
     if (NumRegs > 3)
@@ -502,7 +517,9 @@ void ARMExpandPseudo::ExpandLaneOp(MachineBasicBlock::iterator &MBBI) {
   // Add the subregs as sources of the new instruction.
   unsigned SrcFlags = (getUndefRegState(MO.isUndef()) |
                        getKillRegState(MO.isKill()));
-  MIB.addReg(D0, SrcFlags).addReg(D1, SrcFlags);
+  MIB.addReg(D0, SrcFlags);
+  if (NumRegs > 1)
+    MIB.addReg(D1, SrcFlags);
   if (NumRegs > 2)
     MIB.addReg(D2, SrcFlags);
   if (NumRegs > 3)
@@ -712,6 +729,34 @@ bool ARMExpandPseudo::ExpandMBB(MachineBasicBlock &MBB) {
       break;
     }
 
+    case ARM::MOVi2pieces: {
+      unsigned PredReg = 0;
+      ARMCC::CondCodes Pred = llvm::getInstrPredicate(&MI, PredReg);
+      unsigned DstReg = MI.getOperand(0).getReg();
+      bool DstIsDead = MI.getOperand(0).isDead();
+      const MachineOperand &MO = MI.getOperand(1);
+      MachineInstrBuilder LO16, HI16;
+
+      LO16 = BuildMI(MBB, MBBI, MI.getDebugLoc(), TII->get(ARM::MOVi), DstReg);
+      HI16 = BuildMI(MBB, MBBI, MI.getDebugLoc(), TII->get(ARM::ORRri))
+        .addReg(DstReg, RegState::Define | getDeadRegState(DstIsDead))
+        .addReg(DstReg);
+
+      assert (MO.isImm() && "MOVi2pieces w/ non-immediate source operand!");
+      unsigned ImmVal = (unsigned)MO.getImm();
+      unsigned SOImmValV1 = ARM_AM::getSOImmTwoPartFirst(ImmVal);
+      unsigned SOImmValV2 = ARM_AM::getSOImmTwoPartSecond(ImmVal);
+      LO16 = LO16.addImm(SOImmValV1);
+      HI16 = HI16.addImm(SOImmValV2);
+      (*LO16).setMemRefs(MI.memoperands_begin(), MI.memoperands_end());
+      (*HI16).setMemRefs(MI.memoperands_begin(), MI.memoperands_end());
+      LO16.addImm(Pred).addReg(PredReg).addReg(0);
+      HI16.addImm(Pred).addReg(PredReg).addReg(0);
+      TransferImpOps(MI, LO16, HI16);
+      MI.eraseFromParent();
+      break;
+    }
+
     case ARM::VMOVQQ: {
       unsigned DstReg = MI.getOperand(0).getReg();
       bool DstIsDead = MI.getOperand(0).isDead();
@@ -915,6 +960,12 @@ bool ARMExpandPseudo::ExpandMBB(MachineBasicBlock &MBB) {
       ExpandVST(MBBI);
       break;
 
+    case ARM::VLD1LNq8Pseudo:
+    case ARM::VLD1LNq16Pseudo:
+    case ARM::VLD1LNq32Pseudo:
+    case ARM::VLD1LNq8Pseudo_UPD:
+    case ARM::VLD1LNq16Pseudo_UPD:
+    case ARM::VLD1LNq32Pseudo_UPD:
     case ARM::VLD2LNd8Pseudo:
     case ARM::VLD2LNd16Pseudo:
     case ARM::VLD2LNd32Pseudo:
@@ -945,6 +996,12 @@ bool ARMExpandPseudo::ExpandMBB(MachineBasicBlock &MBB) {
     case ARM::VLD4LNd32Pseudo_UPD:
     case ARM::VLD4LNq16Pseudo_UPD:
     case ARM::VLD4LNq32Pseudo_UPD:
+    case ARM::VST1LNq8Pseudo:
+    case ARM::VST1LNq16Pseudo:
+    case ARM::VST1LNq32Pseudo:
+    case ARM::VST1LNq8Pseudo_UPD:
+    case ARM::VST1LNq16Pseudo_UPD:
+    case ARM::VST1LNq32Pseudo_UPD:
     case ARM::VST2LNd8Pseudo:
     case ARM::VST2LNd16Pseudo:
     case ARM::VST2LNd32Pseudo:

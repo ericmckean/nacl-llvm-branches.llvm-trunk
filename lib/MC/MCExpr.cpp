@@ -51,7 +51,12 @@ void MCExpr::print(raw_ostream &OS) const {
     else
       OS << Sym;
 
-    if (SRE.getKind() == MCSymbolRefExpr::VK_ARM_PLT)
+    if (SRE.getKind() == MCSymbolRefExpr::VK_ARM_PLT ||
+        SRE.getKind() == MCSymbolRefExpr::VK_ARM_TLSGD ||
+        SRE.getKind() == MCSymbolRefExpr::VK_ARM_GOT ||
+        SRE.getKind() == MCSymbolRefExpr::VK_ARM_GOTOFF ||
+        SRE.getKind() == MCSymbolRefExpr::VK_ARM_TPOFF ||
+        SRE.getKind() == MCSymbolRefExpr::VK_ARM_GOTTPOFF)
       OS << MCSymbolRefExpr::getVariantKindName(SRE.getKind());
     else if (SRE.getKind() != MCSymbolRefExpr::VK_None &&
              SRE.getKind() != MCSymbolRefExpr::VK_ARM_HI16 &&
@@ -175,12 +180,21 @@ StringRef MCSymbolRefExpr::getVariantKindName(VariantKind Kind) {
   case VK_GOTTPOFF: return "GOTTPOFF";
   case VK_INDNTPOFF: return "INDNTPOFF";
   case VK_NTPOFF: return "NTPOFF";
+  case VK_GOTNTPOFF: return "GOTNTPOFF";
   case VK_PLT: return "PLT";
   case VK_TLSGD: return "TLSGD";
+  case VK_TLSLD: return "TLSLD";
+  case VK_TLSLDM: return "TLSLDM";
   case VK_TPOFF: return "TPOFF";
+  case VK_DTPOFF: return "DTPOFF";
   case VK_ARM_HI16: return ":upper16:";
   case VK_ARM_LO16: return ":lower16:";
   case VK_ARM_PLT: return "(PLT)";
+  case VK_ARM_GOT: return "(GOT)";
+  case VK_ARM_GOTOFF: return "(GOTOFF)";
+  case VK_ARM_TPOFF: return "(tpoff)";
+  case VK_ARM_GOTTPOFF: return "(gottpoff)";
+  case VK_ARM_TLSGD: return "(tldgd)";
   case VK_TLVP: return "TLVP";
   }
 }
@@ -194,9 +208,13 @@ MCSymbolRefExpr::getVariantKindForName(StringRef Name) {
     .Case("GOTTPOFF", VK_GOTTPOFF)
     .Case("INDNTPOFF", VK_INDNTPOFF)
     .Case("NTPOFF", VK_NTPOFF)
+    .Case("GOTNTPOFF", VK_GOTNTPOFF)
     .Case("PLT", VK_PLT)
     .Case("TLSGD", VK_TLSGD)
+    .Case("TLSLD", VK_TLSLD)
+    .Case("TLSLDM", VK_TLSLDM)
     .Case("TPOFF", VK_TPOFF)
+    .Case("DTPOFF", VK_DTPOFF)
     .Case("TLVP", VK_TLVP)
     .Default(VK_Invalid);
 }

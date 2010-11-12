@@ -101,7 +101,6 @@ namespace {
                                     unsigned OpIdx);
 
     unsigned getMachineSoImmOpValue(unsigned SoImm);
-
     unsigned getAddrModeSBit(const MachineInstr &MI,
                              const TargetInstrDesc &TID) const;
 
@@ -162,18 +161,87 @@ namespace {
     //  are already handled elsewhere. They are placeholders to allow this
     //  encoder to continue to function until the MC encoder is sufficiently
     //  far along that this one can be eliminated entirely.
+    unsigned NEONThumb2DataIPostEncoder(const MachineInstr &MI, unsigned Val) 
+      const { return 0; }
+    unsigned NEONThumb2LoadStorePostEncoder(const MachineInstr &MI,unsigned Val) 
+      const { return 0; }
+    unsigned NEONThumb2DupPostEncoder(const MachineInstr &MI,unsigned Val) 
+      const { return 0; }
+    unsigned getBranchTargetOpValue(const MachineInstr &MI, unsigned Op)
+      const { return 0; }
     unsigned getCCOutOpValue(const MachineInstr &MI, unsigned Op)
       const { return 0; }
     unsigned getSOImmOpValue(const MachineInstr &MI, unsigned Op)
       const { return 0; }
+    unsigned getT2SOImmOpValue(const MachineInstr &MI, unsigned Op)
+      const { return 0; }
     unsigned getSORegOpValue(const MachineInstr &MI, unsigned Op)
+      const { return 0; }
+    unsigned getT2SORegOpValue(const MachineInstr &MI, unsigned Op)
       const { return 0; }
     unsigned getRotImmOpValue(const MachineInstr &MI, unsigned Op)
       const { return 0; }
     unsigned getImmMinusOneOpValue(const MachineInstr &MI, unsigned Op)
       const { return 0; }
+    unsigned getAddrMode6AddressOpValue(const MachineInstr &MI, unsigned Op)
+      const { return 0; }
+    unsigned getAddrMode6OffsetOpValue(const MachineInstr &MI, unsigned Op)
+      const { return 0; }
     unsigned getBitfieldInvertedMaskOpValue(const MachineInstr &MI,
                                             unsigned Op) const { return 0; }
+    uint32_t getLdStmModeOpValue(const MachineInstr &MI, unsigned OpIdx)
+      const {return 0; }
+    uint32_t getLdStSORegOpValue(const MachineInstr &MI, unsigned OpIdx)
+      const { return 0; }
+
+    unsigned getAddrModeImm12OpValue(const MachineInstr &MI, unsigned Op)
+      const {
+      // {17-13} = reg
+      // {12}    = (U)nsigned (add == '1', sub == '0')
+      // {11-0}  = imm12
+      const MachineOperand &MO  = MI.getOperand(Op);
+      const MachineOperand &MO1 = MI.getOperand(Op + 1);
+      if (!MO.isReg()) {
+        emitConstPoolAddress(MO.getIndex(), ARM::reloc_arm_cp_entry);
+        return 0;
+      }
+      unsigned Reg = getARMRegisterNumbering(MO.getReg());
+      int32_t Imm12 = MO1.getImm();
+      uint32_t Binary;
+      Binary = Imm12 & 0xfff;
+      if (Imm12 >= 0)
+        Binary |= (1 << 12);
+      Binary |= (Reg << 13);
+      return Binary;
+    }
+    uint32_t getAddrMode3OffsetOpValue(const MachineInstr &MI, unsigned OpIdx)
+      const { return 0;}
+    uint32_t getAddrMode3OpValue(const MachineInstr &MI, unsigned Op) const
+      { return 0; }
+    uint32_t getAddrMode5OpValue(const MachineInstr &MI, unsigned Op) const {
+      // {12-9}  = reg
+      // {8}     = (U)nsigned (add == '1', sub == '0')
+      // {7-0}   = imm12
+      const MachineOperand &MO  = MI.getOperand(Op);
+      const MachineOperand &MO1 = MI.getOperand(Op + 1);
+      if (!MO.isReg()) {
+        emitConstPoolAddress(MO.getIndex(), ARM::reloc_arm_cp_entry);
+        return 0;
+      }
+      unsigned Reg = getARMRegisterNumbering(MO.getReg());
+      int32_t Imm8 = MO1.getImm();
+      uint32_t Binary;
+      Binary = Imm8 & 0xff;
+      if (Imm8 >= 0)
+        Binary |= (1 << 8);
+      Binary |= (Reg << 9);
+      return Binary;
+    }
+    unsigned getNEONVcvtImm32OpValue(const MachineInstr &MI, unsigned Op)
+      const { return 0; }
+
+    unsigned getRegisterListOpValue(const MachineInstr &MI, unsigned Op)
+      const { return 0; }
 
     /// getMovi32Value - Return binary encoding of operand for movw/movt. If the
     /// machine operand requires relocation, record the relocation and return
@@ -943,6 +1011,13 @@ void ARMCodeEmitter::emitLoadStoreInstruction(const MachineInstr &MI,
 
   // Part of binary is determined by TableGn.
   unsigned Binary = getBinaryCodeForInstr(MI);
+
+  // If this is an LDRi12, STRi12 or LDRcp, nothing more needs be done.
+  if (MI.getOpcode() == ARM::LDRi12 || MI.getOpcode() == ARM::LDRcp ||
+      MI.getOpcode() == ARM::STRi12) {
+    emitWordLE(Binary);
+    return;
+  }
 
   // Set the conditional execution predicate
   Binary |= II->getPredicate(&MI) << ARMII::CondShift;

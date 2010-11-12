@@ -90,6 +90,7 @@ def IIC_iStore_d_r   : InstrItinClass;
 def IIC_iStore_d_ru  : InstrItinClass;
 def IIC_iStore_m   : InstrItinClass<0>;  // micro-coded
 def IIC_iStore_mu  : InstrItinClass<0>;  // micro-coded
+def IIC_Preload    : InstrItinClass;
 def IIC_Br         : InstrItinClass;
 def IIC_fpSTAT     : InstrItinClass;
 def IIC_fpUNA32    : InstrItinClass;
@@ -134,6 +135,8 @@ def IIC_VLD1u      : InstrItinClass;
 def IIC_VLD1x2u    : InstrItinClass;
 def IIC_VLD1x3u    : InstrItinClass;
 def IIC_VLD1x4u    : InstrItinClass;
+def IIC_VLD1ln     : InstrItinClass;
+def IIC_VLD1lnu    : InstrItinClass;
 def IIC_VLD2       : InstrItinClass;
 def IIC_VLD2x2     : InstrItinClass;
 def IIC_VLD2u      : InstrItinClass;
@@ -156,6 +159,8 @@ def IIC_VST1u      : InstrItinClass;
 def IIC_VST1x2u    : InstrItinClass;
 def IIC_VST1x3u    : InstrItinClass;
 def IIC_VST1x4u    : InstrItinClass;
+def IIC_VST1ln     : InstrItinClass;
+def IIC_VST1lnu    : InstrItinClass;
 def IIC_VST2       : InstrItinClass;
 def IIC_VST2x2     : InstrItinClass;
 def IIC_VST2u      : InstrItinClass;

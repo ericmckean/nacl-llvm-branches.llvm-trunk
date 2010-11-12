@@ -17,8 +17,17 @@
 #include "CodeGenTarget.h"
 #include "Record.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 using namespace llvm;
+
+// FIXME: Somewhat hackish to use a command line option for this. There should
+// be a CodeEmitter class in the Target.td that controls this sort of thing
+// instead.
+static cl::opt<bool>
+MCEmitter("mc-emitter",
+          cl::desc("Generate CodeEmitter for use with the MC library."),
+          cl::init(false));
 
 void CodeEmitterGen::reverseBits(std::vector<Record*> &Insts) {
   for (std::vector<Record*>::iterator I = Insts.begin(), E = Insts.end();
@@ -49,7 +58,6 @@ void CodeEmitterGen::reverseBits(std::vector<Record*> &Insts) {
   }
 }
 
-
 // If the VarBitInit at position 'bit' matches the specified variable then
 // return the variable bit position.  Otherwise return -1.
 int CodeEmitterGen::getVariableBit(const std::string &VarName,
@@ -65,7 +73,6 @@ int CodeEmitterGen::getVariableBit(const std::string &VarName,
   return -1;
 }
 
-
 void CodeEmitterGen::run(raw_ostream &o) {
   CodeGenTarget Target;
   std::vector<Record*> Insts = Records.getAllDerivedDefinitions("Instruction");
@@ -80,8 +87,12 @@ void CodeEmitterGen::run(raw_ostream &o) {
     Target.getInstructionsByEnumValue();
 
   // Emit function declaration
-  o << "unsigned " << Target.getName() << "CodeEmitter::"
-    << "getBinaryCodeForInstr(const MachineInstr &MI) const {\n";
+  o << "unsigned " << Target.getName();
+  if (MCEmitter)
+    o << "MCCodeEmitter::getBinaryCodeForInstr(const MCInst &MI,\n"
+      << "    SmallVectorImpl<MCFixup> &Fixups) const {\n";
+  else
+    o << "CodeEmitter::getBinaryCodeForInstr(const MachineInstr &MI) const {\n";
 
   // Emit instruction base values
   o << "  static const unsigned InstBits[] = {\n";
@@ -158,21 +169,22 @@ void CodeEmitterGen::run(raw_ostream &o) {
               // operand number. Non-matching operands are assumed to be in
               // order.
               unsigned OpIdx;
-              if (CGI.hasOperandNamed(VarName, OpIdx)) {
+              if (CGI.Operands.hasOperandNamed(VarName, OpIdx)) {
                 // Get the machine operand number for the indicated operand.
-                OpIdx = CGI.OperandList[OpIdx].MIOperandNo;
-                assert (!CGI.isFlatOperandNotEmitted(OpIdx) &&
+                OpIdx = CGI.Operands[OpIdx].MIOperandNo;
+                assert (!CGI.Operands.isFlatOperandNotEmitted(OpIdx) &&
                         "Explicitly used operand also marked as not emitted!");
               } else {
                 /// If this operand is not supposed to be emitted by the
                 /// generated emitter, skip it.
-                while (CGI.isFlatOperandNotEmitted(NumberedOp))
+                while (CGI.Operands.isFlatOperandNotEmitted(NumberedOp))
                   ++NumberedOp;
                 OpIdx = NumberedOp++;
               }
-              std::pair<unsigned, unsigned> SO = CGI.getSubOperandNumber(OpIdx);
+              std::pair<unsigned, unsigned> SO =
+                CGI.Operands.getSubOperandNumber(OpIdx);
               std::string &EncoderMethodName =
-                CGI.OperandList[SO.first].EncoderMethodName;
+                CGI.Operands[SO.first].EncoderMethodName;
 
               // If the source operand has a custom encoder, use it. This will
               // get the encoding for all of the suboperands.
@@ -183,12 +195,18 @@ void CodeEmitterGen::run(raw_ostream &o) {
                 if (SO.second == 0) {
                   Case += "      // op: " + VarName + "\n"
                        + "      op = " + EncoderMethodName + "(MI, "
-                       + utostr(OpIdx) + ");\n";
+                       + utostr(OpIdx);
+                  if (MCEmitter)
+                    Case += ", Fixups";
+                  Case += ");\n";
                 }
               } else {
                 Case += "      // op: " + VarName + "\n"
                      +  "      op = getMachineOpValue(MI, MI.getOperand("
-                     +  utostr(OpIdx) + "));\n";
+                     +  utostr(OpIdx) + ")";
+                if (MCEmitter)
+                  Case += ", Fixups";
+                Case += ");\n";
               }
               gotOp = true;
             }
@@ -212,10 +230,13 @@ void CodeEmitterGen::run(raw_ostream &o) {
       }
     }
 
+    if (R->getValue("PostEncoderMethod"))
+      Case += "      Value = " +
+              R->getValueAsString("PostEncoderMethod") + "(MI, Value);\n";
+
     std::vector<std::string> &InstList = CaseMap[Case];
     InstList.push_back(InstName);
   }
-
 
   // Emit initial function code
   o << "  const unsigned opcode = MI.getOpcode();\n"

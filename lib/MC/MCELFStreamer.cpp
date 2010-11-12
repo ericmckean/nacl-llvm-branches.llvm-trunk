@@ -24,6 +24,7 @@
 #include "llvm/MC/MCSection.h"
 #include "llvm/MC/MCSectionELF.h"
 #include "llvm/MC/MCSymbol.h"
+#include "llvm/MC/MCValue.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ELF.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -34,9 +35,39 @@ using namespace llvm;
 
 namespace {
 
+static void SetBinding(MCSymbolData &SD, unsigned Binding) {
+  assert(Binding == ELF::STB_LOCAL || Binding == ELF::STB_GLOBAL ||
+         Binding == ELF::STB_WEAK);
+  uint32_t OtherFlags = SD.getFlags() & ~(0xf << ELF_STB_Shift);
+  SD.setFlags(OtherFlags | (Binding << ELF_STB_Shift));
+}
+
+static unsigned GetBinding(const MCSymbolData &SD) {
+  uint32_t Binding = (SD.getFlags() & (0xf << ELF_STB_Shift)) >> ELF_STB_Shift;
+  assert(Binding == ELF::STB_LOCAL || Binding == ELF::STB_GLOBAL ||
+         Binding == ELF::STB_WEAK);
+  return Binding;
+}
+
+static void SetType(MCSymbolData &SD, unsigned Type) {
+  assert(Type == ELF::STT_NOTYPE || Type == ELF::STT_OBJECT ||
+         Type == ELF::STT_FUNC || Type == ELF::STT_SECTION ||
+         Type == ELF::STT_FILE || Type == ELF::STT_COMMON ||
+         Type == ELF::STT_TLS);
+
+  uint32_t OtherFlags = SD.getFlags() & ~(0xf << ELF_STT_Shift);
+  SD.setFlags(OtherFlags | (Type << ELF_STT_Shift));
+}
+
+static void SetVisibility(MCSymbolData &SD, unsigned Visibility) {
+  assert(Visibility == ELF::STV_DEFAULT || Visibility == ELF::STV_INTERNAL ||
+         Visibility == ELF::STV_HIDDEN || Visibility == ELF::STV_PROTECTED);
+
+  uint32_t OtherFlags = SD.getFlags() & ~(0xf << ELF_STV_Shift);
+  SD.setFlags(OtherFlags | (Visibility << ELF_STV_Shift));
+}
+
 class MCELFStreamer : public MCObjectStreamer {
-  void EmitInstToFragment(const MCInst &Inst);
-  void EmitInstToData(const MCInst &Inst);
 public:
   MCELFStreamer(MCContext &Context, TargetAsmBackend &TAB,
                   raw_ostream &OS, MCCodeEmitter *Emitter)
@@ -50,7 +81,9 @@ public:
   virtual void InitSections();
   virtual void EmitLabel(MCSymbol *Symbol);
   virtual void EmitAssemblerFlag(MCAssemblerFlag Flag);
+  virtual void EmitThumbFunc(MCSymbol *Func);
   virtual void EmitAssignment(MCSymbol *Symbol, const MCExpr *Value);
+  virtual void EmitWeakReference(MCSymbol *Alias, const MCSymbol *Symbol);
   virtual void EmitSymbolAttribute(MCSymbol *Symbol, MCSymbolAttr Attribute);
   virtual void EmitSymbolDesc(MCSymbol *Symbol, unsigned DescValue) {
     assert(0 && "ELF doesn't support this directive");
@@ -107,10 +140,12 @@ public:
     DEBUG(dbgs() << "FIXME: MCELFStreamer:EmitDwarfFileDirective not implemented\n");
   }
 
-  virtual void EmitInstruction(const MCInst &Inst);
   virtual void Finish();
 
 private:
+  virtual void EmitInstToFragment(const MCInst &Inst);
+  virtual void EmitInstToData(const MCInst &Inst);
+
   struct LocalCommon {
     MCSymbolData *SD;
     uint64_t Size;
@@ -163,6 +198,11 @@ void MCELFStreamer::EmitLabel(MCSymbol *Symbol) {
 
   MCSymbolData &SD = getAssembler().getOrCreateSymbolData(*Symbol);
 
+  const MCSectionELF &Section =
+    static_cast<const MCSectionELF&>(Symbol->getSection());
+  if (Section.getFlags() & MCSectionELF::SHF_TLS)
+    SetType(SD, ELF::STT_TLS);
+
   // FIXME: This is wasteful, we don't necessarily need to create a data
   // fragment. Instead, we should mark the symbol as pointing into the data
   // fragment if it exists, otherwise we should just queue the label and set its
@@ -176,13 +216,19 @@ void MCELFStreamer::EmitLabel(MCSymbol *Symbol) {
 
 void MCELFStreamer::EmitAssemblerFlag(MCAssemblerFlag Flag) {
   switch (Flag) {
-  case MCAF_SyntaxUnified:  return; // no-op here?
+  case MCAF_SyntaxUnified: return; // no-op here.
+  case MCAF_Code16: return; // no-op here.
+  case MCAF_Code32: return; // no-op here.
   case MCAF_SubsectionsViaSymbols:
     getAssembler().setSubsectionsViaSymbols(true);
     return;
   }
 
   assert(0 && "invalid assembler flag!");
+}
+
+void MCELFStreamer::EmitThumbFunc(MCSymbol *Func) {
+  // FIXME: Anything needed here to flag the function as thumb?
 }
 
 void MCELFStreamer::EmitAssignment(MCSymbol *Symbol, const MCExpr *Value) {
@@ -193,36 +239,64 @@ void MCELFStreamer::EmitAssignment(MCSymbol *Symbol, const MCExpr *Value) {
   Symbol->setVariableValue(AddValueSymbols(Value));
 }
 
-static void SetBinding(MCSymbolData &SD, unsigned Binding) {
-  assert(Binding == ELF::STB_LOCAL || Binding == ELF::STB_GLOBAL ||
-         Binding == ELF::STB_WEAK);
-  uint32_t OtherFlags = SD.getFlags() & ~(0xf << ELF_STB_Shift);
-  SD.setFlags(OtherFlags | (Binding << ELF_STB_Shift));
-}
+// This is a hack. To be able to implement weakrefs the writer has to be able
+// to distinguish
+//    .weakref foo, bar
+//    .long foo
+// from
+//   .weakref foo, bar
+//   .long bar
+// since the first case should produce a weak undefined reference and the second
+// one a strong one.
+// If we created foo as a regular alias pointing to bar (foo = bar), then
+// MCExpr::EvaluateAsRelocatable would recurse on foo and the writer would
+// never see it used in a relocation.
+// What we do is create a MCTargetExpr that when evaluated produces a symbol
+// ref to a temporary symbol. This temporary symbol in turn is a variable
+// that equals the original symbol (tmp = bar). With this hack the writer
+// gets a relocation with tmp and can correctly implement weak references.
 
-static unsigned GetBinding(const MCSymbolData &SD) {
-  uint32_t Binding = (SD.getFlags() & (0xf << ELF_STB_Shift)) >> ELF_STB_Shift;
-  assert(Binding == ELF::STB_LOCAL || Binding == ELF::STB_GLOBAL ||
-         Binding == ELF::STB_WEAK);
-  return Binding;
-}
+namespace {
+class WeakRefExpr : public MCTargetExpr {
+private:
+  const MCSymbolRefExpr *Alias;
 
-static void SetType(MCSymbolData &SD, unsigned Type) {
-  assert(Type == ELF::STT_NOTYPE || Type == ELF::STT_OBJECT ||
-         Type == ELF::STT_FUNC || Type == ELF::STT_SECTION ||
-         Type == ELF::STT_FILE || Type == ELF::STT_COMMON ||
-         Type == ELF::STT_TLS);
+  explicit WeakRefExpr(const MCSymbolRefExpr *Alias_)
+    : MCTargetExpr(), Alias(Alias_) {}
 
-  uint32_t OtherFlags = SD.getFlags() & ~(0xf << ELF_STT_Shift);
-  SD.setFlags(OtherFlags | (Type << ELF_STT_Shift));
-}
+public:
+  virtual void PrintImpl(raw_ostream &OS) const {
+    llvm_unreachable("Unimplemented");
+  }
 
-static void SetVisibility(MCSymbolData &SD, unsigned Visibility) {
-  assert(Visibility == ELF::STV_DEFAULT || Visibility == ELF::STV_INTERNAL ||
-         Visibility == ELF::STV_HIDDEN || Visibility == ELF::STV_PROTECTED);
+  virtual bool EvaluateAsRelocatableImpl(MCValue &Res,
+                                         const MCAsmLayout *Layout) const {
+    Res = MCValue::get(Alias, 0, 0);
+    return true;
+  }
 
-  uint32_t OtherFlags = SD.getFlags() & ~(0xf << ELF_STV_Shift);
-  SD.setFlags(OtherFlags | (Visibility << ELF_STV_Shift));
+  static const WeakRefExpr *Create(const MCSymbol *Alias, MCContext &Ctx) {
+    const MCSymbolRefExpr *A = MCSymbolRefExpr::Create(Alias, Ctx);
+    return new (Ctx) WeakRefExpr(A);
+  }
+};
+} // end anonymous namespace
+
+void MCELFStreamer::EmitWeakReference(MCSymbol *Alias, const MCSymbol *Symbol) {
+  getAssembler().getOrCreateSymbolData(*Symbol);
+  MCSymbolData &AliasSD = getAssembler().getOrCreateSymbolData(*Alias);
+  AliasSD.setFlags(AliasSD.getFlags() | ELF_Other_Weakref);
+
+  // Create the alias that actually points to Symbol
+  const MCSymbolRefExpr *SymRef = MCSymbolRefExpr::Create(Symbol, getContext());
+  MCSymbol *RealAlias = getContext().CreateTempSymbol();
+  RealAlias->setVariableValue(SymRef);
+
+  MCSymbolData &RealAliasSD = getAssembler().getOrCreateSymbolData(*RealAlias);
+  RealAliasSD.setFlags(RealAliasSD.getFlags() | ELF_Other_Weakref);
+
+  const MCExpr *Value = WeakRefExpr::Create(RealAlias, getContext());
+  Alias->setVariableValue(Value);
 }
 
 void MCELFStreamer::EmitSymbolAttribute(MCSymbol *Symbol,
@@ -450,36 +524,16 @@ void MCELFStreamer::EmitInstToData(const MCInst &Inst) {
   DF->getContents().append(Code.begin(), Code.end());
 }
 
-void MCELFStreamer::EmitInstruction(const MCInst &Inst) {
-  // Scan for values.
-  for (unsigned i = 0; i != Inst.getNumOperands(); ++i)
-    if (Inst.getOperand(i).isExpr())
-      AddValueSymbols(Inst.getOperand(i).getExpr());
-
-  getCurrentSectionData()->setHasInstructions(true);
-
-  // If this instruction doesn't need relaxation, just emit it as data.
-  if (!getAssembler().getBackend().MayNeedRelaxation(Inst)) {
-    EmitInstToData(Inst);
-    return;
-  }
-
-  // Otherwise, if we are relaxing everything, relax the instruction as much as
-  // possible and emit it as data.
-  if (getAssembler().getRelaxAll()) {
-    MCInst Relaxed;
-    getAssembler().getBackend().RelaxInstruction(Inst, Relaxed);
-    while (getAssembler().getBackend().MayNeedRelaxation(Relaxed))
-      getAssembler().getBackend().RelaxInstruction(Relaxed, Relaxed);
-    EmitInstToData(Relaxed);
-    return;
-  }
-
-  // Otherwise emit to a separate fragment.
-  EmitInstToFragment(Inst);
-}
-
 void MCELFStreamer::Finish() {
+  // FIXME: duplicated code with the MachO streamer.
+  // Dump out the dwarf file & directory tables and line tables.
+  if (getContext().hasDwarfFiles()) {
+    const MCSection *DwarfLineSection =
+      getContext().getELFSection(".debug_line", 0, 0,
+                                 SectionKind::getDataRelLocal());
+    MCDwarfFileTable::Emit(this, DwarfLineSection);
+  }
+
   for (std::vector<LocalCommon>::const_iterator i = LocalCommons.begin(),
                                                 e = LocalCommons.end();
        i != e; ++i) {

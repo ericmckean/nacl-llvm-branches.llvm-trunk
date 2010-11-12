@@ -177,13 +177,15 @@ private:
   bool ParseIdentifier(StringRef &Res);
 
   // Directive Parsing.
-  bool ParseDirectiveAscii(bool ZeroTerminated); // ".ascii", ".asciiz"
+
+ // ".ascii", ".asciiz", ".string"
+  bool ParseDirectiveAscii(StringRef IDVal, bool ZeroTerminated);
   bool ParseDirectiveValue(unsigned Size); // ".byte", ".long", ...
   bool ParseDirectiveRealValue(const fltSemantics &); // ".single", ...
   bool ParseDirectiveFill(); // ".fill"
   bool ParseDirectiveSpace(); // ".space"
   bool ParseDirectiveZero(); // ".zero"
-  bool ParseDirectiveSet(); // ".set"
+  bool ParseDirectiveSet(StringRef IDVal); // ".set" or ".equ"
   bool ParseDirectiveOrg(); // ".org"
   // ".align{,32}", ".p2align{,w,l}"
   bool ParseDirectiveAlign(bool IsPow2, unsigned ValueSize);
@@ -191,7 +193,6 @@ private:
   /// ParseDirectiveSymbolAttribute - Parse a directive like ".globl" which
   /// accepts a single symbol (which should be a label or an external).
   bool ParseDirectiveSymbolAttribute(MCSymbolAttr Attr);
-  bool ParseDirectiveELFType(); // ELF specific ".type"
 
   bool ParseDirectiveComm(bool IsLocal); // ".comm" and ".lcomm"
 
@@ -259,8 +260,6 @@ public:
   bool ParseDirectiveMacro(StringRef, SMLoc DirectiveLoc);
   bool ParseDirectiveEndMacro(StringRef, SMLoc DirectiveLoc);
 
-  void ParseUleb128(uint64_t Value);
-  void ParseSleb128(int64_t Value);
   bool ParseDirectiveLEB128(StringRef, SMLoc);
 };
 
@@ -503,7 +502,7 @@ bool AsmParser::ParsePrimaryExpr(const MCExpr *&Res, SMLoc &EndLoc) {
     // semantics in the face of reassignment.
     if (Sym->isVariable() && isa<MCConstantExpr>(Sym->getVariableValue())) {
       if (Variant)
-        return Error(EndLoc, "unexpected modified on variable reference");
+        return Error(EndLoc, "unexpected modifier on variable reference");
 
       Res = Sym->getVariableValue();
       return false;
@@ -913,19 +912,21 @@ bool AsmParser::ParseStatement() {
   // Otherwise, we have a normal instruction or directive.
   if (IDVal[0] == '.') {
     // Assembler features
-    if (IDVal == ".set")
-      return ParseDirectiveSet();
+    if (IDVal == ".set" || IDVal == ".equ")
+      return ParseDirectiveSet(IDVal);
 
     // Data directives
 
     if (IDVal == ".ascii")
-      return ParseDirectiveAscii(false);
-    if (IDVal == ".asciz")
-      return ParseDirectiveAscii(true);
+      return ParseDirectiveAscii(IDVal, false);
+    if (IDVal == ".asciz" || IDVal == ".string")
+      return ParseDirectiveAscii(IDVal, true);
 
     if (IDVal == ".byte")
       return ParseDirectiveValue(1);
     if (IDVal == ".short")
+      return ParseDirectiveValue(2);
+    if (IDVal == ".value")
       return ParseDirectiveValue(2);
     if (IDVal == ".long")
       return ParseDirectiveValue(4);
@@ -1275,14 +1276,14 @@ bool AsmParser::ParseIdentifier(StringRef &Res) {
 
 /// ParseDirectiveSet:
 ///   ::= .set identifier ',' expression
-bool AsmParser::ParseDirectiveSet() {
+bool AsmParser::ParseDirectiveSet(StringRef IDVal) {
   StringRef Name;
 
   if (ParseIdentifier(Name))
-    return TokError("expected identifier after '.set' directive");
+    return TokError("expected identifier after '" + Twine(IDVal) + "'");
 
   if (getLexer().isNot(AsmToken::Comma))
-    return TokError("unexpected token in '.set'");
+    return TokError("unexpected token in '" + Twine(IDVal) + "'");
   Lex();
 
   return ParseAssignment(Name);
@@ -1347,14 +1348,14 @@ bool AsmParser::ParseEscapedString(std::string &Data) {
 }
 
 /// ParseDirectiveAscii:
-///   ::= ( .ascii | .asciz ) [ "string" ( , "string" )* ]
-bool AsmParser::ParseDirectiveAscii(bool ZeroTerminated) {
+///   ::= ( .ascii | .asciz | .string ) [ "string" ( , "string" )* ]
+bool AsmParser::ParseDirectiveAscii(StringRef IDVal, bool ZeroTerminated) {
   if (getLexer().isNot(AsmToken::EndOfStatement)) {
     CheckForValidSection();
 
     for (;;) {
       if (getLexer().isNot(AsmToken::String))
-        return TokError("expected string in '.ascii' or '.asciz' directive");
+        return TokError("expected string in '" + Twine(IDVal) + "' directive");
 
       std::string Data;
       if (ParseEscapedString(Data))
@@ -1370,7 +1371,7 @@ bool AsmParser::ParseDirectiveAscii(bool ZeroTerminated) {
         break;
 
       if (getLexer().isNot(AsmToken::Comma))
-        return TokError("unexpected token in '.ascii' or '.asciz' directive");
+        return TokError("unexpected token in '" + Twine(IDVal) + "' directive");
       Lex();
     }
   }
@@ -2174,44 +2175,22 @@ bool GenericAsmParser::ParseDirectiveEndMacro(StringRef Directive,
                   "no current macro definition");
 }
 
-void GenericAsmParser::ParseUleb128(uint64_t Value) {
-  const uint64_t Mask = (1 << 7) - 1;
-  do {
-    unsigned Byte = Value & Mask;
-    Value >>= 7;
-    if (Value) // Not the last one
-      Byte |= (1 << 7);
-    getStreamer().EmitIntValue(Byte, 1, DEFAULT_ADDRSPACE);
-  } while (Value);
-}
-
-void GenericAsmParser::ParseSleb128(int64_t Value) {
-  const int64_t Mask = (1 << 7) - 1;
-  for(;;) {
-    unsigned Byte = Value & Mask;
-    Value >>= 7;
-    bool Done = ((Value ==  0 && (Byte & 0x40) == 0) ||
-                 (Value == -1 && (Byte & 0x40) != 0));
-    if (!Done)
-      Byte |= (1 << 7);
-    getStreamer().EmitIntValue(Byte, 1, DEFAULT_ADDRSPACE);
-    if (Done)
-      break;
-  }
-}
-
 bool GenericAsmParser::ParseDirectiveLEB128(StringRef DirName, SMLoc) {
-  int64_t Value;
-  if (getParser().ParseAbsoluteExpression(Value))
+  getParser().CheckForValidSection();
+
+  const MCExpr *Value;
+
+  if (getParser().ParseExpression(Value))
     return true;
 
   if (getLexer().isNot(AsmToken::EndOfStatement))
     return TokError("unexpected token in directive");
 
   if (DirName[1] == 's')
-    ParseSleb128(Value);
+    getStreamer().EmitSLEB128Value(Value);
   else
-    ParseUleb128(Value);
+    getStreamer().EmitULEB128Value(Value);
+
   return false;
 }
 

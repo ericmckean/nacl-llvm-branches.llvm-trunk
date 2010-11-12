@@ -104,8 +104,8 @@ X86TargetLowering::X86TargetLowering(X86TargetMachine &TM)
     setLibcallName(RTLIB::FPTOUINT_F32_I64, "_ftol2");
     setLibcallCallingConv(RTLIB::SDIV_I64, CallingConv::X86_StdCall);
     setLibcallCallingConv(RTLIB::UDIV_I64, CallingConv::X86_StdCall);
-    setLibcallCallingConv(RTLIB::FPTOUINT_F64_I64, CallingConv::X86_StdCall);
-    setLibcallCallingConv(RTLIB::FPTOUINT_F32_I64, CallingConv::X86_StdCall);
+    setLibcallCallingConv(RTLIB::FPTOUINT_F64_I64, CallingConv::C);
+    setLibcallCallingConv(RTLIB::FPTOUINT_F32_I64, CallingConv::C);
   }
 
   if (Subtarget->isTargetDarwin()) {
@@ -1457,30 +1457,6 @@ ArgsAreStructReturn(const SmallVectorImpl<ISD::InputArg> &Ins) {
   return Ins[0].Flags.isSRet();
 }
 
-/// CCAssignFnForNode - Selects the correct CCAssignFn for a the
-/// given CallingConvention value.
-CCAssignFn *X86TargetLowering::CCAssignFnForNode(CallingConv::ID CC) const {
-  if (Subtarget->is64Bit()) {
-    if (CC == CallingConv::GHC)
-      return CC_X86_64_GHC;
-    else if (Subtarget->isTargetWin64())
-      return CC_X86_Win64_C;
-    else
-      return CC_X86_64_C;
-  }
-
-  if (CC == CallingConv::X86_FastCall)
-    return CC_X86_32_FastCall;
-  else if (CC == CallingConv::X86_ThisCall)
-    return CC_X86_32_ThisCall;
-  else if (CC == CallingConv::Fast)
-    return CC_X86_32_FastCC;
-  else if (CC == CallingConv::GHC)
-    return CC_X86_32_GHC;
-  else
-    return CC_X86_32_C;
-}
-
 /// CreateCopyOfByValArgument - Make a copy of an aggregate at address specified
 /// by "Src" to address "Dst" with size and alignment information specified by
 /// the specific parameter attribute. The copy will be passed as a byval
@@ -1576,7 +1552,7 @@ X86TargetLowering::LowerFormalArguments(SDValue Chain,
   SmallVector<CCValAssign, 16> ArgLocs;
   CCState CCInfo(CallConv, isVarArg, getTargetMachine(),
                  ArgLocs, *DAG.getContext());
-  CCInfo.AnalyzeFormalArguments(Ins, CCAssignFnForNode(CallConv));
+  CCInfo.AnalyzeFormalArguments(Ins, CC_X86);
 
   unsigned LastVal = ~0U;
   SDValue ArgValue;
@@ -1895,7 +1871,7 @@ X86TargetLowering::LowerCall(SDValue Chain, SDValue Callee,
   SmallVector<CCValAssign, 16> ArgLocs;
   CCState CCInfo(CallConv, isVarArg, getTargetMachine(),
                  ArgLocs, *DAG.getContext());
-  CCInfo.AnalyzeCallOperands(Outs, CCAssignFnForNode(CallConv));
+  CCInfo.AnalyzeCallOperands(Outs, CC_X86);
 
   // Get a count of how many bytes are to be pushed on the stack.
   unsigned NumBytes = CCInfo.getNextStackOffset();
@@ -2478,7 +2454,7 @@ X86TargetLowering::IsEligibleForTailCallOptimization(SDValue Callee,
     SmallVector<CCValAssign, 16> ArgLocs;
     CCState CCInfo(CalleeCC, isVarArg, getTargetMachine(),
                    ArgLocs, *DAG.getContext());
-    CCInfo.AnalyzeCallOperands(Outs, CCAssignFnForNode(CalleeCC));
+    CCInfo.AnalyzeCallOperands(Outs, CC_X86);
     if (CCInfo.getNextStackOffset()) {
       MachineFunction &MF = DAG.getMachineFunction();
       if (MF.getInfo<X86MachineFunctionInfo>()->getBytesToPopOnReturn())
@@ -2533,7 +2509,7 @@ X86TargetLowering::IsEligibleForTailCallOptimization(SDValue Callee,
   }
 
   // An stdcall caller is expected to clean up its arguments; the callee
-  // isn't going to do that.   PR 8461.
+  // isn't going to do that.
   if (!CCMatch && CallerCC==CallingConv::X86_StdCall)
     return false;
 
@@ -4917,7 +4893,7 @@ static SDValue getVZextMovL(EVT VT, EVT OpVT,
       // movssrr and movsdrr do not clear top bits. Try to use movd, movq
       // instead.
       MVT ExtVT = (OpVT == MVT::v2f64) ? MVT::i64 : MVT::i32;
-      if ((ExtVT.SimpleTy != MVT::i64 || Subtarget->is64Bit()) &&
+      if ((ExtVT != MVT::i64 || Subtarget->is64Bit()) &&
           SrcOp.getOpcode() == ISD::SCALAR_TO_VECTOR &&
           SrcOp.getOperand(0).getOpcode() == ISD::BIT_CONVERT &&
           SrcOp.getOperand(0).getOperand(0).getValueType() == ExtVT) {
@@ -11428,7 +11404,7 @@ static bool LowerToBSwap(CallInst *CI) {
 
 bool X86TargetLowering::ExpandInlineAsm(CallInst *CI) const {
   InlineAsm *IA = cast<InlineAsm>(CI->getCalledValue());
-  std::vector<InlineAsm::ConstraintInfo> Constraints = IA->ParseConstraints();
+  InlineAsm::ConstraintInfoVector Constraints = IA->ParseConstraints();
 
   std::string AsmStr = IA->getAsmString();
 
@@ -11508,18 +11484,32 @@ X86TargetLowering::ConstraintType
 X86TargetLowering::getConstraintType(const std::string &Constraint) const {
   if (Constraint.size() == 1) {
     switch (Constraint[0]) {
-    case 'A':
-      return C_Register;
-    case 'f':
-    case 'r':
     case 'R':
-    case 'l':
     case 'q':
     case 'Q':
-    case 'x':
+    case 'f':
+    case 't':
+    case 'u':
     case 'y':
+    case 'x':
     case 'Y':
       return C_RegisterClass;
+    case 'a':
+    case 'b':
+    case 'c':
+    case 'd':
+    case 'S':
+    case 'D':
+    case 'A':
+      return C_Register;
+    case 'I':
+    case 'J':
+    case 'K':
+    case 'L':
+    case 'M':
+    case 'N':
+    case 'G':
+    case 'C':
     case 'e':
     case 'Z':
       return C_Other;
@@ -11530,30 +11520,106 @@ X86TargetLowering::getConstraintType(const std::string &Constraint) const {
   return TargetLowering::getConstraintType(Constraint);
 }
 
-/// Examine constraint type and operand type and determine a weight value,
-/// where: -1 = invalid match, and 0 = so-so match to 3 = good match.
+/// Examine constraint type and operand type and determine a weight value.
 /// This object must already have been set up with the operand type
 /// and the current alternative constraint selected.
-int X86TargetLowering::getSingleConstraintMatchWeight(
+TargetLowering::ConstraintWeight
+  X86TargetLowering::getSingleConstraintMatchWeight(
     AsmOperandInfo &info, const char *constraint) const {
-  int weight = -1;
+  ConstraintWeight weight = CW_Invalid;
   Value *CallOperandVal = info.CallOperandVal;
     // If we don't have a value, we can't do a match,
     // but allow it at the lowest weight.
   if (CallOperandVal == NULL)
-    return 0;
+    return CW_Default;
+  const Type *type = CallOperandVal->getType();
   // Look at the constraint type.
   switch (*constraint) {
   default:
-    return TargetLowering::getSingleConstraintMatchWeight(info, constraint);
+    weight = TargetLowering::getSingleConstraintMatchWeight(info, constraint);
+  case 'R':
+  case 'q':
+  case 'Q':
+  case 'a':
+  case 'b':
+  case 'c':
+  case 'd':
+  case 'S':
+  case 'D':
+  case 'A':
+    if (CallOperandVal->getType()->isIntegerTy())
+      weight = CW_SpecificReg;
+    break;
+  case 'f':
+  case 't':
+  case 'u':
+      if (type->isFloatingPointTy())
+        weight = CW_SpecificReg;
+      break;
+  case 'y':
+      if (type->isX86_MMXTy() && !DisableMMX && Subtarget->hasMMX())
+        weight = CW_SpecificReg;
+      break;
+  case 'x':
+  case 'Y':
+    if ((type->getPrimitiveSizeInBits() == 128) && Subtarget->hasSSE1())
+      weight = CW_Register;
     break;
   case 'I':
     if (ConstantInt *C = dyn_cast<ConstantInt>(info.CallOperandVal)) {
       if (C->getZExtValue() <= 31)
-        weight = 3;
+        weight = CW_Constant;
     }
     break;
-  // etc.
+  case 'J':
+    if (ConstantInt *C = dyn_cast<ConstantInt>(CallOperandVal)) {
+      if (C->getZExtValue() <= 63)
+        weight = CW_Constant;
+    }
+    break;
+  case 'K':
+    if (ConstantInt *C = dyn_cast<ConstantInt>(CallOperandVal)) {
+      if ((C->getSExtValue() >= -0x80) && (C->getSExtValue() <= 0x7f))
+        weight = CW_Constant;
+    }
+    break;
+  case 'L':
+    if (ConstantInt *C = dyn_cast<ConstantInt>(CallOperandVal)) {
+      if ((C->getZExtValue() == 0xff) || (C->getZExtValue() == 0xffff))
+        weight = CW_Constant;
+    }
+    break;
+  case 'M':
+    if (ConstantInt *C = dyn_cast<ConstantInt>(CallOperandVal)) {
+      if (C->getZExtValue() <= 3)
+        weight = CW_Constant;
+    }
+    break;
+  case 'N':
+    if (ConstantInt *C = dyn_cast<ConstantInt>(CallOperandVal)) {
+      if (C->getZExtValue() <= 0xff)
+        weight = CW_Constant;
+    }
+    break;
+  case 'G':
+  case 'C':
+    if (dyn_cast<ConstantFP>(CallOperandVal)) {
+      weight = CW_Constant;
+    }
+    break;
+  case 'e':
+    if (ConstantInt *C = dyn_cast<ConstantInt>(CallOperandVal)) {
+      if ((C->getSExtValue() >= -0x80000000LL) &&
+          (C->getSExtValue() <= 0x7fffffffLL))
+        weight = CW_Constant;
+    }
+    break;
+  case 'Z':
+    if (ConstantInt *C = dyn_cast<ConstantInt>(CallOperandVal)) {
+      if (C->getZExtValue() <= 0xffffffff)
+        weight = CW_Constant;
+    }
+    break;
   }
   return weight;
 }

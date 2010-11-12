@@ -126,6 +126,10 @@ namespace llvm {
     /// EmitAssemblerFlag - Note in the output the specified @p Flag
     virtual void EmitAssemblerFlag(MCAssemblerFlag Flag) = 0;
 
+    /// EmitThumbFunc - Note in the output that the specified @p Func is
+    /// a Thumb mode function (ARM target only).
+    virtual void EmitThumbFunc(MCSymbol *Func) = 0;
+
     /// EmitAssignment - Emit an assignment of @p Value to @p Symbol.
     ///
     /// This corresponds to an assembler statement such as:
@@ -138,6 +142,15 @@ namespace llvm {
     /// @param Symbol - The symbol being assigned to.
     /// @param Value - The value for the symbol.
     virtual void EmitAssignment(MCSymbol *Symbol, const MCExpr *Value) = 0;
+
+    /// EmitWeakReference - Emit an weak reference from @p Alias to @p Symbol.
+    ///
+    /// This corresponds to an assembler statement such as:
+    ///  .weakref alias, symbol
+    ///
+    /// @param Alias - The alias that is being created.
+    /// @param Symbol - The symbol being aliased.
+    virtual void EmitWeakReference(MCSymbol *Alias, const MCSymbol *Symbol) = 0;
 
     /// EmitSymbolAttribute - Add the given @p Attribute to @p Symbol.
     virtual void EmitSymbolAttribute(MCSymbol *Symbol,
@@ -235,13 +248,20 @@ namespace llvm {
     virtual void EmitIntValue(uint64_t Value, unsigned Size,
                               unsigned AddrSpace = 0);
 
-    /// EmitULEB128Value - Special case of EmitValue that takes an ULEB128 and
-    /// emits the needed bytes for the encoded value.
-    virtual void EmitULEB128Value(uint64_t Value, unsigned AddrSpace = 0);
 
-    /// EmitSLEB128Value - Special case of EmitValue that takes an SLEB128 and
-    /// emits the needed bytes for the encoded value.
-    virtual void EmitSLEB128Value(int64_t Value, unsigned AddrSpace = 0);
+    virtual void EmitULEB128Value(const MCExpr *Value,
+                                  unsigned AddrSpace = 0) = 0;
+
+    virtual void EmitSLEB128Value(const MCExpr *Value,
+                                  unsigned AddrSpace = 0) = 0;
+
+    /// EmitULEB128Value - Special case of EmitULEB128Value that avoids the
+    /// client having to pass in a MCExpr for constant integers.
+    virtual void EmitULEB128IntValue(uint64_t Value, unsigned AddrSpace = 0);
+
+    /// EmitSLEB128Value - Special case of EmitSLEB128Value that avoids the
+    /// client having to pass in a MCExpr for constant integers.
+    virtual void EmitSLEB128IntValue(int64_t Value, unsigned AddrSpace = 0);
 
     /// EmitSymbolValue - Special case of EmitValue that avoids the client
     /// having to pass in a MCExpr for MCSymbols.

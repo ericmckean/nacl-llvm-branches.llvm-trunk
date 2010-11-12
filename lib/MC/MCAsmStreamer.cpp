@@ -111,8 +111,10 @@ public:
   virtual void EmitLabel(MCSymbol *Symbol);
 
   virtual void EmitAssemblerFlag(MCAssemblerFlag Flag);
+  virtual void EmitThumbFunc(MCSymbol *Func);
 
   virtual void EmitAssignment(MCSymbol *Symbol, const MCExpr *Value);
+  virtual void EmitWeakReference(MCSymbol *Alias, const MCSymbol *Symbol);
 
   virtual void EmitSymbolAttribute(MCSymbol *Symbol, MCSymbolAttr Attribute);
 
@@ -140,7 +142,13 @@ public:
   virtual void EmitBytes(StringRef Data, unsigned AddrSpace);
 
   virtual void EmitValue(const MCExpr *Value, unsigned Size,unsigned AddrSpace);
+
   virtual void EmitIntValue(uint64_t Value, unsigned Size, unsigned AddrSpace);
+
+  virtual void EmitULEB128Value(const MCExpr *Value, unsigned AddrSpace = 0);
+
+  virtual void EmitSLEB128Value(const MCExpr *Value, unsigned AddrSpace = 0);
+
   virtual void EmitGPRel32Value(const MCExpr *Value);
 
 
@@ -246,7 +254,18 @@ void MCAsmStreamer::EmitAssemblerFlag(MCAssemblerFlag Flag) {
   default: assert(0 && "Invalid flag!");
   case MCAF_SyntaxUnified:         OS << "\t.syntax unified"; break;
   case MCAF_SubsectionsViaSymbols: OS << ".subsections_via_symbols"; break;
+  case MCAF_Code16:                OS << "\t.code\t16"; break;
+  case MCAF_Code32:                OS << "\t.code\t32"; break;
   }
+  EmitEOL();
+}
+
+void MCAsmStreamer::EmitThumbFunc(MCSymbol *Func) {
+  // This needs to emit to a temporary string to get properly quoted
+  // MCSymbols when they have spaces in them.
+  OS << "\t.thumb_func";
+  if (Func)
+    OS << '\t' << *Func;
   EmitEOL();
 }
 
@@ -256,6 +275,11 @@ void MCAsmStreamer::EmitAssignment(MCSymbol *Symbol, const MCExpr *Value) {
 
   // FIXME: Lift context changes into super class.
   Symbol->setVariableValue(Value);
+}
+
+void MCAsmStreamer::EmitWeakReference(MCSymbol *Alias, const MCSymbol *Symbol) {
+  OS << ".weakref " << *Alias << ", " << *Symbol;
+  EmitEOL();
 }
 
 void MCAsmStreamer::EmitSymbolAttribute(MCSymbol *Symbol,
@@ -496,6 +520,18 @@ void MCAsmStreamer::EmitValue(const MCExpr *Value, unsigned Size,
 
   assert(Directive && "Invalid size for machine code value!");
   OS << Directive << *Value;
+  EmitEOL();
+}
+
+void MCAsmStreamer::EmitULEB128Value(const MCExpr *Value, unsigned AddrSpace) {
+  assert(MAI.hasLEB128() && "Cannot print a .uleb");
+  OS << ".uleb128 " << *Value;
+  EmitEOL();
+}
+
+void MCAsmStreamer::EmitSLEB128Value(const MCExpr *Value, unsigned AddrSpace) {
+  assert(MAI.hasLEB128() && "Cannot print a .sleb");
+  OS << ".sleb128 " << *Value;
   EmitEOL();
 }
 
