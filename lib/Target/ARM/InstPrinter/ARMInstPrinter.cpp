@@ -22,7 +22,13 @@
 #include "llvm/Support/raw_ostream.h"
 using namespace llvm;
 
+#define GET_INSTRUCTION_NAME
 #include "ARMGenAsmWriter.inc"
+
+StringRef ARMInstPrinter::getOpcodeName(unsigned Opcode) const {
+  return getInstructionName(Opcode);
+}
+
 
 void ARMInstPrinter::printInst(const MCInst *MI, raw_ostream &O) {
   // Check for MOVs and print canonical forms, instead.
@@ -110,16 +116,14 @@ void ARMInstPrinter::printInst(const MCInst *MI, raw_ostream &O) {
  }
 
 void ARMInstPrinter::printOperand(const MCInst *MI, unsigned OpNo,
-                                  raw_ostream &O, const char *Modifier) {
+                                  raw_ostream &O) {
   const MCOperand &Op = MI->getOperand(OpNo);
   if (Op.isReg()) {
     unsigned Reg = Op.getReg();
     O << getRegisterName(Reg);
   } else if (Op.isImm()) {
-    assert((Modifier == 0 || Modifier[0] == 0) && "No modifiers supported");
     O << '#' << Op.getImm();
   } else {
-    assert((Modifier == 0 || Modifier[0] == 0) && "No modifiers supported");
     assert(Op.isExpr() && "unknown operand kind in printOperand");
     O << *Op.getExpr();
   }
@@ -284,26 +288,15 @@ void ARMInstPrinter::printAddrMode3OffsetOperand(const MCInst *MI,
     << ImmOffs;
 }
 
-
-void ARMInstPrinter::printAddrMode4Operand(const MCInst *MI, unsigned OpNum,
-                                           raw_ostream &O,
-                                           const char *Modifier) {
-  const MCOperand &MO2 = MI->getOperand(OpNum+1);
-  ARM_AM::AMSubMode Mode = ARM_AM::getAM4SubMode(MO2.getImm());
-  if (Modifier && strcmp(Modifier, "submode") == 0) {
-    O << ARM_AM::getAMSubModeStr(Mode);
-  } else if (Modifier && strcmp(Modifier, "wide") == 0) {
-    ARM_AM::AMSubMode Mode = ARM_AM::getAM4SubMode(MO2.getImm());
-    if (Mode == ARM_AM::ia)
-      O << ".w";
-  } else {
-    printOperand(MI, OpNum, O);
-  }
+void ARMInstPrinter::printLdStmModeOperand(const MCInst *MI, unsigned OpNum,
+                                           raw_ostream &O) {
+  ARM_AM::AMSubMode Mode = ARM_AM::getAM4SubMode(MI->getOperand(OpNum)
+                                                 .getImm());
+  O << ARM_AM::getAMSubModeStr(Mode);
 }
 
 void ARMInstPrinter::printAddrMode5Operand(const MCInst *MI, unsigned OpNum,
-                                           raw_ostream &O,
-                                           const char *Modifier) {
+                                           raw_ostream &O) {
   const MCOperand &MO1 = MI->getOperand(OpNum);
   const MCOperand &MO2 = MI->getOperand(OpNum+1);
 
@@ -317,7 +310,7 @@ void ARMInstPrinter::printAddrMode5Operand(const MCInst *MI, unsigned OpNum,
   if (unsigned ImmOffs = ARM_AM::getAM5Offset(MO2.getImm())) {
     O << ", #"
       << ARM_AM::getAddrOpcStr(ARM_AM::getAM5Op(MO2.getImm()))
-      << ImmOffs*4;
+      << ImmOffs * 4;
   }
   O << "]";
 }
@@ -343,15 +336,6 @@ void ARMInstPrinter::printAddrMode6OffsetOperand(const MCInst *MI,
     O << "!";
   else
     O << ", " << getRegisterName(MO.getReg());
-}
-
-void ARMInstPrinter::printAddrModePCOperand(const MCInst *MI, unsigned OpNum,
-                                            raw_ostream &O,
-                                            const char *Modifier) {
-  // All instructions using addrmodepc are pseudos and should have been
-  // handled explicitly in printInstructionThroughMCStreamer(). If one got
-  // here, it wasn't, so something's wrong.
-  llvm_unreachable("Unhandled PC-relative pseudo-instruction!");
 }
 
 void ARMInstPrinter::printBitfieldInvMaskImmOperand(const MCInst *MI,
@@ -478,20 +462,10 @@ void ARMInstPrinter::printSBitModifierOperand(const MCInst *MI, unsigned OpNum,
   }
 }
 
-
-
-void ARMInstPrinter::printCPInstOperand(const MCInst *MI, unsigned OpNum,
-                                        raw_ostream &O,
-                                        const char *Modifier) {
-  // FIXME: remove this.
-  abort();
-}
-
 void ARMInstPrinter::printNoHashImmediate(const MCInst *MI, unsigned OpNum,
                                           raw_ostream &O) {
   O << MI->getOperand(OpNum).getImm();
 }
-
 
 void ARMInstPrinter::printPCLabel(const MCInst *MI, unsigned OpNum,
                                   raw_ostream &O) {
@@ -605,10 +579,21 @@ void ARMInstPrinter::printAddrModeImm12Operand(const MCInst *MI, unsigned OpNum,
   const MCOperand &MO1 = MI->getOperand(OpNum);
   const MCOperand &MO2 = MI->getOperand(OpNum+1);
 
+  if (!MO1.isReg()) {   // FIXME: This is for CP entries, but isn't right.
+    printOperand(MI, OpNum, O);
+    return;
+  }
+
   O << "[" << getRegisterName(MO1.getReg());
 
-  unsigned OffImm = MO2.getImm();
-  if (OffImm)  // Don't print +0.
+  int32_t OffImm = (int32_t)MO2.getImm();
+  bool isSub = OffImm < 0;
+  // Special value for #-0. All others are normal.
+  if (OffImm == INT32_MIN)
+    OffImm = 0;
+  if (isSub)
+    O << ", #-" << -OffImm;
+  else if (OffImm > 0)
     O << ", #" << OffImm;
   O << "]";
 }

@@ -30,6 +30,7 @@ namespace llvm {
   class StringRef;
   class Twine;
   class MCSectionMachO;
+  class MCSectionELF;
 
   /// MCContext - Context object for machine code objects.  This class owns all
   /// of the sections that it creates.
@@ -137,11 +138,15 @@ namespace llvm {
                                           SectionKind K) {
       return getMachOSection(Segment, Section, TypeAndAttributes, 0, K);
     }
-    
-    const MCSection *getELFSection(StringRef Section, unsigned Type,
-                                   unsigned Flags, SectionKind Kind,
-                                   bool IsExplicit = false,
-                                   unsigned EntrySize = 0);
+
+    const MCSectionELF *getELFSection(StringRef Section, unsigned Type,
+                                      unsigned Flags, SectionKind Kind);
+
+    const MCSectionELF *getELFSection(StringRef Section, unsigned Type,
+                                      unsigned Flags, SectionKind Kind,
+                                      unsigned EntrySize, StringRef Group);
+
+    const MCSectionELF *CreateELFGroupSection();
 
     const MCSection *getCOFFSection(StringRef Section, unsigned Characteristics,
                                     int Selection, SectionKind Kind);

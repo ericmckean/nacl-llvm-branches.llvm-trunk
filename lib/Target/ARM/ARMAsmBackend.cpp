@@ -9,7 +9,7 @@
 
 #include "llvm/Target/TargetAsmBackend.h"
 #include "ARM.h"
-//FIXME: add #include "ARMFixupKinds.h"
+#include "ARMFixupKinds.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/MC/ELFObjectWriter.h"
 #include "llvm/MC/MCAssembler.h"
@@ -20,6 +20,7 @@
 #include "llvm/MC/MCSectionMachO.h"
 #include "llvm/MC/MachObjectWriter.h"
 #include "llvm/Support/ELF.h"
+#include "llvm/Support/MachO.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetRegistry.h"
@@ -55,10 +56,14 @@ void ARMAsmBackend::RelaxInstruction(const MCInst &Inst, MCInst &Res) const {
 }
 
 bool ARMAsmBackend::WriteNopData(uint64_t Count, MCObjectWriter *OW) const {
-  if ((Count % 4) != 0) {
-    // Fixme: % 2 for Thumb?
-    return false;
-  }
+//  if ((Count % 4) != 0) {
+//    // Fixme: % 2 for Thumb?
+//    return false;
+//  }
+  // FIXME: Zero fill for now. That's not right, but at least will get the
+  // section size right.
+  for (uint64_t i = 0; i != Count; ++i)
+    OW->Write8(0);
   return true;
 }
 } // end anonymous namespace
@@ -110,7 +115,6 @@ public:
   DarwinARMAsmBackend(const Target &T)
     : ARMAsmBackend(T) {
     HasScatteredSymbols = true;
-    assert(0 && "DarwinARMAsmBackend::DarwinARMAsmBackend() unimplemented");
   }
 
   virtual const MCObjectFormat &getObjectFormat() const {
@@ -128,7 +132,9 @@ public:
   }
 
   MCObjectWriter *createObjectWriter(raw_ostream &OS) const {
-    return new MachObjectWriter(OS, /*Is64Bit=*/false);
+    // FIXME: Subtarget info should be derived. Force v7 for now.
+    return new MachObjectWriter(OS, /*Is64Bit=*/false, MachO::CPUTypeARM,
+                                MachO::CPUSubType_ARM_V7);
   }
 
   virtual bool doesSectionRequireSymbols(const MCSection &Section) const {
@@ -136,9 +142,44 @@ public:
   }
 };
 
+static unsigned getFixupKindNumBytes(unsigned Kind) {
+  switch (Kind) {
+  default: llvm_unreachable("Unknown fixup kind!");
+  case FK_Data_4: return 4;
+  case ARM::fixup_arm_pcrel_12: return 2;
+  case ARM::fixup_arm_vfp_pcrel_12: return 1;
+  case ARM::fixup_arm_branch: return 3;
+  }
+}
+
+static unsigned adjustFixupValue(unsigned Kind, uint64_t Value) {
+  switch (Kind) {
+  default:
+    llvm_unreachable("Unknown fixup kind!");
+  case FK_Data_4:
+    return Value;
+  case ARM::fixup_arm_pcrel_12:
+    // ARM PC-relative values are offset by 8.
+    return Value - 8;
+  case ARM::fixup_arm_branch:
+  case ARM::fixup_arm_vfp_pcrel_12:
+    // These values don't encode the low two bits since they're always zero.
+    // Offset by 8 just as above.
+    return (Value - 8) >> 2;
+  }
+}
+
 void DarwinARMAsmBackend::ApplyFixup(const MCFixup &Fixup, MCDataFragment &DF,
-                                  uint64_t Value) const {
-  assert(0 && "DarwinARMAsmBackend::ApplyFixup() unimplemented");
+                                     uint64_t Value) const {
+  unsigned NumBytes = getFixupKindNumBytes(Fixup.getKind());
+  Value = adjustFixupValue(Fixup.getKind(), Value);
+
+  assert(Fixup.getOffset() + NumBytes <= DF.getContents().size() &&
+         "Invalid fixup offset!");
+  // For each byte of the fragment that the fixup touches, mask in the
+  // bits from the fixup value.
+  for (unsigned i = 0; i != NumBytes; ++i)
+    DF.getContents()[Fixup.getOffset() + i] |= uint8_t(Value >> (i * 8));
 }
 } // end anonymous namespace
 

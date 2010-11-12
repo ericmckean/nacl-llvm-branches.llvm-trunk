@@ -322,6 +322,7 @@ static int X86TypeFromOpName(LiteralConstantEmitter *type,
   PCR("offset32");
   PCR("offset64");
   PCR("brtarget");
+  PCR("bltarget");
 
   return 1;
 }
@@ -346,11 +347,10 @@ static void X86PopulateOperands(
     return;
 
   unsigned int index;
-  unsigned int numOperands = inst.OperandList.size();
+  unsigned int numOperands = inst.Operands.size();
 
   for (index = 0; index < numOperands; ++index) {
-    const CodeGenInstruction::OperandInfo &operandInfo =
-      inst.OperandList[index];
+    const CGIOperandList::OperandInfo &operandInfo = inst.Operands[index];
     Record &rec = *operandInfo.Rec;
 
     if (X86TypeFromOpName(operandTypes[index], rec.getName())) {
@@ -376,7 +376,7 @@ static inline void decorate1(
   const char *opFlag) {
   unsigned opIndex;
 
-  opIndex = inst.getOperandNamed(std::string(opName));
+  opIndex = inst.Operands.getOperandNamed(std::string(opName));
 
   operandFlags[opIndex]->addEntry(opFlag);
 }
@@ -582,9 +582,12 @@ static int ARMFlagFromOpName(LiteralConstantEmitter *type,
   IMM("t_imm_s4");
   IMM("pclabel");
   IMM("shift_imm");
+  IMM("neon_vcvt_imm32");
 
   MISC("brtarget", "kOperandTypeARMBranchTarget");                // ?
+  MISC("bltarget", "kOperandTypeARMBranchTarget");                // ?
   MISC("so_reg", "kOperandTypeARMSoReg");                         // R, R, I
+  MISC("shift_so_reg", "kOperandTypeARMSoReg");                   // R, R, I
   MISC("t2_so_reg", "kOperandTypeThumb2SoReg");                   // R, I
   MISC("so_imm", "kOperandTypeARMSoImm");                         // I
   MISC("rot_imm", "kOperandTypeARMRotImm");                       // I
@@ -592,11 +595,13 @@ static int ARMFlagFromOpName(LiteralConstantEmitter *type,
   MISC("so_imm2part", "kOperandTypeARMSoImm2Part");               // I
   MISC("pred", "kOperandTypeARMPredicate");                       // I, R
   MISC("it_pred", "kOperandTypeARMPredicate");                    // I
+  MISC("addrmode_imm12", "kOperandTypeAddrModeImm12");            // R, I
+  MISC("ldst_so_reg", "kOperandTypeLdStSOReg");                   // R, R, I
   MISC("addrmode2", "kOperandTypeARMAddrMode2");                  // R, R, I
   MISC("am2offset", "kOperandTypeARMAddrMode2Offset");            // R, I
   MISC("addrmode3", "kOperandTypeARMAddrMode3");                  // R, R, I
   MISC("am3offset", "kOperandTypeARMAddrMode3Offset");            // R, I
-  MISC("addrmode4", "kOperandTypeARMAddrMode4");                  // R, I
+  MISC("ldstm_mode", "kOperandTypeARMLdStmMode");                 // I
   MISC("addrmode5", "kOperandTypeARMAddrMode5");                  // R, I
   MISC("addrmode6", "kOperandTypeARMAddrMode6");                  // R, R, I, I
   MISC("am6offset", "kOperandTypeARMAddrMode6Offset");            // R, I, I
@@ -644,7 +649,7 @@ static void ARMPopulateOperands(
     return;
 
   unsigned int index;
-  unsigned int numOperands = inst.OperandList.size();
+  unsigned int numOperands = inst.Operands.size();
 
   if (numOperands > EDIS_MAX_OPERANDS) {
     errs() << "numOperands == " << numOperands << " > " <<
@@ -653,8 +658,7 @@ static void ARMPopulateOperands(
   }
 
   for (index = 0; index < numOperands; ++index) {
-    const CodeGenInstruction::OperandInfo &operandInfo =
-    inst.OperandList[index];
+    const CGIOperandList::OperandInfo &operandInfo = inst.Operands[index];
     Record &rec = *operandInfo.Rec;
 
     if (ARMFlagFromOpName(operandTypes[index], rec.getName())) {
@@ -705,7 +709,7 @@ static void ARMExtractSemantics(
     BRANCH("func");
 
     unsigned opIndex;
-    opIndex = inst.getOperandNamed("func");
+    opIndex = inst.Operands.getOperandNamed("func");
     if (operandTypes[opIndex]->is("kOperandTypeImmediate"))
       operandTypes[opIndex]->set("kOperandTypeARMBranchTarget");
   }
@@ -736,7 +740,7 @@ static void populateInstInfo(CompoundConstantEmitter &infoArray,
     infoStruct->addEntry(instType);
 
     LiteralConstantEmitter *numOperandsEmitter =
-      new LiteralConstantEmitter(inst.OperandList.size());
+      new LiteralConstantEmitter(inst.Operands.size());
     infoStruct->addEntry(numOperandsEmitter);
 
     CompoundConstantEmitter *operandTypeArray = new CompoundConstantEmitter;
@@ -807,11 +811,13 @@ static void emitCommonEnums(raw_ostream &o, unsigned int &i) {
   operandTypes.addEntry("kOperandTypeARMRotImm");
   operandTypes.addEntry("kOperandTypeARMSoImm2Part");
   operandTypes.addEntry("kOperandTypeARMPredicate");
+  operandTypes.addEntry("kOperandTypeAddrModeImm12");
+  operandTypes.addEntry("kOperandTypeLdStSOReg");
   operandTypes.addEntry("kOperandTypeARMAddrMode2");
   operandTypes.addEntry("kOperandTypeARMAddrMode2Offset");
   operandTypes.addEntry("kOperandTypeARMAddrMode3");
   operandTypes.addEntry("kOperandTypeARMAddrMode3Offset");
-  operandTypes.addEntry("kOperandTypeARMAddrMode4");
+  operandTypes.addEntry("kOperandTypeARMLdStmMode");
   operandTypes.addEntry("kOperandTypeARMAddrMode5");
   operandTypes.addEntry("kOperandTypeARMAddrMode6");
   operandTypes.addEntry("kOperandTypeARMAddrMode6Offset");

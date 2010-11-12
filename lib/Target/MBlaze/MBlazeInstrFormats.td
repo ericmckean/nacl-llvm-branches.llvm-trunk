@@ -15,17 +15,24 @@ class Format<bits<6> val> {
 }
 
 def FPseudo : Format<0>;
-def FRRR    : Format<1>;
-def FRRI    : Format<2>;
-def FRIR    : Format<3>;
-def FFSL    : Format<4>;
-def FFSLD   : Format<5>;
-def FFSLT   : Format<6>;
-def FFSLTD  : Format<7>;
-def FR      : Format<8>;
-def FI      : Format<9>;
-def FRR     : Format<10>;
-def FRI     : Format<11>;
+def FRRR    : Format<1>;  // ADD, RSUB, OR, etc.
+def FRRI    : Format<2>;  // ADDI, RSUBI, ORI, etc.
+def FCRR    : Format<3>;  // PUTD, WDC, WIC, BEQ, BNE, BGE, etc.
+def FCRI    : Format<4>;  // RTID, RTED, RTSD, BEQI, BNEI, BGEI, etc.
+def FRCR    : Format<5>;  // BRLD, BRALD, GETD
+def FRCI    : Format<6>;  // BRLID, BRALID, MSRCLR, MSRSET
+def FCCR    : Format<7>;  // BR, BRA, BRD, etc.
+def FCCI    : Format<8>;  // IMM, BRI, BRAI, BRID, etc.
+def FRRCI   : Format<9>;  // BSRLI, BSRAI, BSLLI
+def FRRC    : Format<10>; // SEXT8, SEXT16, SRA, SRC, SRL, FLT, FINT, FSQRT
+def FRCX    : Format<11>; // GET
+def FRCS    : Format<12>; // MFS
+def FCRCS   : Format<13>; // MTS
+def FCRCX   : Format<14>; // PUT
+def FCX     : Format<15>; // TPUT
+def FCR     : Format<16>; // TPUTD
+def FRIR    : Format<17>; // RSUBI
+def FC      : Format<18>; // NOP
 
 //===----------------------------------------------------------------------===//
 //  Describe MBlaze instructions format
@@ -42,8 +49,7 @@ def FRI     : Format<11>;
 
 // Generic MBlaze Format
 class MBlazeInst<bits<6> op, Format form, dag outs, dag ins, string asmstr, 
-                 list<dag> pattern, InstrItinClass itin> : Instruction 
-{
+                 list<dag> pattern, InstrItinClass itin> : Instruction {
   let Namespace = "MBlaze";
   field bits<32> Inst;
 
@@ -52,7 +58,11 @@ class MBlazeInst<bits<6> op, Format form, dag outs, dag ins, string asmstr,
   bits<6> FormBits = Form.Value;
 
   // Top 6 bits are the 'opcode' field
-  let Inst{0-5} = opcode;   
+  let Inst{0-5} = opcode;
+
+  // If the instruction is marked as a pseudo, set isCodeGenOnly so that the
+  // assembler and disassmbler ignore it.
+  let isCodeGenOnly = !eq(!cast<string>(form), "FPseudo");
   
   dag OutOperandList = outs;
   dag InOperandList  = ins;
@@ -76,15 +86,15 @@ class MBlazePseudo<dag outs, dag ins, string asmstr, list<dag> pattern>:
 //===----------------------------------------------------------------------===//
 
 class TA<bits<6> op, bits<11> flags, dag outs, dag ins, string asmstr,
-         list<dag> pattern, InstrItinClass itin> : 
-         MBlazeInst<op,FRRR,outs, ins, asmstr, pattern, itin> 
+         list<dag> pattern, InstrItinClass itin> :
+         MBlazeInst<op,FRRR,outs, ins, asmstr, pattern, itin>
 {
   bits<5> rd;
   bits<5> ra;
   bits<5> rb;
 
   let Inst{6-10}  = rd;
-  let Inst{11-15} = ra; 
+  let Inst{11-15} = ra;
   let Inst{16-20} = rb;
   let Inst{21-31} = flags;
 }
@@ -94,15 +104,15 @@ class TA<bits<6> op, bits<11> flags, dag outs, dag ins, string asmstr,
 //===----------------------------------------------------------------------===//
 
 class TB<bits<6> op, dag outs, dag ins, string asmstr, list<dag> pattern,
-         InstrItinClass itin> : 
-         MBlazeInst<op, FRRI, outs, ins, asmstr, pattern, itin> 
+         InstrItinClass itin> :
+         MBlazeInst<op, FRRI, outs, ins, asmstr, pattern, itin>
 {
   bits<5>  rd;
   bits<5>  ra;
   bits<16> imm16;
 
   let Inst{6-10}  = rd;
-  let Inst{11-15} = ra; 
+  let Inst{11-15} = ra;
   let Inst{16-31} = imm16;
 }
 
@@ -111,7 +121,7 @@ class TB<bits<6> op, dag outs, dag ins, string asmstr, list<dag> pattern,
 // the LLVM DAG : <|opcode|rd|ra|immediate|>
 //===----------------------------------------------------------------------===//
 class TBR<bits<6> op, dag outs, dag ins, string asmstr, list<dag> pattern,
-         InstrItinClass itin> : 
+         InstrItinClass itin> :
          TB<op, outs, ins, asmstr, pattern, itin> {
   bits<5>  rrd;
   bits<16> rimm16;

@@ -318,6 +318,9 @@ uint64_t MCAssembler::ComputeFragmentSize(MCAsmLayout &Layout,
   case MCFragment::FT_Inst:
     return cast<MCInstFragment>(F).getInstSize();
 
+  case MCFragment::FT_LEB:
+    return cast<MCLEBFragment>(F).getSize();
+
   case MCFragment::FT_Align: {
     const MCAlignFragment &AF = cast<MCAlignFragment>(F);
 
@@ -334,37 +337,11 @@ uint64_t MCAssembler::ComputeFragmentSize(MCAsmLayout &Layout,
     return Size;
   }
 
-  case MCFragment::FT_Org: {
-    const MCOrgFragment &OF = cast<MCOrgFragment>(F);
+  case MCFragment::FT_Org:
+    return cast<MCOrgFragment>(F).getSize();
 
-    // FIXME: We should compute this sooner, we don't want to recurse here, and
-    // we would like to be more functional.
-    int64_t TargetLocation;
-    if (!OF.getOffset().EvaluateAsAbsolute(TargetLocation, &Layout))
-      report_fatal_error("expected assembly-time absolute expression");
-
-    // FIXME: We need a way to communicate this error.
-    int64_t Offset = TargetLocation - FragmentOffset;
-    if (Offset < 0 || Offset >= 0x40000000)
-      report_fatal_error("invalid .org offset '" + Twine(TargetLocation) +
-                         "' (at offset '" + Twine(FragmentOffset) + "')");
-
-    return Offset;
-  }
-
-  case MCFragment::FT_Dwarf: {
-    const MCDwarfLineAddrFragment &OF = cast<MCDwarfLineAddrFragment>(F);
-
-    // The AddrDelta is really unsigned and it can only increase.
-    int64_t AddrDelta;
-
-    OF.getAddrDelta().EvaluateAsAbsolute(AddrDelta, &Layout);
-
-    int64_t LineDelta;
-    LineDelta = OF.getLineDelta();
-
-    return MCDwarfLineAddr::ComputeSize(LineDelta, AddrDelta);
-  }
+  case MCFragment::FT_Dwarf:
+    return cast<MCDwarfLineAddrFragment>(F).getSize();
   }
 
   assert(0 && "invalid fragment kind");
@@ -514,6 +491,23 @@ static void WriteFragmentData(const MCAssembler &Asm, const MCAsmLayout &Layout,
     llvm_unreachable("unexpected inst fragment after lowering");
     break;
 
+  case MCFragment::FT_LEB: {
+    MCLEBFragment &LF = cast<MCLEBFragment>(F);
+
+    // FIXME: It is probably better if we don't call EvaluateAsAbsolute in
+    // here.
+    int64_t Value;
+    LF.getValue().EvaluateAsAbsolute(Value, &Layout);
+    SmallString<32> Tmp;
+    raw_svector_ostream OSE(Tmp);
+    if (LF.isSigned())
+      MCObjectWriter::EncodeSLEB128(Value, OSE);
+    else
+      MCObjectWriter::EncodeULEB128(Value, OSE);
+    OW->WriteBytes(OSE.str());
+    break;
+  }
+
   case MCFragment::FT_Org: {
     MCOrgFragment &OF = cast<MCOrgFragment>(F);
 
@@ -596,24 +590,14 @@ void MCAssembler::WriteSectionData(const MCSectionData *SD,
 void MCAssembler::AddSectionToTheEnd(const MCObjectWriter &Writer,
                                      MCSectionData &SD, MCAsmLayout &Layout) {
   // Create dummy fragments and assign section ordinals.
-  unsigned SectionIndex = 0;
-  for (MCAssembler::iterator it = begin(), ie = end(); it != ie; ++it)
-    SectionIndex++;
-
+  unsigned SectionIndex = size();
   SD.setOrdinal(SectionIndex);
 
   // Assign layout order indices to sections and fragments.
-  unsigned FragmentIndex = 0;
-  unsigned i = 0;
-  for (unsigned e = Layout.getSectionOrder().size(); i != e; ++i) {
-    MCSectionData *SD = Layout.getSectionOrder()[i];
+  const MCFragment &Last = *Layout.getSectionOrder().back()->rbegin();
+  unsigned FragmentIndex = Last.getLayoutOrder() + 1;
 
-    for (MCSectionData::iterator it2 = SD->begin(),
-           ie2 = SD->end(); it2 != ie2; ++it2)
-      FragmentIndex++;
-  }
-
-  SD.setLayoutOrder(i);
+  SD.setLayoutOrder(Layout.getSectionOrder().size());
   for (MCSectionData::iterator it2 = SD.begin(),
          ie2 = SD.end(); it2 != ie2; ++it2) {
     it2->setLayoutOrder(FragmentIndex++);
@@ -621,11 +605,6 @@ void MCAssembler::AddSectionToTheEnd(const MCObjectWriter &Writer,
   Layout.getSectionOrder().push_back(&SD);
 
   Layout.LayoutSection(&SD);
-
-  // Layout until everything fits.
-  while (LayoutOnce(Writer, Layout))
-    continue;
-
 }
 
 void MCAssembler::Finish(MCObjectWriter *Writer) {
@@ -781,6 +760,93 @@ bool MCAssembler::FragmentNeedsRelaxation(const MCObjectWriter &Writer,
   return false;
 }
 
+bool MCAssembler::RelaxInstruction(const MCObjectWriter &Writer,
+                                   MCAsmLayout &Layout,
+                                   MCInstFragment &IF) {
+  if (!FragmentNeedsRelaxation(Writer, &IF, Layout))
+    return false;
+
+  ++stats::RelaxedInstructions;
+
+  // FIXME-PERF: We could immediately lower out instructions if we can tell
+  // they are fully resolved, to avoid retesting on later passes.
+
+  // Relax the fragment.
+
+  MCInst Relaxed;
+  getBackend().RelaxInstruction(IF.getInst(), Relaxed);
+
+  // Encode the new instruction.
+  //
+  // FIXME-PERF: If it matters, we could let the target do this. It can
+  // probably do so more efficiently in many cases.
+  SmallVector<MCFixup, 4> Fixups;
+  SmallString<256> Code;
+  raw_svector_ostream VecOS(Code);
+  getEmitter().EncodeInstruction(Relaxed, VecOS, Fixups);
+  VecOS.flush();
+
+  // Update the instruction fragment.
+  int SlideAmount = Code.size() - IF.getInstSize();
+  IF.setInst(Relaxed);
+  IF.getCode() = Code;
+  IF.getFixups().clear();
+  // FIXME: Eliminate copy.
+  for (unsigned i = 0, e = Fixups.size(); i != e; ++i)
+    IF.getFixups().push_back(Fixups[i]);
+
+  // Update the layout, and remember that we relaxed.
+  Layout.UpdateForSlide(&IF, SlideAmount);
+  return true;
+}
+
+bool MCAssembler::RelaxOrg(const MCObjectWriter &Writer,
+                           MCAsmLayout &Layout,
+                           MCOrgFragment &OF) {
+  int64_t TargetLocation;
+  if (!OF.getOffset().EvaluateAsAbsolute(TargetLocation, &Layout))
+    report_fatal_error("expected assembly-time absolute expression");
+
+  // FIXME: We need a way to communicate this error.
+  uint64_t FragmentOffset = Layout.getFragmentOffset(&OF);
+  int64_t Offset = TargetLocation - FragmentOffset;
+  if (Offset < 0 || Offset >= 0x40000000)
+    report_fatal_error("invalid .org offset '" + Twine(TargetLocation) +
+                       "' (at offset '" + Twine(FragmentOffset) + "')");
+
+  unsigned OldSize = OF.getSize();
+  OF.setSize(Offset);
+  return OldSize != OF.getSize();
+}
+
+bool MCAssembler::RelaxLEB(const MCObjectWriter &Writer,
+                           MCAsmLayout &Layout,
+                           MCLEBFragment &LF) {
+  int64_t Value;
+  LF.getValue().EvaluateAsAbsolute(Value, &Layout);
+  SmallString<32> Tmp;
+  raw_svector_ostream OSE(Tmp);
+  if (LF.isSigned())
+    MCObjectWriter::EncodeSLEB128(Value, OSE);
+  else
+    MCObjectWriter::EncodeULEB128(Value, OSE);
+  uint64_t OldSize = LF.getSize();
+  LF.setSize(OSE.GetNumBytesInBuffer());
+  return OldSize != LF.getSize();
+}
+
+bool MCAssembler::RelaxDwarfLineAddr(const MCObjectWriter &Writer,
+				     MCAsmLayout &Layout,
+				     MCDwarfLineAddrFragment &DF) {
+  int64_t AddrDelta;
+  DF.getAddrDelta().EvaluateAsAbsolute(AddrDelta, &Layout);
+  int64_t LineDelta;
+  LineDelta = DF.getLineDelta();
+  uint64_t OldSize = DF.getSize();
+  DF.setSize(MCDwarfLineAddr::ComputeSize(LineDelta, AddrDelta));
+  return OldSize != DF.getSize();  
+}
+
 bool MCAssembler::LayoutOnce(const MCObjectWriter &Writer,
                              MCAsmLayout &Layout) {
   ++stats::RelaxationSteps;
@@ -795,43 +861,25 @@ bool MCAssembler::LayoutOnce(const MCObjectWriter &Writer,
 
     for (MCSectionData::iterator it2 = SD.begin(),
            ie2 = SD.end(); it2 != ie2; ++it2) {
-      // Check if this is an instruction fragment that needs relaxation.
-      MCInstFragment *IF = dyn_cast<MCInstFragment>(it2);
-      if (!IF || !FragmentNeedsRelaxation(Writer, IF, Layout))
-        continue;
-
-      ++stats::RelaxedInstructions;
-
-      // FIXME-PERF: We could immediately lower out instructions if we can tell
-      // they are fully resolved, to avoid retesting on later passes.
-
-      // Relax the fragment.
-
-      MCInst Relaxed;
-      getBackend().RelaxInstruction(IF->getInst(), Relaxed);
-
-      // Encode the new instruction.
-      //
-      // FIXME-PERF: If it matters, we could let the target do this. It can
-      // probably do so more efficiently in many cases.
-      SmallVector<MCFixup, 4> Fixups;
-      SmallString<256> Code;
-      raw_svector_ostream VecOS(Code);
-      getEmitter().EncodeInstruction(Relaxed, VecOS, Fixups);
-      VecOS.flush();
-
-      // Update the instruction fragment.
-      int SlideAmount = Code.size() - IF->getInstSize();
-      IF->setInst(Relaxed);
-      IF->getCode() = Code;
-      IF->getFixups().clear();
-      // FIXME: Eliminate copy.
-      for (unsigned i = 0, e = Fixups.size(); i != e; ++i)
-        IF->getFixups().push_back(Fixups[i]);
-
-      // Update the layout, and remember that we relaxed.
-      Layout.UpdateForSlide(IF, SlideAmount);
-      WasRelaxed = true;
+      // Check if this is an fragment that needs relaxation.
+      switch(it2->getKind()) {
+      default:
+        break;
+      case MCFragment::FT_Inst:
+        WasRelaxed |= RelaxInstruction(Writer, Layout,
+                                       *cast<MCInstFragment>(it2));
+        break;
+      case MCFragment::FT_Org:
+        WasRelaxed |= RelaxOrg(Writer, Layout, *cast<MCOrgFragment>(it2));
+        break;
+      case MCFragment::FT_Dwarf:
+        WasRelaxed |= RelaxDwarfLineAddr(Writer, Layout,
+					 *cast<MCDwarfLineAddrFragment>(it2));
+	break;
+      case MCFragment::FT_LEB:
+        WasRelaxed |= RelaxLEB(Writer, Layout, *cast<MCLEBFragment>(it2));
+        break;
+      }
     }
   }
 
@@ -903,6 +951,7 @@ void MCFragment::dump() {
   case MCFragment::FT_Inst:  OS << "MCInstFragment"; break;
   case MCFragment::FT_Org:   OS << "MCOrgFragment"; break;
   case MCFragment::FT_Dwarf: OS << "MCDwarfFragment"; break;
+  case MCFragment::FT_LEB:   OS << "MCLEBFragment"; break;
   }
 
   OS << "<MCFragment " << (void*) this << " LayoutOrder:" << LayoutOrder
@@ -968,6 +1017,12 @@ void MCFragment::dump() {
     OS << "\n       ";
     OS << " AddrDelta:" << OF->getAddrDelta()
        << " LineDelta:" << OF->getLineDelta();
+    break;
+  }
+  case MCFragment::FT_LEB: {
+    const MCLEBFragment *LF = cast<MCLEBFragment>(this);
+    OS << "\n       ";
+    OS << " Value:" << LF->getValue() << " Signed:" << LF->isSigned();
     break;
   }
   }

@@ -542,10 +542,9 @@ namespace llvm {
 
     ConstraintType getConstraintType(const std::string &Constraint) const;
 
-    /// Examine constraint string and operand type and determine a weight value,
-    /// where: -1 = invalid match, and 0 = so-so match to 3 = good match.
+    /// Examine constraint string and operand type and determine a weight value.
     /// The operand object must already have been set up with the operand type.
-    virtual int getSingleConstraintMatchWeight(
+    virtual ConstraintWeight getSingleConstraintMatchWeight(
       AsmOperandInfo &info, const char *constraint) const;
 
     std::vector<unsigned>
@@ -718,7 +717,6 @@ namespace llvm {
                                 SDValue Chain, bool IsTailCall, bool Is64Bit,
                                 int FPDiff, DebugLoc dl) const;
 
-    CCAssignFn *CCAssignFnForNode(CallingConv::ID CallConv) const;
     unsigned GetAlignedArgumentStackSize(unsigned StackSize,
                                          SelectionDAG &DAG) const;
 

@@ -21,7 +21,6 @@
 #include "llvm/Constants.h"
 #include "llvm/Function.h"
 #include "llvm/GlobalValue.h"
-#include "llvm/ADT/STLExtras.h"
 #include "llvm/CodeGen/LiveVariables.h"
 #include "llvm/CodeGen/MachineConstantPool.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
@@ -34,15 +33,12 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/ADT/STLExtras.h"
 using namespace llvm;
 
 static cl::opt<bool>
 EnableARM3Addr("enable-arm-3-addr-conv", cl::Hidden,
                cl::desc("Enable ARM 2-addr to 3-addr conv"));
-
-static cl::opt<bool>
-OldARMIfCvt("old-arm-ifcvt", cl::Hidden,
-             cl::desc("Use old-style ARM if-conversion heuristics"));
 
 ARMBaseInstrInfo::ARMBaseInstrInfo(const ARMSubtarget& STI)
   : TargetInstrInfoImpl(ARMInsts, array_lengthof(ARMInsts)),
@@ -144,7 +140,7 @@ ARMBaseInstrInfo::convertToThreeAddress(MachineFunction::iterator &MFI,
     if (isLoad)
       MemMI = BuildMI(MF, MI->getDebugLoc(),
                       get(MemOpc), MI->getOperand(0).getReg())
-        .addReg(WBReg).addReg(0).addImm(0).addImm(Pred);
+        .addReg(WBReg).addImm(0).addImm(Pred);
     else
       MemMI = BuildMI(MF, MI->getDebugLoc(),
                       get(MemOpc)).addReg(MI->getOperand(1).getReg())
@@ -155,7 +151,7 @@ ARMBaseInstrInfo::convertToThreeAddress(MachineFunction::iterator &MFI,
     if (isLoad)
       MemMI = BuildMI(MF, MI->getDebugLoc(),
                       get(MemOpc), MI->getOperand(0).getReg())
-        .addReg(BaseReg).addReg(0).addImm(0).addImm(Pred);
+        .addReg(BaseReg).addImm(0).addImm(Pred);
     else
       MemMI = BuildMI(MF, MI->getDebugLoc(),
                       get(MemOpc)).addReg(MI->getOperand(1).getReg())
@@ -676,9 +672,9 @@ storeRegToStackSlot(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
 
   switch (RC->getID()) {
   case ARM::GPRRegClassID:
-    AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::STR))
+    AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::STRi12))
                    .addReg(SrcReg, getKillRegState(isKill))
-                   .addFrameIndex(FI).addReg(0).addImm(0).addMemOperand(MMO));
+                   .addFrameIndex(FI).addImm(0).addMemOperand(MMO));
     break;
   case ARM::SPRRegClassID:
     AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::VSTRS))
@@ -755,7 +751,7 @@ ARMBaseInstrInfo::isStoreToStackSlot(const MachineInstr *MI,
                                      int &FrameIndex) const {
   switch (MI->getOpcode()) {
   default: break;
-  case ARM::STR:
+  case ARM::STRrs:
   case ARM::t2STRs: // FIXME: don't use t2STRs to access frame.
     if (MI->getOperand(1).isFI() &&
         MI->getOperand(2).isReg() &&
@@ -766,6 +762,7 @@ ARMBaseInstrInfo::isStoreToStackSlot(const MachineInstr *MI,
       return MI->getOperand(0).getReg();
     }
     break;
+  case ARM::STRi12:
   case ARM::t2STRi12:
   case ARM::tSpill:
   case ARM::VSTRD:
@@ -823,8 +820,8 @@ loadRegFromStackSlot(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
 
   switch (RC->getID()) {
   case ARM::GPRRegClassID:
-    AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::LDR), DestReg)
-                   .addFrameIndex(FI).addReg(0).addImm(0).addMemOperand(MMO));
+    AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::LDRi12), DestReg)
+                   .addFrameIndex(FI).addImm(0).addMemOperand(MMO));
     break;
   case ARM::SPRRegClassID:
     AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::VLDRS), DestReg)
@@ -894,7 +891,7 @@ ARMBaseInstrInfo::isLoadFromStackSlot(const MachineInstr *MI,
                                       int &FrameIndex) const {
   switch (MI->getOpcode()) {
   default: break;
-  case ARM::LDR:
+  case ARM::LDRrs:
   case ARM::t2LDRs:  // FIXME: don't use t2LDRs to access frame.
     if (MI->getOperand(1).isFI() &&
         MI->getOperand(2).isReg() &&
@@ -905,6 +902,7 @@ ARMBaseInstrInfo::isLoadFromStackSlot(const MachineInstr *MI,
       return MI->getOperand(0).getReg();
     }
     break;
+  case ARM::LDRi12:
   case ARM::t2LDRi12:
   case ARM::tRestore:
   case ARM::VLDRD:
@@ -1078,8 +1076,8 @@ bool ARMBaseInstrInfo::areLoadsFromSameBasePtr(SDNode *Load1, SDNode *Load2,
   switch (Load1->getMachineOpcode()) {
   default:
     return false;
-  case ARM::LDR:
-  case ARM::LDRB:
+  case ARM::LDRi12:
+  case ARM::LDRBi12:
   case ARM::LDRD:
   case ARM::LDRH:
   case ARM::LDRSB:
@@ -1097,8 +1095,8 @@ bool ARMBaseInstrInfo::areLoadsFromSameBasePtr(SDNode *Load1, SDNode *Load2,
   switch (Load2->getMachineOpcode()) {
   default:
     return false;
-  case ARM::LDR:
-  case ARM::LDRB:
+  case ARM::LDRi12:
+  case ARM::LDRBi12:
   case ARM::LDRD:
   case ARM::LDRH:
   case ARM::LDRSB:
@@ -1203,53 +1201,36 @@ bool ARMBaseInstrInfo::isSchedulingBoundary(const MachineInstr *MI,
 }
 
 bool ARMBaseInstrInfo::isProfitableToIfCvt(MachineBasicBlock &MBB,
-                                           unsigned NumInstrs,
+                                           unsigned NumCyles,
+                                           unsigned ExtraPredCycles,
                                            float Probability,
                                            float Confidence) const {
-  if (!NumInstrs)
+  if (!NumCyles)
     return false;
 
-  // Use old-style heuristics
-  if (OldARMIfCvt) {
-    if (Subtarget.getCPUString() == "generic")
-      // Generic (and overly aggressive) if-conversion limits for testing.
-      return NumInstrs <= 10;
-    if (Subtarget.hasV7Ops())
-      return NumInstrs <= 3;
-    return NumInstrs <= 2;
-  }
-
   // Attempt to estimate the relative costs of predication versus branching.
-  float UnpredCost = Probability * NumInstrs;
+  float UnpredCost = Probability * NumCyles;
   UnpredCost += 1.0; // The branch itself
   UnpredCost += (1.0 - Confidence) * Subtarget.getMispredictionPenalty();
 
-  float PredCost = NumInstrs;
-
-  return PredCost < UnpredCost;
-
+  return (float)(NumCyles + ExtraPredCycles) < UnpredCost;
 }
 
 bool ARMBaseInstrInfo::
-isProfitableToIfCvt(MachineBasicBlock &TMBB, unsigned NumT,
-                    MachineBasicBlock &FMBB, unsigned NumF,
+isProfitableToIfCvt(MachineBasicBlock &TMBB,
+                    unsigned TCycles, unsigned TExtra,
+                    MachineBasicBlock &FMBB,
+                    unsigned FCycles, unsigned FExtra,
                     float Probability, float Confidence) const {
-  // Use old-style if-conversion heuristics
-  if (OldARMIfCvt) {
-    return NumT && NumF && NumT <= 2 && NumF <= 2;
-  }
-
-  if (!NumT || !NumF)
+  if (!TCycles || !FCycles)
     return false;
 
   // Attempt to estimate the relative costs of predication versus branching.
-  float UnpredCost = Probability * NumT + (1.0 - Probability) * NumF;
+  float UnpredCost = Probability * TCycles + (1.0 - Probability) * FCycles;
   UnpredCost += 1.0; // The branch itself
   UnpredCost += (1.0 - Confidence) * Subtarget.getMispredictionPenalty();
 
-  float PredCost = NumT + NumF;
-
-  return PredCost < UnpredCost;
+  return (float)(TCycles + FCycles + TExtra + FExtra) < UnpredCost;
 }
 
 /// getInstrPredicate - If instruction is predicated, returns its predicate
@@ -1362,6 +1343,12 @@ bool llvm::rewriteARMFrameIndex(MachineInstr &MI, unsigned FrameRegIdx,
     unsigned NumBits = 0;
     unsigned Scale = 1;
     switch (AddrMode) {
+    case ARMII::AddrMode_i12: {
+      ImmIdx = FrameRegIdx + 1;
+      InstrOffs = MI.getOperand(ImmIdx).getImm();
+      NumBits = 12;
+      break;
+    }
     case ARMII::AddrMode2: {
       ImmIdx = FrameRegIdx+2;
       InstrOffs = ARM_AM::getAM2Offset(MI.getOperand(ImmIdx).getImm());
@@ -1412,8 +1399,15 @@ bool llvm::rewriteARMFrameIndex(MachineInstr &MI, unsigned FrameRegIdx,
       if ((unsigned)Offset <= Mask * Scale) {
         // Replace the FrameIndex with sp
         MI.getOperand(FrameRegIdx).ChangeToRegister(FrameReg, false);
-        if (isSub)
-          ImmedOffset |= 1 << NumBits;
+        // FIXME: When addrmode2 goes away, this will simplify (like the
+        // T2 version), as the LDR.i12 versions don't need the encoding
+        // tricks for the offset value.
+        if (isSub) {
+          if (AddrMode == ARMII::AddrMode_i12)
+            ImmedOffset = -ImmedOffset;
+          else
+            ImmedOffset |= 1 << NumBits;
+        }
         ImmOp.ChangeToImmediate(ImmedOffset);
         Offset = 0;
         return true;
@@ -1421,8 +1415,12 @@ bool llvm::rewriteARMFrameIndex(MachineInstr &MI, unsigned FrameRegIdx,
 
       // Otherwise, it didn't fit. Pull in what we can to simplify the immed.
       ImmedOffset = ImmedOffset & Mask;
-      if (isSub)
-        ImmedOffset |= 1 << NumBits;
+      if (isSub) {
+        if (AddrMode == ARMII::AddrMode_i12)
+          ImmedOffset = -ImmedOffset;
+        else
+          ImmedOffset |= 1 << NumBits;
+      }
       ImmOp.ChangeToImmediate(ImmedOffset);
       Offset &= ~(Mask*Scale);
     }
@@ -1538,10 +1536,10 @@ OptimizeCompareInstr(MachineInstr *CmpInstr, unsigned SrcReg, int CmpMask,
 
     for (unsigned IO = 0, EO = Instr.getNumOperands(); IO != EO; ++IO) {
       const MachineOperand &MO = Instr.getOperand(IO);
-      if (!MO.isReg() || !MO.isDef()) continue;
+      if (!MO.isReg()) continue;
 
-      // This instruction modifies CPSR before the one we want to change. We
-      // can't do this transformation.
+      // This instruction modifies or uses CPSR after the one we want to
+      // change. We can't do this transformation.
       if (MO.getReg() == ARM::CPSR)
         return false;
     }
@@ -1572,8 +1570,8 @@ OptimizeCompareInstr(MachineInstr *CmpInstr, unsigned SrcReg, int CmpMask,
 }
 
 unsigned
-ARMBaseInstrInfo::getNumMicroOps(const MachineInstr *MI,
-                                 const InstrItineraryData *ItinData) const {
+ARMBaseInstrInfo::getNumMicroOps(const InstrItineraryData *ItinData,
+                                 const MachineInstr *MI) const {
   if (!ItinData || ItinData->isEmpty())
     return 1;
 
@@ -1630,9 +1628,14 @@ ARMBaseInstrInfo::getNumMicroOps(const MachineInstr *MI,
   case ARM::t2STM_UPD: {
     unsigned NumRegs = MI->getNumOperands() - Desc.getNumOperands() + 1;
     if (Subtarget.isCortexA8()) {
-      // 4 registers would be issued: 1, 2, 1.
-      // 5 registers would be issued: 1, 2, 2.
-      return 1 + (NumRegs / 2);
+      if (NumRegs < 4)
+        return 2;
+      // 4 registers would be issued: 2, 2.
+      // 5 registers would be issued: 2, 2, 1.
+      UOps = (NumRegs / 2);
+      if (NumRegs % 2)
+        ++UOps;
+      return UOps;
     } else if (Subtarget.isCortexA9()) {
       UOps = (NumRegs / 2);
       // If there are odd number of registers or if it's not 64-bit aligned,
@@ -1804,8 +1807,8 @@ ARMBaseInstrInfo::getOperandLatency(const InstrItineraryData *ItinData,
   // This may be a def / use of a variable_ops instruction, the operand
   // latency might be determinable dynamically. Let the target try to
   // figure it out.
-  bool LdmBypass = false;
   int DefCycle = -1;
+  bool LdmBypass = false;
   switch (DefTID.getOpcode()) {
   default:
     DefCycle = ItinData->getOperandCycle(DefClass, DefIdx);
@@ -1895,16 +1898,53 @@ ARMBaseInstrInfo::getOperandLatency(const InstrItineraryData *ItinData,
 
   const TargetInstrDesc &UseTID = UseMI->getDesc();
   const MachineOperand &DefMO = DefMI->getOperand(DefIdx);
-  if (DefMO.getReg() == ARM::CPSR && UseTID.isBranch())
+  if (DefMO.getReg() == ARM::CPSR) {
+    if (DefMI->getOpcode() == ARM::FMSTAT) {
+      // fpscr -> cpsr stalls over 20 cycles on A8 (and earlier?)
+      return Subtarget.isCortexA9() ? 1 : 20;
+    }
+
     // CPSR set and branch can be paired in the same cycle.
-    return 0;
+    if (UseTID.isBranch())
+      return 0;
+  }
 
   unsigned DefAlign = DefMI->hasOneMemOperand()
     ? (*DefMI->memoperands_begin())->getAlignment() : 0;
   unsigned UseAlign = UseMI->hasOneMemOperand()
     ? (*UseMI->memoperands_begin())->getAlignment() : 0;
-  return getOperandLatency(ItinData, DefTID, DefIdx, DefAlign,
-                           UseTID, UseIdx, UseAlign);
+  int Latency = getOperandLatency(ItinData, DefTID, DefIdx, DefAlign,
+                                  UseTID, UseIdx, UseAlign);
+
+  if (Latency > 1 &&
+      (Subtarget.isCortexA8() || Subtarget.isCortexA9())) {
+    // FIXME: Shifter op hack: no shift (i.e. [r +/- r]) or [r + r << 2]
+    // variants are one cycle cheaper.
+    switch (DefTID.getOpcode()) {
+    default: break;
+    case ARM::LDRrs:
+    case ARM::LDRBrs: {
+      unsigned ShOpVal = DefMI->getOperand(3).getImm();
+      unsigned ShImm = ARM_AM::getAM2Offset(ShOpVal);
+      if (ShImm == 0 ||
+          (ShImm == 2 && ARM_AM::getAM2ShiftOpc(ShOpVal) == ARM_AM::lsl))
+        --Latency;
+      break;
+    }
+    case ARM::t2LDRs:
+    case ARM::t2LDRBs:
+    case ARM::t2LDRHs:
+    case ARM::t2LDRSHs: {
+      // Thumb2 mode: lsl only.
+      unsigned ShAmt = DefMI->getOperand(3).getImm();
+      if (ShAmt == 0 || ShAmt == 2)
+        --Latency;
+      break;
+    }
+    }
+  }
+
+  return Latency;
 }
 
 int
@@ -1918,8 +1958,13 @@ ARMBaseInstrInfo::getOperandLatency(const InstrItineraryData *ItinData,
   if (!ItinData || ItinData->isEmpty())
     return DefTID.mayLoad() ? 3 : 1;
 
-  if (!UseNode->isMachineOpcode())
-    return ItinData->getOperandCycle(DefTID.getSchedClass(), DefIdx);
+  if (!UseNode->isMachineOpcode()) {
+    int Latency = ItinData->getOperandCycle(DefTID.getSchedClass(), DefIdx);
+    if (Subtarget.isCortexA9())
+      return Latency <= 2 ? 1 : Latency - 1;
+    else
+      return Latency <= 3 ? 1 : Latency - 2;
+  }
 
   const TargetInstrDesc &UseTID = get(UseNode->getMachineOpcode());
   const MachineSDNode *DefMN = dyn_cast<MachineSDNode>(DefNode);
@@ -1928,8 +1973,80 @@ ARMBaseInstrInfo::getOperandLatency(const InstrItineraryData *ItinData,
   const MachineSDNode *UseMN = dyn_cast<MachineSDNode>(UseNode);
   unsigned UseAlign = !UseMN->memoperands_empty()
     ? (*UseMN->memoperands_begin())->getAlignment() : 0;
-  return getOperandLatency(ItinData, DefTID, DefIdx, DefAlign,
-                           UseTID, UseIdx, UseAlign);
+  int Latency = getOperandLatency(ItinData, DefTID, DefIdx, DefAlign,
+                                  UseTID, UseIdx, UseAlign);
+
+  if (Latency > 1 &&
+      (Subtarget.isCortexA8() || Subtarget.isCortexA9())) {
+    // FIXME: Shifter op hack: no shift (i.e. [r +/- r]) or [r + r << 2]
+    // variants are one cycle cheaper.
+    switch (DefTID.getOpcode()) {
+    default: break;
+    case ARM::LDRrs:
+    case ARM::LDRBrs: {
+      unsigned ShOpVal =
+        cast<ConstantSDNode>(DefNode->getOperand(2))->getZExtValue();
+      unsigned ShImm = ARM_AM::getAM2Offset(ShOpVal);
+      if (ShImm == 0 ||
+          (ShImm == 2 && ARM_AM::getAM2ShiftOpc(ShOpVal) == ARM_AM::lsl))
+        --Latency;
+      break;
+    }
+    case ARM::t2LDRs:
+    case ARM::t2LDRBs:
+    case ARM::t2LDRHs:
+    case ARM::t2LDRSHs: {
+      // Thumb2 mode: lsl only.
+      unsigned ShAmt =
+        cast<ConstantSDNode>(DefNode->getOperand(2))->getZExtValue();
+      if (ShAmt == 0 || ShAmt == 2)
+        --Latency;
+      break;
+    }
+    }
+  }
+
+  return Latency;
+}
+
+int ARMBaseInstrInfo::getInstrLatency(const InstrItineraryData *ItinData,
+                                      const MachineInstr *MI,
+                                      unsigned *PredCost) const {
+  if (MI->isCopyLike() || MI->isInsertSubreg() ||
+      MI->isRegSequence() || MI->isImplicitDef())
+    return 1;
+
+  if (!ItinData || ItinData->isEmpty())
+    return 1;
+
+  const TargetInstrDesc &TID = MI->getDesc();
+  unsigned Class = TID.getSchedClass();
+  unsigned UOps = ItinData->Itineraries[Class].NumMicroOps;
+  if (PredCost && TID.hasImplicitDefOfPhysReg(ARM::CPSR))
+    // When predicated, CPSR is an additional source operand for CPSR updating
+    // instructions, this apparently increases their latencies.
+    *PredCost = 1;
+  if (UOps)
+    return ItinData->getStageLatency(Class);
+  return getNumMicroOps(ItinData, MI);
+}
+
+int ARMBaseInstrInfo::getInstrLatency(const InstrItineraryData *ItinData,
+                                      SDNode *Node) const {
+  if (!Node->isMachineOpcode())
+    return 1;
+
+  if (!ItinData || ItinData->isEmpty())
+    return 1;
+
+  unsigned Opcode = Node->getMachineOpcode();
+  switch (Opcode) {
+  default:
+    return ItinData->getStageLatency(get(Opcode).getSchedClass());
+  case ARM::VLDMQ:
+  case ARM::VSTMQ:
+    return 2;
+  }  
 }
 
 bool ARMBaseInstrInfo::
