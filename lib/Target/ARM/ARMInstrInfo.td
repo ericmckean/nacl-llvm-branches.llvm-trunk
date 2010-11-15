@@ -70,6 +70,12 @@ def SDT_ARMBFI : SDTypeProfile<1, 3, [SDTCisVT<0, i32>, SDTCisVT<1, i32>,
 // Node definitions.
 def ARMWrapper       : SDNode<"ARMISD::Wrapper",     SDTIntUnaryOp>;
 def ARMWrapperJT     : SDNode<"ARMISD::WrapperJT",   SDTIntBinOp>;
+// @LOCALMOD-START
+// support non-inline jumptables
+// we do not use the extre uid immediate that comes with ARMWrapperJT
+// TODO(robertm): figure out what it is used for
+def ARMWrapperJT2    : SDNode<"ARMISD::WrapperJT2",  SDTIntUnaryOp>;
+// @LOCALMOD-END
 
 def ARMcallseq_start : SDNode<"ISD::CALLSEQ_START", SDT_ARMCallSeqStart,
                               [SDNPHasChain, SDNPOutFlag]>;
@@ -433,7 +439,8 @@ def ldst_so_reg : Operand<i32>,
 //           := reg +/- reg shop imm
 //
 def addrmode2 : Operand<i32>,
-                ComplexPattern<i32, 3, "SelectAddrMode2", []> {
+                ComplexPattern<i32, 3, "SelectAddrMode2", [],
+                               [SDNPWantRoot]> { // @LOCALMOD
   let PrintMethod = "printAddrMode2Operand";
   let MIOperandInfo = (ops GPR:$base, GPR:$offsreg, i32imm:$offsimm);
 }
@@ -449,7 +456,8 @@ def am2offset : Operand<i32>,
 // addrmode3 := reg +/- imm8
 //
 def addrmode3 : Operand<i32>,
-                ComplexPattern<i32, 3, "SelectAddrMode3", []> {
+                ComplexPattern<i32, 3, "SelectAddrMode3", [],
+                               [SDNPWantRoot]> { // @LOCALMOD
   string EncoderMethod = "getAddrMode3OpValue";
   let PrintMethod = "printAddrMode3Operand";
   let MIOperandInfo = (ops GPR:$base, GPR:$offsreg, i32imm:$offsimm);
@@ -898,6 +906,53 @@ multiclass AI_str1<bit opc22, string opc, InstrItinClass iii,
 //===----------------------------------------------------------------------===//
 // Instructions
 //===----------------------------------------------------------------------===//
+
+// @LOCALMOD-START
+def SFI_GUARD_STORE :
+PseudoInst<(outs GPR:$dst), (ins GPR:$a, pred:$p), NoItinerary,
+           "sfi_store_preamble $dst, $p",
+           []>;
+
+let Defs = [CPSR] in
+def SFI_GUARD_STORE_TST :
+PseudoInst<(outs GPR:$dst), (ins GPR:$a), NoItinerary,
+           "sfi_cstore_preamble $dst",
+           []>;
+
+def SFI_GUARD_INDIRECT_CALL :
+PseudoInst<(outs GPR:$dst), (ins GPR:$a, pred:$p), NoItinerary,
+           "sfi_indirect_call_preamble $dst, $p",
+           []>;
+
+def SFI_GUARD_INDIRECT_JMP :
+PseudoInst<(outs GPR:$dst), (ins GPR:$a, pred:$p), NoItinerary,
+           "sfi_indirect_jump_preamble $dst, $p",
+           []>;
+
+def SFI_GUARD_CALL :
+PseudoInst<(outs), (ins pred:$p), NoItinerary,
+           "sfi_call_preamble $p",
+           []>;
+
+// NOTE: the BX_RET instruction hardcodes lr as well
+def SFI_GUARD_RETURN :
+PseudoInst<(outs), (ins pred:$p), NoItinerary,
+           "sfi_return_preamble lr, $p",
+           []>;
+
+def SFI_NOP_IF_AT_BUNDLE_END :
+PseudoInst<(outs), (ins), NoItinerary,
+           "sfi_nop_if_at_bundle_end",
+           []>;
+
+// Note: intention is that $src and $dst are the same register.
+def SFI_DATA_MASK :
+PseudoInst<(outs GPR:$dst), (ins GPR:$src, pred:$p), NoItinerary,
+           "sfi_data_mask $dst, $p",
+           []>;
+
+// @LOCALMOD-END
+
 
 //===----------------------------------------------------------------------===//
 //  Miscellaneous Instructions.
@@ -1957,6 +2012,8 @@ def UBFX  : I<(outs GPR:$Rd),
 //===----------------------------------------------------------------------===//
 //  Arithmetic Instructions.
 //
+
+
 
 defm ADD  : AsI1_bin_irs<0b0100, "add",
                          IIC_iALUi, IIC_iALUr, IIC_iALUsr,
@@ -3219,6 +3276,10 @@ def : ARMPat<(ARMWrapper  tglobaladdr :$dst), (LEApcrel tglobaladdr :$dst)>,
 def : ARMPat<(ARMWrapper  tconstpool  :$dst), (LEApcrel tconstpool  :$dst)>;
 def : ARMPat<(ARMWrapper  tglobaladdr :$dst), (MOVi32imm tglobaladdr :$dst)>,
             Requires<[IsARM, UseMovt]>;
+// @LOCALMOD-START
+def : ARMPat<(ARMWrapperJT2  tjumptable :$dst), (MOVi32imm tjumptable :$dst)>,
+            Requires<[IsARM, UseMovt]>;
+// @LOCALMOD-END
 def : ARMPat<(ARMWrapperJT tjumptable:$dst, imm:$id),
              (LEApcrelJT tjumptable:$dst, imm:$id)>;
 

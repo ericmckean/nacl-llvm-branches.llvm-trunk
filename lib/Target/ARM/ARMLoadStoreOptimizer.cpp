@@ -39,6 +39,9 @@
 #include "llvm/ADT/Statistic.h"
 using namespace llvm;
 
+#include "llvm/Support/CommandLine.h" // @LOCALMOD
+extern cl::opt<bool> FlagSfiStore; // @LOCALMOD
+
 STATISTIC(NumLDMGened , "Number of ldm instructions generated");
 STATISTIC(NumSTMGened , "Number of stm instructions generated");
 STATISTIC(NumVLDMGened, "Number of vldm instructions generated");
@@ -393,6 +396,7 @@ static inline bool isMatchingDecrement(MachineInstr *MI, unsigned Base,
   unsigned MyPredReg = 0;
   if (!MI)
     return false;
+
   if (MI->getOpcode() != ARM::t2SUBri &&
       MI->getOpcode() != ARM::t2SUBrSPi &&
       MI->getOpcode() != ARM::t2SUBrSPi12 &&
@@ -418,6 +422,7 @@ static inline bool isMatchingIncrement(MachineInstr *MI, unsigned Base,
   unsigned MyPredReg = 0;
   if (!MI)
     return false;
+
   if (MI->getOpcode() != ARM::t2ADDri &&
       MI->getOpcode() != ARM::t2ADDrSPi &&
       MI->getOpcode() != ARM::t2ADDrSPi12 &&
@@ -492,6 +497,7 @@ static unsigned getUpdatingLSMultipleOpcode(unsigned Opc) {
 /// ldmia rn, <ra, rb, rc>
 /// =>
 /// ldmdb rn!, <ra, rb, rc>
+/// @LOCALMOD This is especially useful for rn == sp
 bool ARMLoadStoreOpt::MergeBaseUpdateLSMultiple(MachineBasicBlock &MBB,
                                                MachineBasicBlock::iterator MBBI,
                                                bool &Advance,
@@ -1134,6 +1140,7 @@ bool ARMLoadStoreOpt::LoadStoreMultipleOpti(MachineBasicBlock &MBB) {
   return NumMerges > 0;
 }
 
+
 namespace {
   struct OffsetCompare {
     bool operator()(const MachineInstr *LHS, const MachineInstr *RHS) const {
@@ -1155,7 +1162,12 @@ namespace {
 ///   mov pc, lr
 /// =>
 ///   ldmfd sp!, {..., pc}
+// @LOCALMOD for sfi we do not want this to happen
 bool ARMLoadStoreOpt::MergeReturnIntoLDM(MachineBasicBlock &MBB) {
+// @LOCALMOD-START
+  return false;
+  // @LOCALMOD-END
+
   if (MBB.empty()) return false;
 
   MachineBasicBlock::iterator MBBI = prior(MBB.end());

@@ -45,7 +45,8 @@ public:
   const MCSymbolRefExpr *GetSymbolRef(const MachineOperand &MO) const;
   const MCSymbolRefExpr *GetExternalSymbolSymbol(const MachineOperand &MO)
     const;
-  MCSymbol *GetJumpTableSymbol(const MachineOperand &MO) const;
+  // @LOCALMOD
+  const MCSymbolRefExpr *GetJumpTableSymbol(const MachineOperand &MO) const;
   MCSymbol *GetConstantPoolIndexSymbol(const MachineOperand &MO) const;
   MCOperand LowerSymbolRefOperand(const MachineOperand &MO,
                                   const MCSymbolRefExpr *Expr) const;

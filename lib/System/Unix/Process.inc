@@ -33,6 +33,8 @@
 #  include <termios.h>
 #endif
 
+#include <sys/unistd.h>
+
 //===----------------------------------------------------------------------===//
 //=== WARNING: Implementation here must contain only generic UNIX code that
 //===          is guaranteed to work on *all* UNIX variants.
@@ -51,9 +53,10 @@ Process::GetPageSize()
   const int page_size = 0x1000;
 #elif defined(HAVE_GETPAGESIZE)
   const int page_size = ::getpagesize();
-#elif defined(HAVE_SYSCONF)
+#elif defined(HAVE_SYSCONF)  && !defined(__native_client__)
   long page_size = ::sysconf(_SC_PAGE_SIZE);
 #else
+  const int page_size = 0;
 #warning Cannot get the page size on this machine
 #endif
   return static_cast<unsigned>(page_size);
@@ -108,7 +111,7 @@ Process::GetTimeUsage(TimeValue& elapsed, TimeValue& user_time,
                       TimeValue& sys_time)
 {
   elapsed = TimeValue::now();
-#if defined(HAVE_GETRUSAGE)
+#if defined(HAVE_GETRUSAGE) && !defined(__native_client__)
   struct rusage usage;
   ::getrusage(RUSAGE_SELF, &usage);
   user_time = TimeValue( 
@@ -129,11 +132,23 @@ Process::GetTimeUsage(TimeValue& elapsed, TimeValue& user_time,
 }
 
 int Process::GetCurrentUserId() {
+#if !defined(__native_client__)
   return getuid();
+#else // (__native_client__)
+// TODO(abetul): What the proper return value should be for this function?
+// What about having a reserved user_id or the user "nobody" for PNACL?
+  return -1;
+#endif // (__native_client__)
 }
 
 int Process::GetCurrentGroupId() {
+#if !defined(__native_client__)
   return getgid();
+#else // (__native_client__)
+// TODO(abetul): What the proper return value should be for this function?
+// What about having a reserved/unused group_id?  
+  return -1;
+#endif // (__native_client__)
 }
 
 #ifdef HAVE_MACH_MACH_H

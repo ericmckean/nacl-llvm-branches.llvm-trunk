@@ -184,6 +184,10 @@ bool ARMBaseTargetMachine::addPreEmitPass(PassManagerBase &PM,
     PM.add(createThumb2SizeReductionPass());
 
   PM.add(createARMConstantIslandPass());
+  
+  // @LOCALMOD
+  PM.add(createARMNaClRewritePass());
+
   return true;
 }
 

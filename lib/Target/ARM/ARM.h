@@ -49,6 +49,10 @@ FunctionPass *createNEONMoveFixPass();
 FunctionPass *createThumb2ITBlockPass();
 FunctionPass *createThumb2SizeReductionPass();
 
+/* @LOCALMOD-START */
+FunctionPass *createARMNaClRewritePass();
+/* @LOCALMOD-END */
+
 extern Target TheARMTarget, TheThumbTarget;
 
 } // end namespace llvm;

@@ -22,6 +22,8 @@
 #include <map>
 #include <vector>
 
+#if !defined(__native_client__)
+
 // Collection of symbol name/value pairs to be searched prior to any libraries.
 static std::map<std::string, void*> *ExplicitSymbols = 0;
 
@@ -163,3 +165,5 @@ void* DynamicLibrary::SearchForAddressOfSymbol(const char* symbolName) {
 }
 
 #endif // LLVM_ON_WIN32
+
+#endif // (__native_client__)

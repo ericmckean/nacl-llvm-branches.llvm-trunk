@@ -81,21 +81,31 @@ GetExternalSymbolSymbol(const MachineOperand &MO) const {
 }
 
 
-
-MCSymbol *ARMMCInstLower::
+// @LOCALMOD-START - add support for ARMII::MO_LO16/ARMII::MO_HI16 flags
+const MCSymbolRefExpr *ARMMCInstLower::
 GetJumpTableSymbol(const MachineOperand &MO) const {
   SmallString<256> Name;
   raw_svector_ostream(Name) << Printer.MAI->getPrivateGlobalPrefix() << "JTI"
     << Printer.getFunctionNumber() << '_' << MO.getIndex();
+  const MCSymbol *Symbol = Ctx.GetOrCreateSymbol(Name.str());
+  const MCSymbolRefExpr *SymRef;
 
   switch (MO.getTargetFlags()) {
   default: assert(0 && "Unknown target flag on jump table operand");
-  case 0: break;
+  case 0:
+    SymRef = MCSymbolRefExpr::Create(Symbol, MCSymbolRefExpr::VK_None, Ctx);
+   break;
+  case ARMII::MO_LO16:
+    SymRef = MCSymbolRefExpr::Create(Symbol, MCSymbolRefExpr::VK_ARM_LO16, Ctx);
+    break;
+  case ARMII::MO_HI16:
+    SymRef = MCSymbolRefExpr::Create(Symbol, MCSymbolRefExpr::VK_ARM_HI16, Ctx);
+    break;
   }
 
-  // Create a symbol for the name.
-  return Ctx.GetOrCreateSymbol(Name.str());
+  return SymRef;
 }
+// @LOCALMOD-END
 
 MCSymbol *ARMMCInstLower::
 GetConstantPoolIndexSymbol(const MachineOperand &MO) const {
@@ -173,7 +183,7 @@ void ARMMCInstLower::Lower(const MachineInstr *MI, MCInst &OutMI) const {
       MCOp = LowerSymbolRefOperand(MO, GetExternalSymbolSymbol(MO));
       break;
     case MachineOperand::MO_JumpTableIndex:
-      MCOp = LowerSymbolOperand(MO, GetJumpTableSymbol(MO));
+      MCOp = LowerSymbolRefOperand(MO, GetJumpTableSymbol(MO)); // @LOCALMOD
       break;
     case MachineOperand::MO_ConstantPoolIndex:
       MCOp = LowerSymbolOperand(MO, GetConstantPoolIndexSymbol(MO));

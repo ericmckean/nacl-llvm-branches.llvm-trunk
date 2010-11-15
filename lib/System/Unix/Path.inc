@@ -140,7 +140,9 @@ Path::GetRootDirectory() {
 
 Path
 Path::GetTemporaryDirectory(std::string *ErrMsg) {
-#if defined(HAVE_MKDTEMP)
+#if defined(__native_client__)
+  return Path("");
+#elif defined(HAVE_MKDTEMP)
   // The best way is with mkdtemp but that's not available on many systems,
   // Linux and FreeBSD have it. Others probably won't.
   char pathname[] = "/tmp/llvm_XXXXXX";
@@ -264,6 +266,7 @@ Path::GetUserHomeDirectory() {
 
 Path
 Path::GetCurrentDirectory() {
+#if !defined(__native_client__)
   char pathname[MAXPATHLEN];
   if (!getcwd(pathname,MAXPATHLEN)) {
     assert (false && "Could not query current working directory.");
@@ -271,6 +274,9 @@ Path::GetCurrentDirectory() {
   }
 
   return Path(pathname);
+#else // (__native_client__)
+  return Path("./");
+#endif // (__native_client__)
 }
 
 #if defined(__FreeBSD__) || defined (__NetBSD__) || defined(__minix)
@@ -330,7 +336,9 @@ getprogpath(char ret[PATH_MAX], const char *bin)
 /// GetMainExecutable - Return the path to the main executable, given the
 /// value of argv[0] from program startup.
 Path Path::GetMainExecutable(const char *argv0, void *MainAddr) {
-#if defined(__APPLE__)
+#if defined(__native_client__)
+   return Path(std::string("./") + std::string(argv0));
+#elif defined(__APPLE__)
   // On OS X the executable path is saved to the stack by dyld. Reading it
   // from there is much faster than calling dladdr, especially for large
   // binaries with symbols.
@@ -422,7 +430,11 @@ bool Path::getMagicNumber(std::string &Magic, unsigned len) const {
 
 bool
 Path::exists() const {
+#if !defined(__native_client__)
   return 0 == access(path.c_str(), F_OK );
+#else // (__native_client__)
+  return true;
+#endif // (__native_client__)
 }
 
 bool
@@ -444,12 +456,20 @@ Path::isSymLink() const {
 
 bool
 Path::canRead() const {
+#if !defined(__native_client__)
   return 0 == access(path.c_str(), R_OK);
+#else // (__native_client__)
+  return true;
+#endif // (__native_client__)
 }
 
 bool
 Path::canWrite() const {
+#if !defined(__native_client__)
   return 0 == access(path.c_str(), W_OK);
+#else // (__native_client__)
+  return true;
+#endif // (__native_client__)
 }
 
 bool
@@ -468,6 +488,7 @@ Path::isRegularFile() const {
 
 bool
 Path::canExecute() const {
+#if !defined(__native_client__)
   if (0 != access(path.c_str(), R_OK | X_OK ))
     return false;
   struct stat buf;
@@ -475,6 +496,7 @@ Path::canExecute() const {
     return false;
   if (!S_ISREG(buf.st_mode))
     return false;
+#endif // (__native_client__)
   return true;
 }
 
@@ -522,6 +544,7 @@ PathWithStatus::getFileStatus(bool update, std::string *ErrStr) const {
 }
 
 static bool AddPermissionBits(const Path &File, int bits) {
+#if !defined(__native_client__)
   // Get the umask value from the operating system.  We want to use it
   // when changing the file's permissions. Since calling umask() sets
   // the umask and returns its old value, we must call it a second
@@ -537,6 +560,7 @@ static bool AddPermissionBits(const Path &File, int bits) {
   // that the umask would not disable.
   if ((chmod(File.c_str(), (buf.st_mode | (bits & ~mask)))) == -1)
       return false;
+#endif // (__native_client__)
   return true;
 }
 
@@ -560,6 +584,7 @@ bool Path::makeExecutableOnDisk(std::string* ErrMsg) {
 
 bool
 Path::getDirectoryContents(std::set<Path>& result, std::string* ErrMsg) const {
+#if !defined(__native_client__)
   DIR* direntries = ::opendir(path.c_str());
   if (direntries == 0)
     return MakeErrMsg(ErrMsg, path + ": can't open directory");
@@ -585,6 +610,7 @@ Path::getDirectoryContents(std::set<Path>& result, std::string* ErrMsg) const {
   }
 
   closedir(direntries);
+#endif
   return false;
 }
 
@@ -637,7 +663,7 @@ Path::eraseSuffix() {
 }
 
 static bool createDirectoryHelper(char* beg, char* end, bool create_parents) {
-
+#if !defined(__native_client__)
   if (access(beg, R_OK | W_OK) == 0)
     return false;
 
@@ -662,6 +688,9 @@ static bool createDirectoryHelper(char* beg, char* end, bool create_parents) {
   }
 
   return mkdir(beg, S_IRWXU | S_IRWXG) != 0;
+#else // (__native_client__)
+  return false;
+#endif // (__native_client__)
 }
 
 bool
@@ -685,11 +714,13 @@ Path::createDirectoryOnDisk( bool create_parents, std::string* ErrMsg ) {
 
 bool
 Path::createFileOnDisk(std::string* ErrMsg) {
+#if !defined(__native_client__)
   // Create the file
   int fd = ::creat(path.c_str(), S_IRUSR | S_IWUSR);
   if (fd < 0)
     return MakeErrMsg(ErrMsg, path + ": can't create file");
   ::close(fd);
+#endif // (__native_client__)
   return false;
 }
 
@@ -709,6 +740,7 @@ Path::createTemporaryFileOnDisk(bool reuse_current, std::string* ErrMsg) {
 
 bool
 Path::eraseFromDisk(bool remove_contents, std::string *ErrStr) const {
+#if !defined(__native_client__)
   // Get the status so we can determine if it's a file or directory.
   struct stat buf;
   if (0 != stat(path.c_str(), &buf)) {
@@ -753,6 +785,11 @@ Path::eraseFromDisk(bool remove_contents, std::string *ErrStr) const {
   if (rmdir(pathname.c_str()) != 0)
     return MakeErrMsg(ErrStr, pathname + ": can't erase directory");
   return false;
+#else // (__native_client__)
+  MakeErrMsg(ErrStr, ": PNACL does not know how to erase directories!");
+  return false;
+#endif // (__native_client__)
+
 }
 
 bool
@@ -765,6 +802,7 @@ Path::renamePathOnDisk(const Path& newName, std::string* ErrMsg) {
 
 bool
 Path::setStatusInfoOnDisk(const FileStatus &si, std::string *ErrStr) const {
+#if !defined(__native_client__)
   struct utimbuf utb;
   utb.actime = si.modTime.toPosixTime();
   utb.modtime = utb.actime;
@@ -772,6 +810,7 @@ Path::setStatusInfoOnDisk(const FileStatus &si, std::string *ErrStr) const {
     return MakeErrMsg(ErrStr, path + ": can't set file modification time");
   if (0 != ::chmod(path.c_str(),si.mode))
     return MakeErrMsg(ErrStr, path + ": can't set mode");
+#endif // (__native_client__)
   return false;
 }
 

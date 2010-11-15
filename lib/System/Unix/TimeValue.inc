@@ -37,8 +37,13 @@ std::string TimeValue::str() const {
 }
 
 TimeValue TimeValue::now() {
+#if defined(__native_client__)
+  return MinTime;
+#else // (__native_client__)
   struct timeval the_time;
+
   timerclear(&the_time);
+
   if (0 != ::gettimeofday(&the_time,0)) {
     // This is *really* unlikely to occur because the only gettimeofday
     // errors concern the timezone parameter which we're passing in as 0.
@@ -51,6 +56,7 @@ TimeValue TimeValue::now() {
     static_cast<TimeValue::SecondsType>( the_time.tv_sec + PosixZeroTime.seconds_ ), 
     static_cast<TimeValue::NanoSecondsType>( the_time.tv_usec * 
       NANOSECONDS_PER_MICROSECOND ) );
+#endif // (__native_client__)
 }
 
 }

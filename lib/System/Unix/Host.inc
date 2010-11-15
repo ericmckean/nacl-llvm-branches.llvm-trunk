@@ -19,18 +19,26 @@
 #include "llvm/Config/config.h"
 #include "llvm/ADT/StringRef.h"
 #include "Unix.h"
+
+#if !defined(__native_client__)
 #include <sys/utsname.h>
+#endif // (__native_client__)
+
 #include <string>
 
 using namespace llvm;
 
 static std::string getOSVersion() {
+#if !defined(__native_client__)
   struct utsname info;
 
   if (uname(&info))
     return "";
 
   return info.release;
+#else // (__native_client__)
+  return "";
+#endif // (__native_client__)
 }
 
 std::string sys::getHostTriple() {

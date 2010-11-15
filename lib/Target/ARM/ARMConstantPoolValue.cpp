@@ -45,6 +45,7 @@ ARMConstantPoolValue::ARMConstantPoolValue(const GlobalValue *gv,
     CVal(gv), S(NULL), LabelId(0), Kind(ARMCP::CPValue), PCAdjust(0),
     Modifier(Modif) {}
 
+
 const GlobalValue *ARMConstantPoolValue::getGV() const {
   return dyn_cast_or_null<GlobalValue>(CVal);
 }

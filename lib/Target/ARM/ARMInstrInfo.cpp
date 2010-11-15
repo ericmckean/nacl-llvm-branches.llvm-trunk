@@ -24,6 +24,7 @@
 #include "llvm/MC/MCAsmInfo.h"
 using namespace llvm;
 
+
 ARMInstrInfo::ARMInstrInfo(const ARMSubtarget &STI)
   : ARMBaseInstrInfo(STI), RI(*this, STI) {
 }
@@ -82,4 +83,3 @@ reMaterialize(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
 
   return ARMBaseInstrInfo::reMaterialize(MBB, I, DestReg, SubIdx, Orig, TRI);
 }
-
