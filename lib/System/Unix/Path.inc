@@ -447,10 +447,14 @@ Path::isDirectory() const {
 
 bool
 Path::isSymLink() const {
+#if defined(__native_client__)
+  return false;
+#else
   struct stat buf;
   if (0 != lstat(path.c_str(), &buf))
     return false;
   return S_ISLNK(buf.st_mode);
+#endif
 }
 
 
