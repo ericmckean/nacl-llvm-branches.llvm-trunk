@@ -569,8 +569,10 @@ unsigned ARMConstantIslands::GetFudge(const MachineInstr* I,
     if ((offset + fudge) % kBundleSize == 0) fudge += 4;
     break;
 
-   case ARM::STR:
-   case ARM::STRB:
+   case ARM::STR_PRE:
+   case ARM::STR_POST:
+   case ARM::STRB_PRE:
+   case ARM::STRB_POST:
    case ARM::STRH:
    case ARM::STRD:
     // TODO: there are vfp stores missing
@@ -779,7 +781,7 @@ void ARMConstantIslands::InitialFunctionScan(MachineFunction &MF,
             Scale = 4;
             break;
 
-          case ARM::LDR:
+          case ARM::LDRi12:
           case ARM::LDRcp:
           case ARM::t2LDRpci:
             Bits = 12;  // +-offset_12

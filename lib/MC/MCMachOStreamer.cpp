@@ -31,8 +31,8 @@ namespace {
 
 class MCMachOStreamer : public MCObjectStreamer {
 private:
-  void EmitInstToFragment(const MCInst &Inst);
-  void EmitInstToData(const MCInst &Inst);
+  virtual void EmitInstToFragment(const MCInst &Inst);
+  virtual void EmitInstToData(const MCInst &Inst);
 
 public:
   MCMachOStreamer(MCContext &Context, TargetAsmBackend &TAB,
@@ -45,6 +45,7 @@ public:
   virtual void InitSections();
   virtual void EmitLabel(MCSymbol *Symbol);
   virtual void EmitAssemblerFlag(MCAssemblerFlag Flag);
+  virtual void EmitThumbFunc(MCSymbol *Func);
   virtual void EmitAssignment(MCSymbol *Symbol, const MCExpr *Value);
   virtual void EmitSymbolAttribute(MCSymbol *Symbol, MCSymbolAttr Attribute);
   virtual void EmitSymbolDesc(MCSymbol *Symbol, unsigned DescValue);
@@ -98,8 +99,6 @@ public:
     //report_fatal_error("unsupported directive: '.file'");
   }
 
-  virtual void EmitInstruction(const MCInst &Inst);
-
   virtual void Finish();
 
   /// @}
@@ -151,12 +150,19 @@ void MCMachOStreamer::EmitLabel(MCSymbol *Symbol) {
 
 void MCMachOStreamer::EmitAssemblerFlag(MCAssemblerFlag Flag) {
   switch (Flag) {
+  case MCAF_SyntaxUnified: return; // no-op here.
+  case MCAF_Code16: return; // no-op here.
+  case MCAF_Code32: return; // no-op here.
   case MCAF_SubsectionsViaSymbols:
     getAssembler().setSubsectionsViaSymbols(true);
     return;
   default:
     llvm_unreachable("invalid assembler flag!");
   }
+}
+
+void MCMachOStreamer::EmitThumbFunc(MCSymbol *Func) {
+  // FIXME: Flag the function ISA as thumb with DW_AT_APPLE_isa.
 }
 
 void MCMachOStreamer::EmitAssignment(MCSymbol *Symbol, const MCExpr *Value) {
@@ -404,39 +410,6 @@ void MCMachOStreamer::EmitInstToData(const MCInst &Inst) {
     DF->addFixup(Fixups[i]);
   }
   DF->getContents().append(Code.begin(), Code.end());
-}
-
-void MCMachOStreamer::EmitInstruction(const MCInst &Inst) {
-  // Scan for values.
-  for (unsigned i = Inst.getNumOperands(); i--; )
-    if (Inst.getOperand(i).isExpr())
-      AddValueSymbols(Inst.getOperand(i).getExpr());
-
-  getCurrentSectionData()->setHasInstructions(true);
-
-  // Now that a machine instruction has been assembled into this section, make
-  // a line entry for any .loc directive that has been seen.
-  MCLineEntry::Make(this, getCurrentSection());
-
-  // If this instruction doesn't need relaxation, just emit it as data.
-  if (!getAssembler().getBackend().MayNeedRelaxation(Inst)) {
-    EmitInstToData(Inst);
-    return;
-  }
-
-  // Otherwise, if we are relaxing everything, relax the instruction as much as
-  // possible and emit it as data.
-  if (getAssembler().getRelaxAll()) {
-    MCInst Relaxed;
-    getAssembler().getBackend().RelaxInstruction(Inst, Relaxed);
-    while (getAssembler().getBackend().MayNeedRelaxation(Relaxed))
-      getAssembler().getBackend().RelaxInstruction(Relaxed, Relaxed);
-    EmitInstToData(Relaxed);
-    return;
-  }
-
-  // Otherwise emit to a separate fragment.
-  EmitInstToFragment(Inst);
 }
 
 void MCMachOStreamer::Finish() {

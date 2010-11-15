@@ -69,9 +69,19 @@ public:
     return Child->EmitAssemblerFlag(Flag);
   }
 
+  virtual void EmitThumbFunc(MCSymbol *Func) {
+    LogCall("EmitThumbFunc");
+    return Child->EmitThumbFunc(Func);
+  }
+
   virtual void EmitAssignment(MCSymbol *Symbol, const MCExpr *Value) {
     LogCall("EmitAssignment");
     return Child->EmitAssignment(Symbol, Value);
+  }
+
+  virtual void EmitWeakReference(MCSymbol *Alias, const MCSymbol *Symbol) {
+    LogCall("EmitWeakReference");
+    return Child->EmitWeakReference(Alias, Symbol);
   }
 
   virtual void EmitSymbolAttribute(MCSymbol *Symbol, MCSymbolAttr Attribute) {
@@ -145,6 +155,18 @@ public:
   virtual void EmitIntValue(uint64_t Value, unsigned Size, unsigned AddrSpace) {
     LogCall("EmitIntValue");
     return Child->EmitIntValue(Value, Size, AddrSpace);
+  }
+
+  virtual void EmitULEB128Value(const MCExpr *Value,
+                                unsigned AddrSpace = 0) {
+    LogCall("EmitULEB128Value");
+    return Child->EmitULEB128Value(Value, AddrSpace);
+  }
+
+  virtual void EmitSLEB128Value(const MCExpr *Value,
+                                unsigned AddrSpace = 0) {
+    LogCall("EmitSLEB128Value");
+    return Child->EmitSLEB128Value(Value, AddrSpace);
   }
 
   virtual void EmitGPRel32Value(const MCExpr *Value) {

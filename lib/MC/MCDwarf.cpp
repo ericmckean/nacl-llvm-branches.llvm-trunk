@@ -125,7 +125,7 @@ static inline void EmitDwarfSetAddress(MCObjectStreamer *MCOS,
   MCOS->EmitIntValue(dwarf::DW_LNS_extended_op, 1);
 
   int sizeof_address = MCOS->getAssembler().getBackend().getPointerSize();
-  MCOS->EmitULEB128Value(sizeof_address + 1);
+  MCOS->EmitULEB128IntValue(sizeof_address + 1);
 
   MCOS->EmitIntValue(dwarf::DW_LNE_set_address, 1);
   MCOS->EmitSymbolValue(Symbol, sizeof_address);
@@ -135,7 +135,7 @@ static inline void EmitDwarfSetAddress(MCObjectStreamer *MCOS,
 // This emits the Dwarf line table for the specified section from the entries
 // in the LineSection.
 //
-static inline bool EmitDwarfLineTable(MCObjectStreamer *MCOS,
+static inline void EmitDwarfLineTable(MCObjectStreamer *MCOS,
                                       const MCSection *Section,
                                       MCLineSection *LineSection,
                                       const MCSection *DwarfLineSection) {
@@ -144,7 +144,6 @@ static inline bool EmitDwarfLineTable(MCObjectStreamer *MCOS,
   unsigned Column = 0;
   unsigned Flags = DWARF2_LINE_DEFAULT_IS_STMT ? DWARF2_FLAG_IS_STMT : 0;
   unsigned Isa = 0;
-  bool EmittedLineTable = false;
   MCSymbol *LastLabel = NULL;
   MCSectionData &DLS =
     MCOS->getAssembler().getOrCreateSectionData(*DwarfLineSection);
@@ -157,17 +156,17 @@ static inline bool EmitDwarfLineTable(MCObjectStreamer *MCOS,
     if (FileNum != it->getFileNum()) {
       FileNum = it->getFileNum();
       MCOS->EmitIntValue(dwarf::DW_LNS_set_file, 1);
-      MCOS->EmitULEB128Value(FileNum);
+      MCOS->EmitULEB128IntValue(FileNum);
     }
     if (Column != it->getColumn()) {
       Column = it->getColumn();
       MCOS->EmitIntValue(dwarf::DW_LNS_set_column, 1);
-      MCOS->EmitULEB128Value(Column);
+      MCOS->EmitULEB128IntValue(Column);
     }
     if (Isa != it->getIsa()) {
       Isa = it->getIsa();
       MCOS->EmitIntValue(dwarf::DW_LNS_set_isa, 1);
-      MCOS->EmitULEB128Value(Isa);
+      MCOS->EmitULEB128IntValue(Isa);
     }
     if ((it->getFlags() ^ Flags) & DWARF2_FLAG_IS_STMT) {
       Flags = it->getFlags();
@@ -202,7 +201,6 @@ static inline bool EmitDwarfLineTable(MCObjectStreamer *MCOS,
 
     LastLine = it->getLine();
     LastLabel = Label;
-    EmittedLineTable = true;
   }
 
   // Emit a DW_LNE_end_sequence for the end of the section.
@@ -226,8 +224,6 @@ static inline bool EmitDwarfLineTable(MCObjectStreamer *MCOS,
 						  0);
   // Create a Dwarf Line fragment for the LineDelta and AddrDelta.
   new MCDwarfLineAddrFragment(INT64_MAX, *AddrDelta, &DLS);
-
-  return EmittedLineTable;
 }
 
 //
@@ -303,7 +299,8 @@ void MCDwarfFileTable::Emit(MCObjectStreamer *MCOS,
   for (unsigned i = 1; i < MCDwarfFiles.size(); i++) {
     MCOS->EmitBytes(MCDwarfFiles[i]->getName(), 0); // FileName
     MCOS->EmitBytes(StringRef("\0", 1), 0); // the null term. of the string
-    MCOS->EmitULEB128Value(MCDwarfFiles[i]->getDirIndex()); // the Directory num
+    // the Directory num
+    MCOS->EmitULEB128IntValue(MCDwarfFiles[i]->getDirIndex());
     MCOS->EmitIntValue(0, 1); // last modification timestamp (always 0)
     MCOS->EmitIntValue(0, 1); // filesize (always 0)
   }
@@ -314,54 +311,15 @@ void MCDwarfFileTable::Emit(MCObjectStreamer *MCOS,
   MCOS->EmitLabel(ProEndSym);
 
   // Put out the line tables.
-  bool EmittedLineTable = false;
   DenseMap<const MCSection *, MCLineSection *> &MCLineSections =
     MCOS->getContext().getMCLineSections();
   for (DenseMap<const MCSection *, MCLineSection *>::iterator it =
 	MCLineSections.begin(), ie = MCLineSections.end(); it != ie; ++it) {
-    EmittedLineTable = EmitDwarfLineTable(MCOS, it->first, it->second,
-                                          DwarfLineSection);
+    EmitDwarfLineTable(MCOS, it->first, it->second, DwarfLineSection);
 
     // Now delete the MCLineSections that were created in MCLineEntry::Make()
     // and used to emit the line table.
     delete it->second;
-  }
-
-  // If there are no line tables emited then we emit:
-  // The following DW_LNE_set_address sequence to set the address to zero and
-  // the DW_LNE_end_sequence.
-  if (EmittedLineTable == false) {
-    if (MCOS->getAssembler().getBackend().getPointerSize() == 8) {
-      // This is the DW_LNE_set_address sequence for 64-bit code.
-      MCOS->EmitIntValue(0, 1);
-      MCOS->EmitIntValue(9, 1);
-      MCOS->EmitIntValue(2, 1);
-      MCOS->EmitIntValue(0, 1);
-      MCOS->EmitIntValue(0, 1);
-      MCOS->EmitIntValue(0, 1);
-      MCOS->EmitIntValue(0, 1);
-      MCOS->EmitIntValue(0, 1);
-      MCOS->EmitIntValue(0, 1);
-      MCOS->EmitIntValue(0, 1);
-      MCOS->EmitIntValue(0, 1);
-    }
-    else {
-      // This is the DW_LNE_set_address sequence for 32-bit code.
-      MCOS->EmitIntValue(0, 1);
-      MCOS->EmitIntValue(5, 1);
-      MCOS->EmitIntValue(2, 1);
-      MCOS->EmitIntValue(0, 1);
-      MCOS->EmitIntValue(0, 1);
-      MCOS->EmitIntValue(0, 1);
-      MCOS->EmitIntValue(0, 1);
-    }
-
-    // Lastly emit the DW_LNE_end_sequence which consists of 3 bytes '00 01 01'
-    // (00 is the code for extended opcodes, followed by a ULEB128 length of the
-    // extended opcode (01), and the DW_LNE_end_sequence (01).
-    MCOS->EmitIntValue(0, 1); // DW_LNS_extended_op
-    MCOS->EmitIntValue(1, 1); // ULEB128 length of the extended opcode
-    MCOS->EmitIntValue(1, 1); // DW_LNE_end_sequence
   }
 
   // This is the end of the section, so set the value of the symbol at the end

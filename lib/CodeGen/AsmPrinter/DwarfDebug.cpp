@@ -568,8 +568,8 @@ void DwarfDebug::addSourceLine(DIE *Die, DIType Ty) {
   unsigned Line = Ty.getLineNumber();
   if (Line == 0 || !Ty.getContext().Verify())
     return;
-  unsigned FileID = GetOrCreateSourceID(Ty.getContext().getDirectory(),
-                                        Ty.getContext().getFilename());
+  unsigned FileID = GetOrCreateSourceID(Ty.getDirectory(),
+                                        Ty.getFilename());
   assert(FileID && "Invalid file id");
   addUInt(Die, dwarf::DW_AT_decl_file, 0, FileID);
   addUInt(Die, dwarf::DW_AT_decl_line, 0, Line);
@@ -822,9 +822,8 @@ void DwarfDebug::addAddress(DIE *Die, unsigned Attribute,
   const TargetRegisterInfo *RI = Asm->TM.getRegisterInfo();
   unsigned Reg = RI->getDwarfRegNum(Location.getReg(), false);
   DIEBlock *Block = new (DIEValueAllocator) DIEBlock();
-  const TargetRegisterInfo *TRI = Asm->TM.getRegisterInfo();
 
-  if (TRI->getFrameRegister(*Asm->MF) == Location.getReg()
+  if (RI->getFrameRegister(*Asm->MF) == Location.getReg()
       && Location.getOffset()) {
     // If variable offset is based in frame register then use fbreg.
     addUInt(Block, 0, dwarf::DW_FORM_data1, dwarf::DW_OP_fbreg);
@@ -2129,8 +2128,7 @@ void DwarfDebug::endModule() {
       StringRef FName = SP.getLinkageName();
       if (FName.empty())
         FName = SP.getName();
-      NamedMDNode *NMD =
-        M->getNamedMetadata(Twine("llvm.dbg.lv.", getRealLinkageName(FName)));
+      NamedMDNode *NMD = getFnSpecificMDNode(*(MMI->getModule()), FName);
       if (!NMD) continue;
       unsigned E = NMD->getNumOperands();
       if (!E) continue;
@@ -2423,10 +2421,7 @@ DwarfDebug::collectVariableInfo(const MachineFunction *MF,
 
   // Collect info for variables that were optimized out.
   const Function *F = MF->getFunction();
-  const Module *M = F->getParent();
-  if (NamedMDNode *NMD =
-      M->getNamedMetadata(Twine("llvm.dbg.lv.",
-                                getRealLinkageName(F->getName())))) {
+  if (NamedMDNode *NMD = getFnSpecificMDNode(*(F->getParent()), F->getName())) {
     for (unsigned i = 0, e = NMD->getNumOperands(); i != e; ++i) {
       DIVariable DV(cast<MDNode>(NMD->getOperand(i)));
       if (!DV || !Processed.insert(DV))
@@ -2457,8 +2452,8 @@ const MCSymbol *DwarfDebug::getLabelAfterInsn(const MachineInstr *MI) {
   return I->second;
 }
 
-/// beginScope - Process beginning of a scope.
-void DwarfDebug::beginScope(const MachineInstr *MI) {
+/// beginInstruction - Process beginning of an instruction.
+void DwarfDebug::beginInstruction(const MachineInstr *MI) {
   if (InsnNeedsLabel.count(MI) == 0) {
     LabelsBeforeInsn[MI] = PrevLabel;
     return;
@@ -2492,8 +2487,8 @@ void DwarfDebug::beginScope(const MachineInstr *MI) {
   assert (0 && "Instruction is not processed!");
 }
 
-/// endScope - Process end of a scope.
-void DwarfDebug::endScope(const MachineInstr *MI) {
+/// endInstruction - Process end of an instruction.
+void DwarfDebug::endInstruction(const MachineInstr *MI) {
   if (InsnsEndScopeSet.count(MI) != 0) {
     // Emit a label if this instruction ends a scope.
     MCSymbol *Label = MMI->getContext().CreateTempSymbol();
@@ -2790,7 +2785,7 @@ static void CheckLineNumbers(const MachineFunction *MF) {
         break;
       }
     }
-    if (!FoundLineNo)
+    if (!FoundLineNo && I->size())
       ++BlocksWithoutLineNo;      
   }
 }
@@ -2913,10 +2908,8 @@ void DwarfDebug::endFunction(const MachineFunction *MF) {
         StringRef FName = SP.getLinkageName();
         if (FName.empty())
           FName = SP.getName();
-        const Module *M = MF->getFunction()->getParent();
-        if (NamedMDNode *NMD =
-            M->getNamedMetadata(Twine("llvm.dbg.lv.",
-                                      getRealLinkageName(FName)))) {
+        if (NamedMDNode *NMD = 
+            getFnSpecificMDNode(*(MF->getFunction()->getParent()), FName)) {
           for (unsigned i = 0, e = NMD->getNumOperands(); i != e; ++i) {
           DIVariable DV(cast<MDNode>(NMD->getOperand(i)));
           if (!DV || !ProcessedVars.insert(DV))
@@ -3024,6 +3017,10 @@ MCSymbol *DwarfDebug::recordSourceLine(unsigned Line, unsigned Col,
       DICompileUnit CU(S);
       Dir = CU.getDirectory();
       Fn = CU.getFilename();
+    } else if (Scope.isFile()) {
+      DIFile F(S);
+      Dir = F.getDirectory();
+      Fn = F.getFilename();
     } else if (Scope.isSubprogram()) {
       DISubprogram SP(S);
       Dir = SP.getDirectory();

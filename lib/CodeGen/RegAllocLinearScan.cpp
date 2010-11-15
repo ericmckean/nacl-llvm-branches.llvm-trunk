@@ -15,6 +15,7 @@
 #include "VirtRegMap.h"
 #include "VirtRegRewriter.h"
 #include "Spiller.h"
+#include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Function.h"
 #include "llvm/CodeGen/CalcSpillWeights.h"
 #include "llvm/CodeGen/LiveIntervalAnalysis.h"
@@ -97,6 +98,7 @@ namespace {
       initializeCalculateSpillWeightsPass(*PassRegistry::getPassRegistry());
       initializePreAllocSplittingPass(*PassRegistry::getPassRegistry());
       initializeLiveStacksPass(*PassRegistry::getPassRegistry());
+      initializeMachineDominatorTreePass(*PassRegistry::getPassRegistry());
       initializeMachineLoopInfoPass(*PassRegistry::getPassRegistry());
       initializeVirtRegMapPass(*PassRegistry::getPassRegistry());
       initializeMachineDominatorTreePass(*PassRegistry::getPassRegistry());
@@ -192,6 +194,8 @@ namespace {
 
     virtual void getAnalysisUsage(AnalysisUsage &AU) const {
       AU.setPreservesCFG();
+      AU.addRequired<AliasAnalysis>();
+      AU.addPreserved<AliasAnalysis>();
       AU.addRequired<LiveIntervals>();
       AU.addPreserved<SlotIndexes>();
       if (StrongPHIElim)
@@ -208,6 +212,7 @@ namespace {
       AU.addPreserved<MachineLoopInfo>();
       AU.addRequired<VirtRegMap>();
       AU.addPreserved<VirtRegMap>();
+      AU.addRequiredID(MachineDominatorsID);
       AU.addPreservedID(MachineDominatorsID);
       MachineFunctionPass::getAnalysisUsage(AU);
     }
@@ -389,6 +394,7 @@ INITIALIZE_PASS_DEPENDENCY(LiveStacks)
 INITIALIZE_PASS_DEPENDENCY(MachineLoopInfo)
 INITIALIZE_PASS_DEPENDENCY(VirtRegMap)
 INITIALIZE_AG_DEPENDENCY(RegisterCoalescer)
+INITIALIZE_AG_DEPENDENCY(AliasAnalysis)
 INITIALIZE_PASS_END(RALinScan, "linearscan-regalloc",
                 "Linear Scan Register Allocator", false, false)
 

@@ -127,11 +127,13 @@ def t_addrmode_sp : Operand<i32>,
 let Defs = [SP], Uses = [SP], hasSideEffects = 1 in {
 def tADJCALLSTACKUP :
 PseudoInst<(outs), (ins i32imm:$amt1, i32imm:$amt2), NoItinerary, "",
-           [(ARMcallseq_end imm:$amt1, imm:$amt2)]>, Requires<[IsThumb1Only]>;
+           [(ARMcallseq_end imm:$amt1, imm:$amt2)]>,
+       Requires<[IsThumb, IsThumb1Only]>;
 
 def tADJCALLSTACKDOWN :
 PseudoInst<(outs), (ins i32imm:$amt), NoItinerary, "",
-           [(ARMcallseq_start imm:$amt)]>, Requires<[IsThumb1Only]>;
+           [(ARMcallseq_start imm:$amt)]>,
+       Requires<[IsThumb, IsThumb1Only]>;
 }
 
 def tNOP : T1pI<(outs), (ins), NoItinerary, "nop", "",
@@ -205,7 +207,7 @@ def tCPS : T1I<(outs), (ins cps_opt:$opt), NoItinerary, "cps$opt",
            T1Misc<0b0110011>;
 
 // For both thumb1 and thumb2.
-let isNotDuplicable = 1 in
+let isNotDuplicable = 1, isCodeGenOnly = 1 in
 def tPICADD : TIt<(outs GPR:$dst), (ins GPR:$lhs, pclabel:$cp), IIC_iALUr, "",
                  [(set GPR:$dst, (ARMpic_add GPR:$lhs, imm:$cp))]>,
               T1Special<{0,0,?,?}> {
@@ -311,11 +313,12 @@ let isCall = 1,
               T1Special<{1,1,1,?}>; // A6.2.3 & A8.6.24;
 
   // ARMv4T
+  let isCodeGenOnly = 1 in
   def tBX : TIx2<{?,?,?,?,?}, {?,?}, ?,
                   (outs), (ins tGPR:$func, variable_ops), IIC_Br,
                   "mov\tlr, pc\n\tbx\t$func",
                   [(ARMcall_nolink tGPR:$func)]>,
-            Requires<[IsThumb1Only, IsNotDarwin]>;
+            Requires<[IsThumb, IsThumb1Only, IsNotDarwin]>;
 }
 
 // On Darwin R9 is call-clobbered.
@@ -346,11 +349,12 @@ let isCall = 1,
                  T1Special<{1,1,1,?}>; // A6.2.3 & A8.6.24
 
   // ARMv4T
+  let isCodeGenOnly = 1 in
   def tBXr9 : TIx2<{?,?,?,?,?}, {?,?}, ?,
                    (outs), (ins tGPR:$func, variable_ops), IIC_Br,
                    "mov\tlr, pc\n\tbx\t$func",
                    [(ARMcall_nolink tGPR:$func)]>,
-              Requires<[IsThumb1Only, IsDarwin]>;
+              Requires<[IsThumb, IsThumb1Only, IsDarwin]>;
 }
 
 let isBranch = 1, isTerminator = 1 in {
@@ -365,6 +369,7 @@ let isBranch = 1, isTerminator = 1 in {
   def tBfar : TIx2<0b11110, 0b11, 1, (outs), (ins brtarget:$target), IIC_Br,
                     "bl\t$target",[]>;
 
+  let isCodeGenOnly = 1 in
   def tBR_JTr : T1JTI<(outs),
                       (ins tGPR:$target, jtblock_operand:$jt, i32imm:$id),
                       IIC_Br, "mov\tpc, $target\n\t.align\t2$jt",
@@ -532,27 +537,32 @@ def tSpill : T1pIs<(outs), (ins tGPR:$src, t_addrmode_sp:$addr), IIC_iStore_i,
 //
 
 // These require base address to be written back or one of the loaded regs.
-let mayLoad = 1, neverHasSideEffects = 1, hasExtraDefRegAllocReq = 1 in {
+let mayLoad = 1, neverHasSideEffects = 1, hasExtraDefRegAllocReq = 1,
+    isCodeGenOnly = 1 in {
 def tLDM : T1I<(outs),
-               (ins addrmode4:$addr, pred:$p, reglist:$dsts, variable_ops),
+               (ins GPR:$Rn, ldstm_mode:$amode, pred:$p, reglist:$dsts,
+                variable_ops),
                IIC_iLoad_m,
-               "ldm${addr:submode}${p}\t$addr, $dsts", []>,
+               "ldm${amode}${p}\t$Rn, $dsts", []>,
            T1Encoding<{1,1,0,0,1,?}>; // A6.2 & A8.6.53
 
 def tLDM_UPD : T1It<(outs tGPR:$wb),
-                    (ins addrmode4:$addr, pred:$p, reglist:$dsts, variable_ops),
+                    (ins GPR:$Rn, ldstm_mode:$amode, pred:$p, reglist:$dsts,
+                     variable_ops),
                     IIC_iLoad_m,
-                    "ldm${addr:submode}${p}\t$addr!, $dsts",
-                    "$addr.addr = $wb", []>,
+                    "ldm${amode}${p}\t$Rn!, $dsts",
+                    "$Rn = $wb", []>,
                T1Encoding<{1,1,0,0,1,?}>; // A6.2 & A8.6.53
 } // mayLoad, neverHasSideEffects = 1, hasExtraDefRegAllocReq
 
-let mayStore = 1, neverHasSideEffects = 1, hasExtraSrcRegAllocReq = 1 in
+let mayStore = 1, neverHasSideEffects = 1, hasExtraSrcRegAllocReq = 1,
+    isCodeGenOnly = 1 in
 def tSTM_UPD : T1It<(outs tGPR:$wb),
-                    (ins addrmode4:$addr, pred:$p, reglist:$srcs, variable_ops),
+                    (ins GPR:$Rn, ldstm_mode:$amode, pred:$p, reglist:$srcs,
+                     variable_ops),
                     IIC_iStore_mu,
-                    "stm${addr:submode}${p}\t$addr!, $srcs",
-                    "$addr.addr = $wb", []>,
+                    "stm${amode}${p}\t$Rn!, $srcs",
+                    "$Rn = $wb", []>,
            T1Encoding<{1,1,0,0,0,?}>; // A6.2 & A8.6.189
 
 let mayLoad = 1, Uses = [SP], Defs = [SP], hasExtraDefRegAllocReq = 1 in
@@ -759,7 +769,7 @@ def tORR : T1sIt<(outs tGPR:$dst), (ins tGPR:$lhs, tGPR:$rhs),  IIC_iBITr,
 def tREV : T1pI<(outs tGPR:$dst), (ins tGPR:$src), IIC_iUNAr,
                 "rev", "\t$dst, $src",
                 [(set tGPR:$dst, (bswap tGPR:$src))]>,
-                Requires<[IsThumb1Only, HasV6]>,
+                Requires<[IsThumb, IsThumb1Only, HasV6]>,
            T1Misc<{1,0,1,0,0,0,?}>;
 
 def tREV16 : T1pI<(outs tGPR:$dst), (ins tGPR:$src), IIC_iUNAr,
@@ -769,7 +779,7 @@ def tREV16 : T1pI<(outs tGPR:$dst), (ins tGPR:$src), IIC_iUNAr,
                        (or (and (shl tGPR:$src, (i32 8)), 0xFF00),
                            (or (and (srl tGPR:$src, (i32 8)), 0xFF0000),
                                (and (shl tGPR:$src, (i32 8)), 0xFF000000)))))]>,
-                Requires<[IsThumb1Only, HasV6]>,
+                Requires<[IsThumb, IsThumb1Only, HasV6]>,
              T1Misc<{1,0,1,0,0,1,?}>;
 
 def tREVSH : T1pI<(outs tGPR:$dst), (ins tGPR:$src), IIC_iUNAr,
@@ -778,7 +788,7 @@ def tREVSH : T1pI<(outs tGPR:$dst), (ins tGPR:$src), IIC_iUNAr,
                         (sext_inreg
                           (or (srl (and tGPR:$src, 0xFF00), (i32 8)),
                               (shl tGPR:$src, (i32 8))), i16))]>,
-                  Requires<[IsThumb1Only, HasV6]>,
+                  Requires<[IsThumb, IsThumb1Only, HasV6]>,
              T1Misc<{1,0,1,0,1,1,?}>;
 
 // rotate right register
@@ -823,14 +833,14 @@ def tSUBrr : T1sI<(outs tGPR:$dst), (ins tGPR:$lhs, tGPR:$rhs), IIC_iALUr,
 def tSXTB  : T1pI<(outs tGPR:$dst), (ins tGPR:$src), IIC_iUNAr,
                   "sxtb", "\t$dst, $src",
                   [(set tGPR:$dst, (sext_inreg tGPR:$src, i8))]>,
-                  Requires<[IsThumb1Only, HasV6]>,
+                  Requires<[IsThumb, IsThumb1Only, HasV6]>,
              T1Misc<{0,0,1,0,0,1,?}>;
 
 // sign-extend short
 def tSXTH  : T1pI<(outs tGPR:$dst), (ins tGPR:$src), IIC_iUNAr,
                   "sxth", "\t$dst, $src",
                   [(set tGPR:$dst, (sext_inreg tGPR:$src, i16))]>,
-                  Requires<[IsThumb1Only, HasV6]>,
+                  Requires<[IsThumb, IsThumb1Only, HasV6]>,
              T1Misc<{0,0,1,0,0,0,?}>;
 
 // test
@@ -844,14 +854,14 @@ def tTST  : T1pI<(outs), (ins tGPR:$lhs, tGPR:$rhs), IIC_iTSTr,
 def tUXTB  : T1pI<(outs tGPR:$dst), (ins tGPR:$src), IIC_iUNAr,
                   "uxtb", "\t$dst, $src",
                   [(set tGPR:$dst, (and tGPR:$src, 0xFF))]>,
-                  Requires<[IsThumb1Only, HasV6]>,
+                  Requires<[IsThumb, IsThumb1Only, HasV6]>,
              T1Misc<{0,0,1,0,1,1,?}>;
 
 // zero-extend short
 def tUXTH  : T1pI<(outs tGPR:$dst), (ins tGPR:$src), IIC_iUNAr,
                   "uxth", "\t$dst, $src",
                   [(set tGPR:$dst, (and tGPR:$src, 0xFFFF))]>,
-                  Requires<[IsThumb1Only, HasV6]>,
+                  Requires<[IsThumb, IsThumb1Only, HasV6]>,
              T1Misc<{0,0,1,0,1,0,?}>;
 
 
@@ -915,14 +925,14 @@ let isCall = 1,
 //   $val is a scratch register for our use.
 let Defs =
   [ R0,  R1,  R2,  R3,  R4,  R5,  R6,  R7, R12 ], hasSideEffects = 1,
-   isBarrier = 1  in {
+   isBarrier = 1, isCodeGenOnly = 1 in {
   def tInt_eh_sjlj_setjmp : ThumbXI<(outs),(ins tGPR:$src, tGPR:$val),
                               AddrModeNone, SizeSpecial, NoItinerary, "", "",
                    [(set R0, (ARMeh_sjlj_setjmp tGPR:$src, tGPR:$val))]>;
 }
 
 // FIXME: Non-Darwin version(s)
-let isBarrier = 1, hasSideEffects = 1, isTerminator = 1,
+let isBarrier = 1, hasSideEffects = 1, isTerminator = 1, isCodeGenOnly = 1,
     Defs = [ R7, LR, SP ] in {
 def tInt_eh_sjlj_longjmp : XI<(outs), (ins GPR:$src, GPR:$scratch),
                              AddrModeNone, SizeSpecial, IndexModeNone,
@@ -989,10 +999,10 @@ def : T1Pat<(extloadi16 t_addrmode_s2:$addr),  (tLDRH t_addrmode_s2:$addr)>;
 // ldr{b|h} + sxt{b|h} instead.
 def : T1Pat<(sextloadi8 t_addrmode_s1:$addr),
             (tSXTB (tLDRB t_addrmode_s1:$addr))>,
-      Requires<[IsThumb1Only, HasV6]>;
+      Requires<[IsThumb, IsThumb1Only, HasV6]>;
 def : T1Pat<(sextloadi16 t_addrmode_s2:$addr),
             (tSXTH (tLDRH t_addrmode_s2:$addr))>,
-      Requires<[IsThumb1Only, HasV6]>;
+      Requires<[IsThumb, IsThumb1Only, HasV6]>;
 
 def : T1Pat<(sextloadi8 t_addrmode_s1:$addr),
             (tASRri (tLSLri (tLDRB t_addrmode_s1:$addr), 24), 24)>;
@@ -1017,4 +1027,4 @@ def tLDRpci_pic : PseudoInst<(outs GPR:$dst), (ins i32imm:$addr, pclabel:$cp),
                    NoItinerary, "",
                [(set GPR:$dst, (ARMpic_add (load (ARMWrapper tconstpool:$addr)),
                                            imm:$cp))]>,
-               Requires<[IsThumb1Only]>;
+               Requires<[IsThumb, IsThumb1Only]>;

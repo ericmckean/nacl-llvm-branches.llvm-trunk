@@ -51,6 +51,7 @@ public:
   virtual void InitSections();
   virtual void EmitLabel(MCSymbol *Symbol);
   virtual void EmitAssemblerFlag(MCAssemblerFlag Flag);
+  virtual void EmitThumbFunc(MCSymbol *Func);
   virtual void EmitAssignment(MCSymbol *Symbol, const MCExpr *Value);
   virtual void EmitSymbolAttribute(MCSymbol *Symbol, MCSymbolAttr Attribute);
   virtual void EmitSymbolDesc(MCSymbol *Symbol, unsigned DescValue);
@@ -81,6 +82,13 @@ public:
   virtual void Finish();
 
 private:
+  virtual void EmitInstToFragment(const MCInst &Inst) {
+    llvm_unreachable("Not used by WinCOFF.");
+  }
+  virtual void EmitInstToData(const MCInst &Inst) {
+    llvm_unreachable("Not used by WinCOFF.");
+  }
+
   void SetSection(StringRef Section,
                   unsigned Characteristics,
                   SectionKind Kind) {
@@ -192,6 +200,10 @@ void WinCOFFStreamer::EmitLabel(MCSymbol *Symbol) {
 }
 
 void WinCOFFStreamer::EmitAssemblerFlag(MCAssemblerFlag Flag) {
+  llvm_unreachable("not implemented");
+}
+
+void WinCOFFStreamer::EmitThumbFunc(MCSymbol *Func) {
   llvm_unreachable("not implemented");
 }
 

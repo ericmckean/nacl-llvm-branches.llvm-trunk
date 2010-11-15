@@ -1017,6 +1017,11 @@ API changes are:</p>
   were dropped.  GC plugins which compute stack maps must be updated to avoid
   having the old definition overload the new signature.
 </li>
+<li>
+  The signature of <tt>MemoryBuffer::getMemBuffer</tt> changed.  Unfortunately
+  calls intended for the old version still compile, but will not work correctly,
+  leading to a confusing error about an invalid header in the bitcode.
+</li>
   
 <li>
   Some APIs were renamed:
@@ -1294,7 +1299,7 @@ lists</a>.</p>
   src="http://www.w3.org/Icons/valid-html401-blue" alt="Valid HTML 4.01"></a>
 
   <a href="http://llvm.org/">LLVM Compiler Infrastructure</a><br>
-  Last modified: $Date: 2010-10-21 07:40:02 -0700 (Thu, 21 Oct 2010) $
+  Last modified: $Date: 2010-10-26 05:43:36 -0700 (Tue, 26 Oct 2010) $
 </address>
 
 </body>
