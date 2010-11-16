@@ -1400,10 +1400,11 @@ void ARMConstantIslands::CreateNewWater(unsigned CPUserIndex,
     unsigned CPUIndex = CPUserIndex+1;
     unsigned NumCPUsers = CPUsers.size();
     MachineInstr *LastIT = 0;
+    MachineBasicBlock::iterator EndBB = UserMBB->end(); //@LOCALMOD
     // @LOCALMOD: TODO: GetInstSizeInBytes() should be replaced with
     //                  our estimator
     for (unsigned Offset = UserOffset+TII->GetInstSizeInBytes(UserMI);
-         Offset < BaseInsertOffset;
+         Offset < BaseInsertOffset && MI != EndBB; //@LOCALMOD
          // @LOCALMOD-START
          //Offset += TII->GetInstSizeInBytes(MI),
          Offset +=  GetFudge(MI, Offset, false, false, false) +
