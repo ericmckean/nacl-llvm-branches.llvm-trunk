@@ -77,6 +77,12 @@ ARMInterworking("arm-interworking", cl::Hidden,
   cl::desc("Enable / disable ARM interworking (for debugging only)"),
   cl::init(true));
 
+// @LOCALMOD-START for debugging TLS models
+static cl::opt<bool> ARMStaticTLS("arm_static_tls",
+                                  cl::desc("Force a static TLS model for ARM"),
+                                  cl::init(false));
+// @LOCALMOD-END
+
 void ARMTargetLowering::addTypeForNEON(EVT VT, EVT PromotedLdStVT,
                                        EVT PromotedBitwiseVT) {
   if (VT != PromotedLdStVT) {
@@ -1849,7 +1855,8 @@ ARMTargetLowering::LowerToTLSGeneralDynamicModel(GlobalAddressSDNode *GA,
 // "local exec" model.
 SDValue
 ARMTargetLowering::LowerToTLSExecModels(GlobalAddressSDNode *GA,
-                                        SelectionDAG &DAG) const {
+                                        SelectionDAG &DAG,
+                                        bool InitialExec) const { // @LOCALMOD
   const GlobalValue *GV = GA->getGlobal();
   DebugLoc dl = GA->getDebugLoc();
   SDValue Offset;
@@ -1858,7 +1865,7 @@ ARMTargetLowering::LowerToTLSExecModels(GlobalAddressSDNode *GA,
   // Get the Thread Pointer
   SDValue ThreadPointer = DAG.getNode(ARMISD::THREAD_POINTER, dl, PtrVT);
 
-  if (GV->isDeclaration()) {
+  if (InitialExec) {  // @LOCALMOD
     MachineFunction &MF = DAG.getMachineFunction();
     ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
     unsigned ARMPCLabelIndex = AFI->createConstPoolEntryUId();
@@ -1903,10 +1910,20 @@ ARMTargetLowering::LowerGlobalTLSAddress(SDValue Op, SelectionDAG &DAG) const {
   GlobalAddressSDNode *GA = cast<GlobalAddressSDNode>(Op);
   // If the relocation model is PIC, use the "General Dynamic" TLS Model,
   // otherwise use the "Local Exec" TLS Model
-  if (getTargetMachine().getRelocationModel() == Reloc::PIC_)
-    return LowerToTLSGeneralDynamicModel(GA, DAG);
-  else
-    return LowerToTLSExecModels(GA, DAG);
+  // @LOCALMOD-BEGIN NaCl is testing with Initial Exec for now.
+  // This supports DSOs that are known at startup, but not those
+  // that may or may not be loaded through dlopen.
+  // Must wait for ARM Glibc port.
+  if (getTargetMachine().getRelocationModel() == Reloc::PIC_) {
+    if (ARMStaticTLS)
+      return LowerToTLSExecModels(GA, DAG, true);
+    else
+      return LowerToTLSGeneralDynamicModel(GA, DAG);
+  } else {
+    const GlobalValue *GV = GA->getGlobal();
+    return LowerToTLSExecModels(GA, DAG, GV->isDeclaration());
+  } //@LOCALMOD-END
+
 }
 
 SDValue ARMTargetLowering::LowerGlobalAddressELF(SDValue Op,

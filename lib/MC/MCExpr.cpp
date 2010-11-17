@@ -194,7 +194,7 @@ StringRef MCSymbolRefExpr::getVariantKindName(VariantKind Kind) {
   case VK_ARM_GOTOFF: return "(GOTOFF)";
   case VK_ARM_TPOFF: return "(tpoff)";
   case VK_ARM_GOTTPOFF: return "(gottpoff)";
-  case VK_ARM_TLSGD: return "(tldgd)";
+  case VK_ARM_TLSGD: return "(tlsgd)";
   case VK_TLVP: return "TLVP";
   }
 }
