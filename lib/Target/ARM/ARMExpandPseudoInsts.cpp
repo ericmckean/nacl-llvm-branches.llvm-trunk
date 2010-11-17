@@ -719,7 +719,12 @@ bool ARMExpandPseudo::ExpandMBB(MachineBasicBlock &MBB) {
         unsigned TF = MO.getTargetFlags();
         LO16 = LO16.addGlobalAddress(GV, MO.getOffset(), TF | ARMII::MO_LO16);
         HI16 = HI16.addGlobalAddress(GV, MO.getOffset(), TF | ARMII::MO_HI16);
-      // @LOCALMOD-START - support for jumptable addresses
+        // @LOCALMOD-START - support for jumptable addresses and CPI
+      } else if (MO.isCPI()) {
+        int i = MO.getIndex();
+        unsigned TF = MO.getTargetFlags();
+        LO16 = LO16.addConstantPoolIndex(i, MO.getOffset(), TF | ARMII::MO_LO16);
+        HI16 = HI16.addConstantPoolIndex(i, MO.getOffset(), TF | ARMII::MO_HI16);
       } else if (MO.isJTI()){
         unsigned TF = MO.getTargetFlags();
         LO16 = LO16.addJumpTableIndex(MO.getIndex(), TF | ARMII::MO_LO16);
