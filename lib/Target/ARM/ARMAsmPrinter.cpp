@@ -191,7 +191,16 @@ namespace {
     virtual void EmitInstruction(const MachineInstr *MI);
     bool runOnMachineFunction(MachineFunction &F);
 
-    virtual void EmitConstantPool() {} // we emit constant pools customly!
+    // @LOCALMOD-START
+    // usually this does nothing on ARM as constants pools
+    // are handled with custom code.
+    // For the sfi case we do not use the custom logic and fall back
+    // to the default implementation.
+    virtual void EmitConstantPool() {
+      if (FlagSfiDisableCP) AsmPrinter::EmitConstantPool();
+    }
+    // @LOCALMOD-END
+
     virtual void EmitFunctionEntryLabel();
     void EmitStartOfAsmFile(Module &M);
     void EmitEndOfAsmFile(Module &M);

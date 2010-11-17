@@ -326,6 +326,23 @@ bool ARMDAGToDAGISel::SelectShiftShifterOperandReg(SDValue N,
   return true;
 }
 
+// @LOCALMOD-START
+static bool ShouldOperandBeUnwrappedForUseAsBaseAddress(
+  SDValue& N, const ARMSubtarget* Subtarget) {
+  assert (N.getOpcode() == ARMISD::Wrapper);
+  // Never use this transformation if constant island pools are disallowed 
+  if (FlagSfiDisableCP) return false;
+
+  // always apply this when we do not have movt/movw available
+  // (if we do have movt/movw we be able to get rid of the
+  // constant pool entry altogether)
+  if (!Subtarget->useMovt()) return true;
+  // explain why we do not want to use this for TargetGlobalAddress
+  if (N.getOperand(0).getOpcode() != ISD::TargetGlobalAddress) return true;
+  return false;
+}
+// @LOCALMOD-END
+
 bool ARMDAGToDAGISel::SelectAddrModeImm12(SDValue N,
                                           SDValue &Base,
                                           SDValue &OffImm) {
@@ -340,8 +357,8 @@ bool ARMDAGToDAGISel::SelectAddrModeImm12(SDValue N,
       OffImm  = CurDAG->getTargetConstant(0, MVT::i32);
       return true;
     } else if (N.getOpcode() == ARMISD::Wrapper &&
-               !(Subtarget->useMovt() &&
-                 N.getOperand(0).getOpcode() == ISD::TargetGlobalAddress)) {
+               // @LOCALMOD
+               ShouldOperandBeUnwrappedForUseAsBaseAddress(N, Subtarget)) {
       Base = N.getOperand(0);
     } else
       Base = N;
@@ -525,8 +542,8 @@ AddrMode2Type ARMDAGToDAGISel::SelectAddrMode2Worker(SDNode *Op,
       int FI = cast<FrameIndexSDNode>(N)->getIndex();
       Base = CurDAG->getTargetFrameIndex(FI, TLI.getPointerTy());
     } else if (N.getOpcode() == ARMISD::Wrapper &&
-               !(Subtarget->useMovt() &&
-                 N.getOperand(0).getOpcode() == ISD::TargetGlobalAddress)) {
+               // @LOCALMOD
+               ShouldOperandBeUnwrappedForUseAsBaseAddress(N, Subtarget)) {
       Base = N.getOperand(0);
     }
     Offset = CurDAG->getRegister(0, MVT::i32);
@@ -790,8 +807,8 @@ bool ARMDAGToDAGISel::SelectAddrMode5(SDValue N,
       int FI = cast<FrameIndexSDNode>(N)->getIndex();
       Base = CurDAG->getTargetFrameIndex(FI, TLI.getPointerTy());
     } else if (N.getOpcode() == ARMISD::Wrapper &&
-               !(Subtarget->useMovt() &&
-                 N.getOperand(0).getOpcode() == ISD::TargetGlobalAddress)) {
+               // @LOCALMOD
+               ShouldOperandBeUnwrappedForUseAsBaseAddress(N, Subtarget)) {
       Base = N.getOperand(0);
     }
     Offset = CurDAG->getTargetConstant(ARM_AM::getAM5Opc(ARM_AM::add, 0),
@@ -1994,6 +2011,8 @@ SDNode *ARMDAGToDAGISel::Select(SDNode *N) {
                  ARM_AM::getSOImmVal(~Val) == -1 &&    // MVN
                  !ARM_AM::isSOImmTwoPartVal(Val));     // two instrs.
     }
+
+    if (FlagSfiDisableCP) UseCP = false; // @LOCALMOD
 
     if (UseCP) {
       SDValue CPIdx =

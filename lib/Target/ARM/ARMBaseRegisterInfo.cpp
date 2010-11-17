@@ -18,6 +18,7 @@
 #include "ARMInstrInfo.h"
 #include "ARMMachineFunctionInfo.h"
 #include "ARMSubtarget.h"
+#include "ARMTargetMachine.h"  // @LOCALMOD
 #include "llvm/Constants.h"
 #include "llvm/DerivedTypes.h"
 #include "llvm/Function.h"
@@ -1244,6 +1245,13 @@ emitLoadConstPool(MachineBasicBlock &MBB,
                   unsigned DestReg, unsigned SubIdx, int Val,
                   ARMCC::CondCodes Pred,
                   unsigned PredReg) const {
+  // @LOCALMOD-START
+  // In the sfi case we do not want to use the load const pseudo instr.
+  // Sadly, the ARM backend is not very consistent about using this
+  // pseudo instr. and hence checking this is not sufficient.
+  // But, it should help detect some regressions early.
+  assert(!FlagSfiDisableCP && "unexpected call to emitLoadConstPool");
+  // @LOCALMOD-END
   MachineFunction &MF = *MBB.getParent();
   MachineConstantPool *ConstantPool = MF.getConstantPool();
   const Constant *C =
