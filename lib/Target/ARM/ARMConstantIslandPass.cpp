@@ -18,7 +18,8 @@
 #include "ARMAddressingModes.h"
 #include "ARMMachineFunctionInfo.h"
 #include "ARMInstrInfo.h"
-#include "ARMNaClRewritePass.h" // @LOCALMOD
+#include "ARMNaClRewritePass.h"  // @LOCALMOD
+#include "ARMTargetMachine.h"  // @LOCALMOD
 #include "Thumb2InstrInfo.h"
 #include "llvm/CodeGen/MachineConstantPool.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
@@ -318,6 +319,7 @@ FunctionPass *llvm::createARMConstantIslandPass() {
 }
 
 bool ARMConstantIslands::runOnMachineFunction(MachineFunction &MF) {
+  if (FlagSfiDisableCP) return false;   // @LOCALMOD
   MachineConstantPool &MCP = *MF.getConstantPool();
 
   TII = (const ARMInstrInfo*)MF.getTarget().getInstrInfo();
