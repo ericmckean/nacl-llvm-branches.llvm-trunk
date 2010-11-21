@@ -19,7 +19,6 @@
 #include "ARMConstantPoolValue.h"
 #include "InstPrinter/ARMInstPrinter.h"
 #include "ARMMachineFunctionInfo.h"
-#include "ARMMCInstLower.h"
 #include "ARMTargetMachine.h"
 #include "ARMTargetObjectFile.h"
 #include "llvm/Analysis/DebugInfo.h"
@@ -201,7 +200,7 @@ namespace {
 
     MachineLocation getDebugValueLocation(const MachineInstr *MI) const {
       MachineLocation Location;
-      assert (MI->getNumOperands() == 4 && "Invalid no. of machine operands!");
+      assert(MI->getNumOperands() == 4 && "Invalid no. of machine operands!");
       // Frame address.  Currently handles register +- offset only.
       if (MI->getOperand(0).isReg() && MI->getOperand(1).isImm())
         Location.set(MI->getOperand(0).getReg(), MI->getOperand(1).getImm());
@@ -800,11 +799,9 @@ void ARMAsmPrinter::PrintDebugValueComment(const MachineInstr *MI,
 }
 
 void ARMAsmPrinter::EmitInstruction(const MachineInstr *MI) {
-  ARMMCInstLower MCInstLowering(OutContext, *Mang, *this);
   switch (MI->getOpcode()) {
-  case ARM::t2MOVi32imm:
-    assert(0 && "Should be lowered by thumb2it pass");
   default: break;
+  case ARM::t2MOVi32imm: assert(0 && "Should be lowered by thumb2it pass");
   case ARM::DBG_VALUE: {
     if (isVerbose() && OutStreamer.hasRawTextSupport()) {
       SmallString<128> TmpStr;
@@ -932,19 +929,41 @@ void ARMAsmPrinter::EmitInstruction(const MachineInstr *MI) {
   case ARM::t2BR_JT: {
     // Lower and emit the instruction itself, then the jump table following it.
     MCInst TmpInst;
-    MCInstLowering.Lower(MI, TmpInst);
+    // FIXME: The branch instruction is really a pseudo. We should xform it
+    // explicitly.
+    LowerARMMachineInstrToMCInst(MI, TmpInst, *this);
     OutStreamer.EmitInstruction(TmpInst);
     EmitJump2Table(MI);
     return;
   }
   case ARM::tBR_JTr:
   case ARM::BR_JTr:
-  case ARM::BR_JTm:
-  case ARM::BR_JTadd: {
+  case ARM::BR_JTm: {
     // Lower and emit the instruction itself, then the jump table following it.
     MCInst TmpInst;
-    MCInstLowering.Lower(MI, TmpInst);
+    // FIXME: The branch instruction is really a pseudo. We should xform it
+    // explicitly.
+    LowerARMMachineInstrToMCInst(MI, TmpInst, *this);
     OutStreamer.EmitInstruction(TmpInst);
+    EmitJumpTable(MI);
+    return;
+  }
+  case ARM::BR_JTadd: {
+    // Lower and emit the instruction itself, then the jump table following it.
+    // add pc, target, idx
+    MCInst AddInst;
+    AddInst.setOpcode(ARM::ADDrr);
+    AddInst.addOperand(MCOperand::CreateReg(ARM::PC));
+    AddInst.addOperand(MCOperand::CreateReg(MI->getOperand(0).getReg()));
+    AddInst.addOperand(MCOperand::CreateReg(MI->getOperand(1).getReg()));
+    // Add predicate operands.
+    AddInst.addOperand(MCOperand::CreateImm(ARMCC::AL));
+    AddInst.addOperand(MCOperand::CreateReg(0));
+    // Add 's' bit operand (always reg0 for this)
+    AddInst.addOperand(MCOperand::CreateReg(0));
+    OutStreamer.EmitInstruction(AddInst);
+
+    // Output the data for the jump table itself
     EmitJumpTable(MI);
     return;
   }
@@ -1254,7 +1273,7 @@ void ARMAsmPrinter::EmitInstruction(const MachineInstr *MI) {
   }
 
   MCInst TmpInst;
-  MCInstLowering.Lower(MI, TmpInst);
+  LowerARMMachineInstrToMCInst(MI, TmpInst, *this);
   OutStreamer.EmitInstruction(TmpInst);
 }
 

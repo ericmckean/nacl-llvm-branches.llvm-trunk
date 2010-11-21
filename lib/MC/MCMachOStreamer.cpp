@@ -92,12 +92,6 @@ public:
 
     //report_fatal_error("unsupported directive: '.file'");
   }
-  virtual void EmitDwarfFileDirective(unsigned FileNo, StringRef Filename) {
-    // FIXME: Just ignore the .file; it isn't important enough to fail the
-    // entire assembly.
-
-    //report_fatal_error("unsupported directive: '.file'");
-  }
 
   virtual void Finish();
 
@@ -206,6 +200,7 @@ void MCMachOStreamer::EmitSymbolAttribute(MCSymbol *Symbol,
   case MCSA_ELF_TypeTLS:
   case MCSA_ELF_TypeCommon:
   case MCSA_ELF_TypeNoType:
+  case MCSA_ELF_TypeGnuUniqueObject:
   case MCSA_IndirectSymbol:
   case MCSA_Hidden:
   case MCSA_Internal:
@@ -238,6 +233,10 @@ void MCMachOStreamer::EmitSymbolAttribute(MCSymbol *Symbol,
   case MCSA_Reference:
   case MCSA_NoDeadStrip:
     SD.setFlags(SD.getFlags() | SF_NoDeadStrip);
+    break;
+
+  case MCSA_SymbolResolver:
+    SD.setFlags(SD.getFlags() | SF_SymbolResolver);
     break;
 
   case MCSA_PrivateExtern:
@@ -419,7 +418,10 @@ void MCMachOStreamer::Finish() {
                                          "__debug_line",
                                          MCSectionMachO::S_ATTR_DEBUG,
                                          0, SectionKind::getDataRelLocal());
-    MCDwarfFileTable::Emit(this, DwarfLineSection);
+    MCSectionData &DLS =
+      getAssembler().getOrCreateSectionData(*DwarfLineSection);
+    int PointerSize = getAssembler().getBackend().getPointerSize();
+    MCDwarfFileTable::Emit(this, DwarfLineSection, &DLS, PointerSize);
   }
 
   // We have to set the fragment atom associations so we can relax properly for

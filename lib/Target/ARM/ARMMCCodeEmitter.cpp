@@ -11,7 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define DEBUG_TYPE "arm-emitter"
+#define DEBUG_TYPE "mccodeemitter"
 #include "ARM.h"
 #include "ARMAddressingModes.h"
 #include "ARMFixupKinds.h"
@@ -70,6 +70,10 @@ public:
   unsigned getMachineOpValue(const MCInst &MI,const MCOperand &MO,
                              SmallVectorImpl<MCFixup> &Fixups) const;
 
+  /// getMovtImmOpValue - Return the encoding for the movw/movt pair
+  uint32_t getMovtImmOpValue(const MCInst &MI, unsigned OpIdx,
+                             SmallVectorImpl<MCFixup> &Fixups) const;
+
   bool EncodeAddrModeOpValues(const MCInst &MI, unsigned OpIdx,
                               unsigned &Reg, unsigned &Imm,
                               SmallVectorImpl<MCFixup> &Fixups) const;
@@ -101,6 +105,29 @@ public:
     case ARM_AM::ib: return 3;
     }
   }
+  /// getShiftOp - Return the shift opcode (bit[6:5]) of the immediate value.
+  ///
+  unsigned getShiftOp(ARM_AM::ShiftOpc ShOpc) const {
+    switch (ShOpc) {
+    default: llvm_unreachable("Unknown shift opc!");
+    case ARM_AM::no_shift:
+    case ARM_AM::lsl: return 0;
+    case ARM_AM::lsr: return 1;
+    case ARM_AM::asr: return 2;
+    case ARM_AM::ror:
+    case ARM_AM::rrx: return 3;
+    }
+    return 0;
+  }
+
+  /// getAddrMode2OpValue - Return encoding for addrmode2 operands.
+  uint32_t getAddrMode2OpValue(const MCInst &MI, unsigned OpIdx,
+                               SmallVectorImpl<MCFixup> &Fixups) const;
+
+  /// getAddrMode2OffsetOpValue - Return encoding for am2offset operands.
+  uint32_t getAddrMode2OffsetOpValue(const MCInst &MI, unsigned OpIdx,
+                                     SmallVectorImpl<MCFixup> &Fixups) const;
+
   /// getAddrMode3OffsetOpValue - Return encoding for am3offset operands.
   uint32_t getAddrMode3OffsetOpValue(const MCInst &MI, unsigned OpIdx,
                                      SmallVectorImpl<MCFixup> &Fixups) const;
@@ -289,10 +316,7 @@ getMachineOpValue(const MCInst &MI, const MCOperand &MO,
                      .bitcastToAPInt().getHiBits(32).getLimitedValue());
   }
 
-#ifndef NDEBUG
-  errs() << MO;
-#endif
-  llvm_unreachable(0);
+  llvm_unreachable("Unable to encode MCOperand!");
   return 0;
 }
 
@@ -373,6 +397,33 @@ getAddrModeImm12OpValue(const MCInst &MI, unsigned OpIdx,
 }
 
 uint32_t ARMMCCodeEmitter::
+getMovtImmOpValue(const MCInst &MI, unsigned OpIdx,
+                  SmallVectorImpl<MCFixup> &Fixups) const {
+  // {20-16} = imm{15-12}
+  // {11-0}  = imm{11-0}
+  const MCOperand &MO = MI.getOperand(OpIdx); 
+  if (MO.isImm()) {
+    return static_cast<unsigned>(MO.getImm());
+  } else if (const MCSymbolRefExpr *Expr = 
+             dyn_cast<MCSymbolRefExpr>(MO.getExpr())) {
+    MCFixupKind Kind;
+    switch (Expr->getKind()) {
+    case MCSymbolRefExpr::VK_ARM_HI16:
+      Kind = MCFixupKind(ARM::fixup_arm_movt_hi16);
+      break;
+    case MCSymbolRefExpr::VK_ARM_LO16:
+      Kind = MCFixupKind(ARM::fixup_arm_movw_lo16);
+      break;
+    default: assert(0 && "Unsupported ARMFixup"); break;
+    }
+    Fixups.push_back(MCFixup::Create(0, Expr, Kind));
+    return 0;
+  };
+  llvm_unreachable("Unsupported MCExpr type in MCOperand!");
+  return 0;
+}
+
+uint32_t ARMMCCodeEmitter::
 getLdStSORegOpValue(const MCInst &MI, unsigned OpIdx,
                     SmallVectorImpl<MCFixup> &Fixups) const {
   const MCOperand &MO = MI.getOperand(OpIdx);
@@ -380,24 +431,10 @@ getLdStSORegOpValue(const MCInst &MI, unsigned OpIdx,
   const MCOperand &MO2 = MI.getOperand(OpIdx+2);
   unsigned Rn = getARMRegisterNumbering(MO.getReg());
   unsigned Rm = getARMRegisterNumbering(MO1.getReg());
-  ARM_AM::ShiftOpc ShOp = ARM_AM::getAM2ShiftOpc(MO2.getImm());
   unsigned ShImm = ARM_AM::getAM2Offset(MO2.getImm());
   bool isAdd = ARM_AM::getAM2Op(MO2.getImm()) == ARM_AM::add;
-  unsigned SBits;
-  // LSL - 00
-  // LSR - 01
-  // ASR - 10
-  // ROR - 11
-  switch (ShOp) {
-  default: llvm_unreachable("Unknown shift opc!");
-  case ARM_AM::no_shift:
-    assert(ShImm == 0 && "Non-zero shift amount with no shift type!");
-    // fall through
-  case ARM_AM::lsl: SBits = 0x0; break;
-  case ARM_AM::lsr: SBits = 0x1; break;
-  case ARM_AM::asr: SBits = 0x2; break;
-  case ARM_AM::ror: SBits = 0x3; break;
-  }
+  ARM_AM::ShiftOpc ShOp = ARM_AM::getAM2ShiftOpc(MO2.getImm());
+  unsigned SBits = getShiftOp(ShOp);
 
   // {16-13} = Rn
   // {12}    = isAdd
@@ -413,6 +450,42 @@ getLdStSORegOpValue(const MCInst &MI, unsigned OpIdx,
   if (isAdd)
     Binary |= 1 << 12;
   return Binary;
+}
+
+uint32_t ARMMCCodeEmitter::
+getAddrMode2OpValue(const MCInst &MI, unsigned OpIdx,
+                    SmallVectorImpl<MCFixup> &Fixups) const {
+  // {17-14}  Rn
+  // {13}     1 == imm12, 0 == Rm
+  // {12}     isAdd
+  // {11-0}   imm12/Rm
+  const MCOperand &MO = MI.getOperand(OpIdx);
+  unsigned Rn = getARMRegisterNumbering(MO.getReg());
+  uint32_t Binary = getAddrMode2OffsetOpValue(MI, OpIdx + 1, Fixups);
+  Binary |= Rn << 14;
+  return Binary;
+}
+
+uint32_t ARMMCCodeEmitter::
+getAddrMode2OffsetOpValue(const MCInst &MI, unsigned OpIdx,
+                          SmallVectorImpl<MCFixup> &Fixups) const {
+  // {13}     1 == imm12, 0 == Rm
+  // {12}     isAdd
+  // {11-0}   imm12/Rm
+  const MCOperand &MO = MI.getOperand(OpIdx);
+  const MCOperand &MO1 = MI.getOperand(OpIdx+1);
+  unsigned Imm = MO1.getImm();
+  bool isAdd = ARM_AM::getAM2Op(Imm) == ARM_AM::add;
+  bool isReg = MO.getReg() != 0;
+  uint32_t Binary = ARM_AM::getAM2Offset(Imm);
+  // if reg +/- reg, Rm will be non-zero. Otherwise, we have reg +/- imm12
+  if (isReg) {
+    ARM_AM::ShiftOpc ShOp = ARM_AM::getAM2ShiftOpc(Imm);
+    Binary <<= 7;                    // Shift amount is bits [11:7]
+    Binary |= getShiftOp(ShOp) << 5; // Shift type is bits [6:5]
+    Binary |= getARMRegisterNumbering(MO.getReg()); // Rm is bits [3:0]
+  }
+  return Binary | (isAdd << 12) | (isReg << 13);
 }
 
 uint32_t ARMMCCodeEmitter::
@@ -616,13 +689,34 @@ getBitfieldInvertedMaskOpValue(const MCInst &MI, unsigned Op,
 unsigned ARMMCCodeEmitter::
 getRegisterListOpValue(const MCInst &MI, unsigned Op,
                        SmallVectorImpl<MCFixup> &Fixups) const {
-  // Convert a list of GPRs into a bitfield (R0 -> bit 0). For each
-  // register in the list, set the corresponding bit.
+  // VLDM/VSTM:
+  //   {12-8} = Vd
+  //   {7-0}  = Number of registers
+  //
+  // LDM/STM:
+  //   {15-0}  = Bitfield of GPRs.
+  unsigned Reg = MI.getOperand(Op).getReg();
+  bool SPRRegs = ARM::SPRRegClass.contains(Reg);
+  bool DPRRegs = ARM::DPRRegClass.contains(Reg);
+
   unsigned Binary = 0;
-  for (unsigned i = Op, e = MI.getNumOperands(); i < e; ++i) {
-    unsigned regno = getARMRegisterNumbering(MI.getOperand(i).getReg());
-    Binary |= 1 << regno;
+
+  if (SPRRegs || DPRRegs) {
+    // VLDM/VSTM
+    unsigned RegNo = getARMRegisterNumbering(Reg);
+    unsigned NumRegs = (MI.getNumOperands() - Op) & 0xff;
+    Binary |= (RegNo & 0x1f) << 8;
+    if (SPRRegs)
+      Binary |= NumRegs;
+    else
+      Binary |= NumRegs * 2;
+  } else {
+    for (unsigned I = Op, E = MI.getNumOperands(); I < E; ++I) {
+      unsigned RegNo = getARMRegisterNumbering(MI.getOperand(I).getReg());
+      Binary |= 1 << RegNo;
+    }
   }
+
   return Binary;
 }
 

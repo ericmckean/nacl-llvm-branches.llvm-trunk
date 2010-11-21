@@ -10,9 +10,11 @@ tablegen(PTXGenRegisterNames.inc -gen-register-enums)
 tablegen(PTXGenSubtarget.inc -gen-subtarget)
 
 add_llvm_target(PTXCodeGen
+  PTXAsmPrinter.cpp
   PTXISelDAGToDAG.cpp
   PTXISelLowering.cpp
   PTXInstrInfo.cpp
+  PTXFrameInfo.cpp
   PTXMCAsmInfo.cpp
   PTXMCAsmStreamer.cpp
   PTXMFInfoExtract.cpp

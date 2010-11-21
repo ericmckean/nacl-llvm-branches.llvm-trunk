@@ -54,10 +54,10 @@ MCAsmLayout::MCAsmLayout(MCAssembler &Asm)
  {
   // Compute the section layout order. Virtual sections must go last.
   for (MCAssembler::iterator it = Asm.begin(), ie = Asm.end(); it != ie; ++it)
-    if (!Asm.getBackend().isVirtualSection(it->getSection()))
+    if (!it->getSection().isVirtualSection())
       SectionOrder.push_back(&*it);
   for (MCAssembler::iterator it = Asm.begin(), ie = Asm.end(); it != ie; ++it)
-    if (Asm.getBackend().isVirtualSection(it->getSection()))
+    if (it->getSection().isVirtualSection())
       SectionOrder.push_back(&*it);
 }
 
@@ -157,7 +157,7 @@ uint64_t MCAsmLayout::getSectionAddressSize(const MCSectionData *SD) const {
 
 uint64_t MCAsmLayout::getSectionFileSize(const MCSectionData *SD) const {
   // Virtual sections have no file size.
-  if (getAssembler().getBackend().isVirtualSection(SD->getSection()))
+  if (SD->getSection().isVirtualSection())
     return 0;
 
   // Otherwise, the file size is the same as the address space size.
@@ -285,14 +285,16 @@ bool MCAssembler::EvaluateFixup(const MCObjectWriter &Writer,
     Fixup.getKind()).Flags & MCFixupKindInfo::FKF_IsPCRel;
   bool IsResolved = true;
   if (const MCSymbolRefExpr *A = Target.getSymA()) {
-    if (A->getSymbol().isDefined())
-      Value += Layout.getSymbolAddress(&getSymbolData(A->getSymbol()));
+    const MCSymbol &Sym = A->getSymbol().AliasedSymbol();
+    if (Sym.isDefined())
+      Value += Layout.getSymbolAddress(&getSymbolData(Sym));
     else
       IsResolved = false;
   }
   if (const MCSymbolRefExpr *B = Target.getSymB()) {
-    if (B->getSymbol().isDefined())
-      Value -= Layout.getSymbolAddress(&getSymbolData(B->getSymbol()));
+    const MCSymbol &Sym = B->getSymbol().AliasedSymbol();
+    if (Sym.isDefined())
+      Value -= Layout.getSymbolAddress(&getSymbolData(Sym));
     else
       IsResolved = false;
   }
@@ -497,7 +499,9 @@ static void WriteFragmentData(const MCAssembler &Asm, const MCAsmLayout &Layout,
     // FIXME: It is probably better if we don't call EvaluateAsAbsolute in
     // here.
     int64_t Value;
-    LF.getValue().EvaluateAsAbsolute(Value, &Layout);
+    bool IsAbs = LF.getValue().EvaluateAsAbsolute(Value, &Layout);
+    assert(IsAbs);
+    (void) IsAbs;
     SmallString<32> Tmp;
     raw_svector_ostream OSE(Tmp);
     if (LF.isSigned())
@@ -539,7 +543,7 @@ void MCAssembler::WriteSectionData(const MCSectionData *SD,
                                    const MCAsmLayout &Layout,
                                    MCObjectWriter *OW) const {
   // Ignore virtual sections.
-  if (getBackend().isVirtualSection(SD->getSection())) {
+  if (SD->getSection().isVirtualSection()) {
     assert(Layout.getSectionFileSize(SD) == 0 && "Invalid size for section!");
 
     // Check that contents are only things legal inside a virtual section.
@@ -628,7 +632,7 @@ void MCAssembler::Finish(MCObjectWriter *Writer) {
         continue;
 
       // Ignore virtual sections, they don't cause file size modifications.
-      if (getBackend().isVirtualSection(SD->getSection()))
+      if (SD->getSection().isVirtualSection())
         continue;
 
       // Otherwise, create a new align fragment at the end of the previous
