@@ -563,6 +563,7 @@ static int ARMFlagFromOpName(LiteralConstantEmitter *type,
   REG("QQQQPR");
 
   IMM("i32imm");
+  IMM("movt_imm");
   IMM("bf_inv_mask_imm");
   IMM("jtblock_operand");
   IMM("nohash_imm");
@@ -607,6 +608,8 @@ static int ARMFlagFromOpName(LiteralConstantEmitter *type,
   MISC("am6offset", "kOperandTypeARMAddrMode6Offset");            // R, I, I
   MISC("addrmodepc", "kOperandTypeARMAddrModePC");                // R, I
   MISC("reglist", "kOperandTypeARMRegisterList");                 // I, R, ...
+  MISC("dpr_reglist", "kOperandTypeARMDPRRegisterList");          // I, R, ...
+  MISC("spr_reglist", "kOperandTypeARMSPRRegisterList");          // I, R, ...
   MISC("it_mask", "kOperandTypeThumbITMask");                     // I
   MISC("t2addrmode_imm8", "kOperandTypeThumb2AddrModeImm8");      // R, I
   MISC("t2am_imm8_offset", "kOperandTypeThumb2AddrModeImm8Offset");//I
@@ -823,6 +826,8 @@ static void emitCommonEnums(raw_ostream &o, unsigned int &i) {
   operandTypes.addEntry("kOperandTypeARMAddrMode6Offset");
   operandTypes.addEntry("kOperandTypeARMAddrModePC");
   operandTypes.addEntry("kOperandTypeARMRegisterList");
+  operandTypes.addEntry("kOperandTypeARMDPRRegisterList");
+  operandTypes.addEntry("kOperandTypeARMSPRRegisterList");
   operandTypes.addEntry("kOperandTypeARMTBAddrMode");
   operandTypes.addEntry("kOperandTypeThumbITMask");
   operandTypes.addEntry("kOperandTypeThumbAddrModeS1");

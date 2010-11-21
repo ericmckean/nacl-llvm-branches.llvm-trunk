@@ -199,6 +199,7 @@ class Instruction {
   bit isBranch     = 0;     // Is this instruction a branch instruction?
   bit isIndirectBranch = 0; // Is this instruction an indirect branch?
   bit isCompare    = 0;     // Is this instruction a comparison instruction?
+  bit isMoveImm    = 0;     // Is this instruction a move immediate instruction?
   bit isBarrier    = 0;     // Can control flow fall through this instruction?
   bit isCall       = 0;     // Is this instruction a call instruction?
   bit canFoldAsLoad = 0;    // Can this be folded as a simple memory operand?
@@ -242,6 +243,8 @@ class Instruction {
   /// DisableEncoding - List of operand names (e.g. "$op1,$op2") that should not
   /// be encoded into the output machineinstr.
   string DisableEncoding = "";
+
+  string PostEncoderMethod = "";
 
   /// Target-specific flags. This becomes the TSFlags field in TargetInstrDesc.
   bits<64> TSFlags = 0;
@@ -343,6 +346,7 @@ def ImmAsmOperand : AsmOperandClass {
 class Operand<ValueType ty> {
   ValueType Type = ty;
   string PrintMethod = "printOperand";
+  string EncoderMethod = "";
   string AsmOperandLowerMethod = ?;
   dag MIOperandInfo = (ops);
 

@@ -31,8 +31,10 @@ StringRef ARMInstPrinter::getOpcodeName(unsigned Opcode) const {
 
 
 void ARMInstPrinter::printInst(const MCInst *MI, raw_ostream &O) {
+  unsigned Opcode = MI->getOpcode();
+
   // Check for MOVs and print canonical forms, instead.
-  if (MI->getOpcode() == ARM::MOVs) {
+  if (Opcode == ARM::MOVs) {
     // FIXME: Thumb variants?
     const MCOperand &Dst = MI->getOperand(0);
     const MCOperand &MO1 = MI->getOperand(1);
@@ -61,59 +63,47 @@ void ARMInstPrinter::printInst(const MCInst *MI, raw_ostream &O) {
   }
 
   // A8.6.123 PUSH
-  if ((MI->getOpcode() == ARM::STM_UPD || MI->getOpcode() == ARM::t2STM_UPD) &&
+  if ((Opcode == ARM::STMDB_UPD || Opcode == ARM::t2STMDB_UPD) &&
       MI->getOperand(0).getReg() == ARM::SP) {
-    const MCOperand &MO1 = MI->getOperand(2);
-    if (ARM_AM::getAM4SubMode(MO1.getImm()) == ARM_AM::db) {
-      O << '\t' << "push";
-      printPredicateOperand(MI, 3, O);
-      O << '\t';
-      printRegisterList(MI, 5, O);
-      return;
-    }
+    O << '\t' << "push";
+    printPredicateOperand(MI, 2, O);
+    O << '\t';
+    printRegisterList(MI, 4, O);
+    return;
   }
 
   // A8.6.122 POP
-  if ((MI->getOpcode() == ARM::LDM_UPD || MI->getOpcode() == ARM::t2LDM_UPD) &&
+  if ((Opcode == ARM::LDMIA_UPD || Opcode == ARM::t2LDMIA_UPD) &&
       MI->getOperand(0).getReg() == ARM::SP) {
-    const MCOperand &MO1 = MI->getOperand(2);
-    if (ARM_AM::getAM4SubMode(MO1.getImm()) == ARM_AM::ia) {
-      O << '\t' << "pop";
-      printPredicateOperand(MI, 3, O);
-      O << '\t';
-      printRegisterList(MI, 5, O);
-      return;
-    }
+    O << '\t' << "pop";
+    printPredicateOperand(MI, 2, O);
+    O << '\t';
+    printRegisterList(MI, 4, O);
+    return;
   }
 
   // A8.6.355 VPUSH
-  if ((MI->getOpcode() == ARM::VSTMS_UPD || MI->getOpcode() ==ARM::VSTMD_UPD) &&
+  if ((Opcode == ARM::VSTMSDB_UPD || Opcode == ARM::VSTMDDB_UPD) &&
       MI->getOperand(0).getReg() == ARM::SP) {
-    const MCOperand &MO1 = MI->getOperand(2);
-    if (ARM_AM::getAM4SubMode(MO1.getImm()) == ARM_AM::db) {
-      O << '\t' << "vpush";
-      printPredicateOperand(MI, 3, O);
-      O << '\t';
-      printRegisterList(MI, 5, O);
-      return;
-    }
+    O << '\t' << "vpush";
+    printPredicateOperand(MI, 2, O);
+    O << '\t';
+    printRegisterList(MI, 4, O);
+    return;
   }
 
   // A8.6.354 VPOP
-  if ((MI->getOpcode() == ARM::VLDMS_UPD || MI->getOpcode() ==ARM::VLDMD_UPD) &&
+  if ((Opcode == ARM::VLDMSIA_UPD || Opcode == ARM::VLDMDIA_UPD) &&
       MI->getOperand(0).getReg() == ARM::SP) {
-    const MCOperand &MO1 = MI->getOperand(2);
-    if (ARM_AM::getAM4SubMode(MO1.getImm()) == ARM_AM::ia) {
-      O << '\t' << "vpop";
-      printPredicateOperand(MI, 3, O);
-      O << '\t';
-      printRegisterList(MI, 5, O);
-      return;
-    }
+    O << '\t' << "vpop";
+    printPredicateOperand(MI, 2, O);
+    O << '\t';
+    printRegisterList(MI, 4, O);
+    return;
   }
 
   printInstruction(MI, O);
- }
+}
 
 void ARMInstPrinter::printOperand(const MCInst *MI, unsigned OpNo,
                                   raw_ostream &O) {
@@ -158,14 +148,6 @@ void ARMInstPrinter::printSOImmOperand(const MCInst *MI, unsigned OpNum,
   const MCOperand &MO = MI->getOperand(OpNum);
   assert(MO.isImm() && "Not a valid so_imm value!");
   printSOImm(O, MO.getImm(), CommentStream, &MAI);
-}
-
-/// printSOImm2PartOperand - SOImm is broken into two pieces using a 'mov'
-/// followed by an 'orr' to materialize.
-void ARMInstPrinter::printSOImm2PartOperand(const MCInst *MI, unsigned OpNum,
-                                            raw_ostream &O) {
-  // FIXME: REMOVE this method.
-  abort();
 }
 
 // so_reg is a 4-operand unit corresponding to register forms of the A5.1

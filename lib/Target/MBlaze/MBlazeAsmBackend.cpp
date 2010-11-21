@@ -11,14 +11,12 @@
 #include "MBlaze.h"
 #include "MBlazeFixupKinds.h"
 #include "llvm/ADT/Twine.h"
-#include "llvm/MC/ELFObjectWriter.h"
 #include "llvm/MC/MCAssembler.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCObjectFormat.h"
 #include "llvm/MC/MCObjectWriter.h"
 #include "llvm/MC/MCSectionELF.h"
 #include "llvm/MC/MCSectionMachO.h"
-#include "llvm/MC/MachObjectWriter.h"
 #include "llvm/Support/ELF.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
@@ -98,16 +96,11 @@ public:
   void ApplyFixup(const MCFixup &Fixup, MCDataFragment &DF,
                   uint64_t Value) const;
 
-  bool isVirtualSection(const MCSection &Section) const {
-    const MCSectionELF &SE = static_cast<const MCSectionELF&>(Section);
-    return SE.getType() == MCSectionELF::SHT_NOBITS;
-  }
-
   MCObjectWriter *createObjectWriter(raw_ostream &OS) const {
-    return new ELFObjectWriter(OS, /*Is64Bit=*/false,
-                               OSType, ELF::EM_MBLAZE,
-                               /*IsLittleEndian=*/false,
-                               /*HasRelocationAddend=*/true);
+    return createELFObjectWriter(OS, /*Is64Bit=*/false,
+                                 OSType, ELF::EM_MBLAZE,
+                                 /*IsLittleEndian=*/false,
+                                 /*HasRelocationAddend=*/true);
   }
 };
 

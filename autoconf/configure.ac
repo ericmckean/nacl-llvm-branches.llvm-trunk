@@ -480,7 +480,7 @@ else
     Sparc)       AC_SUBST(TARGET_HAS_JIT,0) ;;
     PowerPC)     AC_SUBST(TARGET_HAS_JIT,1) ;;
     x86_64)      AC_SUBST(TARGET_HAS_JIT,1) ;;
-    Alpha)       AC_SUBST(TARGET_HAS_JIT,1) ;;
+    Alpha)       AC_SUBST(TARGET_HAS_JIT,0) ;;
     ARM)         AC_SUBST(TARGET_HAS_JIT,1) ;;
     Mips)        AC_SUBST(TARGET_HAS_JIT,0) ;;
     XCore)       AC_SUBST(TARGET_HAS_JIT,0) ;;
@@ -650,11 +650,7 @@ LLVM_ENUM_ASM_PARSERS=""
 LLVM_ENUM_DISASSEMBLERS=""
 for target_to_build in $TARGETS_TO_BUILD; do
   LLVM_ENUM_TARGETS="LLVM_TARGET($target_to_build) $LLVM_ENUM_TARGETS"
-  if test -f ${srcdir}/lib/Target/${target_to_build}/AsmPrinter/Makefile ; then
-    LLVM_ENUM_ASM_PRINTERS="LLVM_ASM_PRINTER($target_to_build) $LLVM_ENUM_ASM_PRINTERS";
-  fi
-  # MC-ized AsmPrinters live in TARGET/InstPrinter, not AsmPrinter
-  if test -f ${srcdir}/lib/Target/${target_to_build}/InstPrinter/Makefile ; then
+  if test -f ${srcdir}/lib/Target/${target_to_build}/*AsmPrinter.cpp ; then
     LLVM_ENUM_ASM_PRINTERS="LLVM_ASM_PRINTER($target_to_build) $LLVM_ENUM_ASM_PRINTERS";
   fi
   if test -f ${srcdir}/lib/Target/${target_to_build}/AsmParser/Makefile ; then

@@ -84,6 +84,7 @@ public:
   virtual void EmitThumbFunc(MCSymbol *Func);
   virtual void EmitAssignment(MCSymbol *Symbol, const MCExpr *Value);
   virtual void EmitWeakReference(MCSymbol *Alias, const MCSymbol *Symbol);
+  virtual void SwitchSection(const MCSection *Section);
   virtual void EmitSymbolAttribute(MCSymbol *Symbol, MCSymbolAttr Attribute);
   virtual void EmitSymbolDesc(MCSymbol *Symbol, unsigned DescValue) {
     assert(0 && "ELF doesn't support this directive");
@@ -136,9 +137,6 @@ public:
                                  unsigned char Value = 0);
 
   virtual void EmitFileDirective(StringRef Filename);
-  virtual void EmitDwarfFileDirective(unsigned FileNo, StringRef Filename) {
-    DEBUG(dbgs() << "FIXME: MCELFStreamer:EmitDwarfFileDirective not implemented\n");
-  }
 
   virtual void Finish();
 
@@ -239,63 +237,18 @@ void MCELFStreamer::EmitAssignment(MCSymbol *Symbol, const MCExpr *Value) {
   Symbol->setVariableValue(AddValueSymbols(Value));
 }
 
-// This is a hack. To be able to implement weakrefs the writer has to be able
-// to distinguish
-//    .weakref foo, bar
-//    .long foo
-// from
-//   .weakref foo, bar
-//   .long bar
-// since the first case should produce a weak undefined reference and the second
-// one a strong one.
-// If we created foo as a regular alias pointing to bar (foo = bar), then
-// MCExpr::EvaluateAsRelocatable would recurse on foo and the writer would
-// never see it used in a relocation.
-// What we do is create a MCTargetExpr that when evaluated produces a symbol
-// ref to a temporary symbol. This temporary symbol in turn is a variable
-// that equals the original symbol (tmp = bar). With this hack the writer
-// gets a relocation with tmp and can correctly implement weak references.
-
-namespace {
-class WeakRefExpr : public MCTargetExpr {
-private:
-  const MCSymbolRefExpr *Alias;
-
-  explicit WeakRefExpr(const MCSymbolRefExpr *Alias_)
-    : MCTargetExpr(), Alias(Alias_) {}
-
-public:
-  virtual void PrintImpl(raw_ostream &OS) const {
-    llvm_unreachable("Unimplemented");
-  }
-
-  virtual bool EvaluateAsRelocatableImpl(MCValue &Res,
-                                         const MCAsmLayout *Layout) const {
-    Res = MCValue::get(Alias, 0, 0);
-    return true;
-  }
-
-  static const WeakRefExpr *Create(const MCSymbol *Alias, MCContext &Ctx) {
-    const MCSymbolRefExpr *A = MCSymbolRefExpr::Create(Alias, Ctx);
-    return new (Ctx) WeakRefExpr(A);
-  }
-};
-} // end anonymous namespace
+void MCELFStreamer::SwitchSection(const MCSection *Section) {
+  const MCSymbol *Grp = static_cast<const MCSectionELF *>(Section)->getGroup();
+  if (Grp)
+    getAssembler().getOrCreateSymbolData(*Grp);
+  this->MCObjectStreamer::SwitchSection(Section);
+}
 
 void MCELFStreamer::EmitWeakReference(MCSymbol *Alias, const MCSymbol *Symbol) {
   getAssembler().getOrCreateSymbolData(*Symbol);
   MCSymbolData &AliasSD = getAssembler().getOrCreateSymbolData(*Alias);
   AliasSD.setFlags(AliasSD.getFlags() | ELF_Other_Weakref);
-
-  // Create the alias that actually points to Symbol
-  const MCSymbolRefExpr *SymRef = MCSymbolRefExpr::Create(Symbol, getContext());
-  MCSymbol *RealAlias = getContext().CreateTempSymbol();
-  RealAlias->setVariableValue(SymRef);
-
-  MCSymbolData &RealAliasSD = getAssembler().getOrCreateSymbolData(*RealAlias);
-  RealAliasSD.setFlags(RealAliasSD.getFlags() | ELF_Other_Weakref);
-
-  const MCExpr *Value = WeakRefExpr::Create(RealAlias, getContext());
+  const MCExpr *Value = MCSymbolRefExpr::Create(Symbol, getContext());
   Alias->setVariableValue(Value);
 }
 
@@ -328,6 +281,7 @@ void MCELFStreamer::EmitSymbolAttribute(MCSymbol *Symbol,
   case MCSA_LazyReference:
   case MCSA_Reference:
   case MCSA_NoDeadStrip:
+  case MCSA_SymbolResolver:
   case MCSA_PrivateExtern:
   case MCSA_WeakDefinition:
   case MCSA_WeakDefAutoPrivate:
@@ -335,6 +289,10 @@ void MCELFStreamer::EmitSymbolAttribute(MCSymbol *Symbol,
   case MCSA_ELF_TypeIndFunction:
   case MCSA_IndirectSymbol:
     assert(0 && "Invalid symbol attribute for ELF!");
+    break;
+
+  case MCSA_ELF_TypeGnuUniqueObject:
+    // Ignore for now.
     break;
 
   case MCSA_Global:
@@ -398,6 +356,8 @@ void MCELFStreamer::EmitCommonSymbol(MCSymbol *Symbol, uint64_t Size,
     SetBinding(SD, ELF::STB_GLOBAL);
     SD.setExternal(true);
   }
+
+  SetType(SD, ELF::STT_OBJECT);
 
   if (GetBinding(SD) == ELF_STB_Local) {
     const MCSection *Section = getAssembler().getContext().getELFSection(".bss",
@@ -531,7 +491,10 @@ void MCELFStreamer::Finish() {
     const MCSection *DwarfLineSection =
       getContext().getELFSection(".debug_line", 0, 0,
                                  SectionKind::getDataRelLocal());
-    MCDwarfFileTable::Emit(this, DwarfLineSection);
+    MCSectionData &DLS =
+      getAssembler().getOrCreateSectionData(*DwarfLineSection);
+    int PointerSize = getAssembler().getBackend().getPointerSize();
+    MCDwarfFileTable::Emit(this, DwarfLineSection, &DLS, PointerSize);
   }
 
   for (std::vector<LocalCommon>::const_iterator i = LocalCommons.begin(),

@@ -39,14 +39,21 @@ void MCExpr::print(raw_ostream &OS) const {
   case MCExpr::SymbolRef: {
     const MCSymbolRefExpr &SRE = cast<MCSymbolRefExpr>(*this);
     const MCSymbol &Sym = SRE.getSymbol();
+    // Parenthesize names that start with $ so that they don't look like
+    // absolute names.
+    bool UseParens = Sym.getName()[0] == '$';
 
     if (SRE.getKind() == MCSymbolRefExpr::VK_ARM_HI16 ||
         SRE.getKind() == MCSymbolRefExpr::VK_ARM_LO16)
       OS << MCSymbolRefExpr::getVariantKindName(SRE.getKind());
 
-    // Parenthesize names that start with $ so that they don't look like
-    // absolute names.
-    if (Sym.getName()[0] == '$')
+    if (SRE.getKind() == MCSymbolRefExpr::VK_PPC_HA16 ||
+        SRE.getKind() == MCSymbolRefExpr::VK_PPC_LO16) {
+      OS << MCSymbolRefExpr::getVariantKindName(SRE.getKind());
+      UseParens = true;
+    }
+
+    if (UseParens)
       OS << '(' << Sym << ')';
     else
       OS << Sym;
@@ -60,7 +67,9 @@ void MCExpr::print(raw_ostream &OS) const {
       OS << MCSymbolRefExpr::getVariantKindName(SRE.getKind());
     else if (SRE.getKind() != MCSymbolRefExpr::VK_None &&
              SRE.getKind() != MCSymbolRefExpr::VK_ARM_HI16 &&
-             SRE.getKind() != MCSymbolRefExpr::VK_ARM_LO16)
+             SRE.getKind() != MCSymbolRefExpr::VK_ARM_LO16 &&
+             SRE.getKind() != MCSymbolRefExpr::VK_PPC_HA16 &&
+             SRE.getKind() != MCSymbolRefExpr::VK_PPC_LO16)
       OS << '@' << MCSymbolRefExpr::getVariantKindName(SRE.getKind());
 
     return;
@@ -187,6 +196,7 @@ StringRef MCSymbolRefExpr::getVariantKindName(VariantKind Kind) {
   case VK_TLSLDM: return "TLSLDM";
   case VK_TPOFF: return "TPOFF";
   case VK_DTPOFF: return "DTPOFF";
+  case VK_TLVP: return "TLVP";
   case VK_ARM_HI16: return ":upper16:";
   case VK_ARM_LO16: return ":lower16:";
   case VK_ARM_PLT: return "(PLT)";
@@ -194,8 +204,10 @@ StringRef MCSymbolRefExpr::getVariantKindName(VariantKind Kind) {
   case VK_ARM_GOTOFF: return "(GOTOFF)";
   case VK_ARM_TPOFF: return "(tpoff)";
   case VK_ARM_GOTTPOFF: return "(gottpoff)";
-  case VK_ARM_TLSGD: return "(tldgd)";
-  case VK_TLVP: return "TLVP";
+  case VK_ARM_TLSGD: return "(tlsgd)";
+  case VK_PPC_TOC: return "toc";
+  case VK_PPC_HA16: return "ha16";
+  case VK_PPC_LO16: return "lo16";
   }
 }
 
@@ -324,9 +336,14 @@ bool MCExpr::EvaluateAsRelocatableImpl(MCValue &Res,
     const MCSymbol &Sym = SRE->getSymbol();
 
     // Evaluate recursively if this is a variable.
-    if (Sym.isVariable() && SRE->getKind() == MCSymbolRefExpr::VK_None)
-      return Sym.getVariableValue()->EvaluateAsRelocatableImpl(Res, Layout,
-                                                               true);
+    if (Sym.isVariable() && SRE->getKind() == MCSymbolRefExpr::VK_None) {
+      bool Ret = Sym.getVariableValue()->EvaluateAsRelocatableImpl(Res, Layout,
+                                                                   true);
+      // If we failed to simplify this to a constant, let the target
+      // handle it.
+      if (Ret && !Res.getSymA() && !Res.getSymB())
+        return true;
+    }
 
     Res = MCValue::get(SRE, 0, 0);
     return true;

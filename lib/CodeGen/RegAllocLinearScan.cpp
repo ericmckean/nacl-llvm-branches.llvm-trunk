@@ -466,6 +466,10 @@ unsigned RALinScan::attemptTrivialCoalescing(LiveInterval &cur, unsigned Reg) {
       CandReg = CopyMI->getOperand(0).getReg();
     else
       return Reg;
+
+    // If the target of the copy is a sub-register then don't coalesce.
+    if(CopyMI->getOperand(0).getSubReg())
+      return Reg;
   }
 
   if (TargetRegisterInfo::isVirtualRegister(CandReg)) {
@@ -954,10 +958,11 @@ namespace {
 /// assignRegOrStackSlotAtInterval - assign a register if one is available, or
 /// spill.
 void RALinScan::assignRegOrStackSlotAtInterval(LiveInterval* cur) {
-  DEBUG(dbgs() << "\tallocating current interval: ");
+  const TargetRegisterClass *RC = mri_->getRegClass(cur->reg);
+  DEBUG(dbgs() << "\tallocating current interval from "
+               << RC->getName() << ": ");
 
   // This is an implicitly defined live interval, just assign any register.
-  const TargetRegisterClass *RC = mri_->getRegClass(cur->reg);
   if (cur->empty()) {
     unsigned physReg = vrm_->getRegAllocPref(cur->reg);
     if (!physReg)
