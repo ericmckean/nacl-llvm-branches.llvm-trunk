@@ -21,6 +21,13 @@
 #include "llvm/Target/TargetRegistry.h"
 using namespace llvm;
 
+// @LOCALMOD-START
+namespace llvm {
+cl::opt<bool> FlagSfiDisableCP("sfi-disable-cp",
+                               cl::desc("disable arm constant island pools"));
+}
+// @LOCALMOD-END
+
 static MCAsmInfo *createMCAsmInfo(const Target &T, StringRef TT) {
   Triple TheTriple(TT);
   switch (TheTriple.getOS()) {
@@ -179,7 +186,22 @@ bool ARMBaseTargetMachine::addPreEmitPass(PassManagerBase &PM,
   if (Subtarget.isThumb2() && !Subtarget.prefers32BitThumb())
     PM.add(createThumb2SizeReductionPass());
 
+  // @LOCALMOD-START
+  // Note with FlagSfiDisableCP we effectively disable the
+  // ARMConstantIslandPass and rely on movt/movw to eliminate the need
+  // for constant islands
+  if (FlagSfiDisableCP) {
+    assert(Subtarget.useMovt());
+  }
+  // @LOCALMOD-END
+
   PM.add(createARMConstantIslandPass());
+  
+  // @LOCALMOD-START
+  // This pass does all the heavy sfi lifting. 
+  PM.add(createARMNaClRewritePass());
+  // @LOCALMOD-END
+ 
   return true;
 }
 

@@ -49,6 +49,9 @@ FunctionPass *createX86FloatingPointStackifierPass();
 /// crossings.
 FunctionPass *createSSEDomainFixPass();
 
+// @LOCALMOD - Creates a pass to make instructions follow NaCl SFI rules.
+FunctionPass* createX86NaClRewritePass();
+
 /// createX86CodeEmitterPass - Return a pass that emits the collected X86 code
 /// to the specified MCE object.
 FunctionPass *createX86JITCodeEmitterPass(X86TargetMachine &TM,

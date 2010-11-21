@@ -34,7 +34,15 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 
+// @LOCALMOD-START
+#include "llvm/Support/CommandLine.h"
+namespace llvm {
+  extern cl::opt<bool> FlagSfiStore;
+}
+// @LOCALMOD-END
+
 using namespace llvm;
+
 
 static cl::opt<bool>
 DisableShifterOp("disable-shifter-op", cl::Hidden,
@@ -87,21 +95,24 @@ public:
   bool SelectAddrModeImm12(SDValue N, SDValue &Base, SDValue &OffImm);
   bool SelectLdStSOReg(SDValue N, SDValue &Base, SDValue &Offset, SDValue &Opc);
 
-  AddrMode2Type SelectAddrMode2Worker(SDValue N, SDValue &Base,
+  AddrMode2Type SelectAddrMode2Worker(SDNode *Op, SDValue N, SDValue &Base,
                                       SDValue &Offset, SDValue &Opc);
-  bool SelectAddrMode2Base(SDValue N, SDValue &Base, SDValue &Offset,
+  bool SelectAddrMode2Base(SDNode *Op,
+                           SDValue N, SDValue &Base, SDValue &Offset,
                            SDValue &Opc) {
-    return SelectAddrMode2Worker(N, Base, Offset, Opc) == AM2_BASE;
+    return SelectAddrMode2Worker(Op, N, Base, Offset, Opc) == AM2_BASE;
   }
 
-  bool SelectAddrMode2ShOp(SDValue N, SDValue &Base, SDValue &Offset,
+  bool SelectAddrMode2ShOp(SDNode *Op,
+                           SDValue N, SDValue &Base, SDValue &Offset,
                            SDValue &Opc) {
-    return SelectAddrMode2Worker(N, Base, Offset, Opc) == AM2_SHOP;
+    return SelectAddrMode2Worker(Op, N, Base, Offset, Opc) == AM2_SHOP;
   }
 
-  bool SelectAddrMode2(SDValue N, SDValue &Base, SDValue &Offset,
+  bool SelectAddrMode2(SDNode *Op, 
+                       SDValue N, SDValue &Base, SDValue &Offset,
                        SDValue &Opc) {
-    SelectAddrMode2Worker(N, Base, Offset, Opc);
+    SelectAddrMode2Worker(Op, N, Base, Offset, Opc);
 //    return SelectAddrMode2ShOp(N, Base, Offset, Opc);
     // This always matches one way or another.
     return true;
@@ -109,7 +120,7 @@ public:
 
   bool SelectAddrMode2Offset(SDNode *Op, SDValue N,
                              SDValue &Offset, SDValue &Opc);
-  bool SelectAddrMode3(SDValue N, SDValue &Base,
+  bool SelectAddrMode3(SDNode *Op, SDValue N, SDValue &Base,
                        SDValue &Offset, SDValue &Opc);
   bool SelectAddrMode3Offset(SDNode *Op, SDValue N,
                              SDValue &Offset, SDValue &Opc);
@@ -331,6 +342,23 @@ bool ARMDAGToDAGISel::SelectShiftShifterOperandReg(SDValue N,
   return true;
 }
 
+// @LOCALMOD-START
+static bool ShouldOperandBeUnwrappedForUseAsBaseAddress(
+  SDValue& N, const ARMSubtarget* Subtarget) {
+  assert (N.getOpcode() == ARMISD::Wrapper);
+  // Never use this transformation if constant island pools are disallowed 
+  if (FlagSfiDisableCP) return false;
+
+  // always apply this when we do not have movt/movw available
+  // (if we do have movt/movw we be able to get rid of the
+  // constant pool entry altogether)
+  if (!Subtarget->useMovt()) return true;
+  // explain why we do not want to use this for TargetGlobalAddress
+  if (N.getOperand(0).getOpcode() != ISD::TargetGlobalAddress) return true;
+  return false;
+}
+// @LOCALMOD-END
+
 bool ARMDAGToDAGISel::SelectAddrModeImm12(SDValue N,
                                           SDValue &Base,
                                           SDValue &OffImm) {
@@ -345,8 +373,8 @@ bool ARMDAGToDAGISel::SelectAddrModeImm12(SDValue N,
       OffImm  = CurDAG->getTargetConstant(0, MVT::i32);
       return true;
     } else if (N.getOpcode() == ARMISD::Wrapper &&
-               !(Subtarget->useMovt() &&
-                 N.getOperand(0).getOpcode() == ISD::TargetGlobalAddress)) {
+               // @LOCALMOD
+               ShouldOperandBeUnwrappedForUseAsBaseAddress(N, Subtarget)) {
       Base = N.getOperand(0);
     } else
       Base = N;
@@ -380,6 +408,9 @@ bool ARMDAGToDAGISel::SelectAddrModeImm12(SDValue N,
 
 bool ARMDAGToDAGISel::SelectLdStSOReg(SDValue N, SDValue &Base, SDValue &Offset,
                                       SDValue &Opc) {
+  // @LOCALMOD-BEGIN
+  return false;   // Can't handle two registers
+  // @LOCALMOD-END
   if (N.getOpcode() == ISD::MUL &&
       (!Subtarget->isCortexA9() || N.hasOneUse())) {
     if (ConstantSDNode *RHS = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
@@ -481,10 +512,21 @@ bool ARMDAGToDAGISel::SelectLdStSOReg(SDValue N, SDValue &Base, SDValue &Offset,
 
 //-----
 
-AddrMode2Type ARMDAGToDAGISel::SelectAddrMode2Worker(SDValue N,
+AddrMode2Type ARMDAGToDAGISel::SelectAddrMode2Worker(SDNode *Op,
+                                                     SDValue N,
                                                      SDValue &Base,
                                                      SDValue &Offset,
+// @LOCALMOD-START
+// Note: In the code below we do not want "Offfset" to be real register to
+// not violate ARM sandboxing.
+// @LOCALMOD-END
                                                      SDValue &Opc) {
+  // @LOCALMOD-START
+  // avoid two reg addressing mode for stores
+  const bool is_store = (Op->getOpcode() == ISD::STORE);
+  if (!FlagSfiStore || !is_store ) {
+  // @LOCALMOD-END
+
   if (N.getOpcode() == ISD::MUL &&
       (!Subtarget->isCortexA9() || N.hasOneUse())) {
     if (ConstantSDNode *RHS = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
@@ -508,6 +550,7 @@ AddrMode2Type ARMDAGToDAGISel::SelectAddrMode2Worker(SDValue N,
       }
     }
   }
+  } // @LOCALMOD
 
   if (N.getOpcode() != ISD::ADD && N.getOpcode() != ISD::SUB) {
     Base = N;
@@ -515,8 +558,8 @@ AddrMode2Type ARMDAGToDAGISel::SelectAddrMode2Worker(SDValue N,
       int FI = cast<FrameIndexSDNode>(N)->getIndex();
       Base = CurDAG->getTargetFrameIndex(FI, TLI.getPointerTy());
     } else if (N.getOpcode() == ARMISD::Wrapper &&
-               !(Subtarget->useMovt() &&
-                 N.getOperand(0).getOpcode() == ISD::TargetGlobalAddress)) {
+               // @LOCALMOD
+               ShouldOperandBeUnwrappedForUseAsBaseAddress(N, Subtarget)) {
       Base = N.getOperand(0);
     }
     Offset = CurDAG->getRegister(0, MVT::i32);
@@ -551,7 +594,7 @@ AddrMode2Type ARMDAGToDAGISel::SelectAddrMode2Worker(SDValue N,
       }
     }
   }
-
+  
   if (Subtarget->isCortexA9() && !N.hasOneUse()) {
     // Compute R +/- (R << N) and reuse it.
     Base = N;
@@ -561,6 +604,24 @@ AddrMode2Type ARMDAGToDAGISel::SelectAddrMode2Worker(SDValue N,
                                     MVT::i32);
     return AM2_BASE;
   }
+  
+  // @LOCALMOD-START
+  // keep store addressing modes simple
+  if (FlagSfiStore && is_store) {
+    Base = N;
+    if (N.getOpcode() == ISD::FrameIndex) {
+      int FI = cast<FrameIndexSDNode>(N)->getIndex();
+      Base = CurDAG->getTargetFrameIndex(FI, TLI.getPointerTy());
+    } else if (N.getOpcode() == ARMISD::Wrapper) {
+      Base = N.getOperand(0);
+    }
+    Offset = CurDAG->getRegister(0, MVT::i32);
+    Opc = CurDAG->getTargetConstant(ARM_AM::getAM2Opc(ARM_AM::add, 0,
+                                                      ARM_AM::no_shift),
+                                    MVT::i32);
+    return AM2_BASE;
+  }
+  // @LOCALMOD-END
 
   // Otherwise this is R +/- [possibly shifted] R.
   ARM_AM::AddrOpc AddSub = N.getOpcode() == ISD::ADD ? ARM_AM::add:ARM_AM::sub;
@@ -636,13 +697,19 @@ bool ARMDAGToDAGISel::SelectAddrMode2Offset(SDNode *Op, SDValue N,
     }
   }
 
+  const bool is_store = (Opcode == ISD::STORE); // @LOCALMOD
+
+
   Offset = N;
   ARM_AM::ShiftOpc ShOpcVal = ARM_AM::getShiftOpcForNode(N);
   unsigned ShAmt = 0;
   if (ShOpcVal != ARM_AM::no_shift) {
     // Check to see if the RHS of the shift is a constant, if not, we can't fold
     // it.
-    if (ConstantSDNode *Sh = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
+
+    //if (ConstantSDNode *Sh = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
+    ConstantSDNode *Sh = dyn_cast<ConstantSDNode>(N.getOperand(1));
+    if ((!FlagSfiStore || !is_store) && Sh ) { // @LOCALMOD
       ShAmt = Sh->getZExtValue();
       if (isShifterOpProfitable(N, ShOpcVal, ShAmt))
         Offset = N.getOperand(0);
@@ -661,16 +728,22 @@ bool ARMDAGToDAGISel::SelectAddrMode2Offset(SDNode *Op, SDValue N,
 }
 
 
-bool ARMDAGToDAGISel::SelectAddrMode3(SDValue N,
+bool ARMDAGToDAGISel::SelectAddrMode3(SDNode *Op, SDValue N,
                                       SDValue &Base, SDValue &Offset,
                                       SDValue &Opc) {
+  // @LOCALMOD-START
+  const bool is_store = (Op->getOpcode() == ISD::STORE);
+  if (!FlagSfiStore ||!is_store) {
+  // @LOCALMOD-END
   if (N.getOpcode() == ISD::SUB) {
+
     // X - C  is canonicalize to X + -C, no need to handle it here.
     Base = N.getOperand(0);
     Offset = N.getOperand(1);
     Opc = CurDAG->getTargetConstant(ARM_AM::getAM3Opc(ARM_AM::sub, 0),MVT::i32);
     return true;
   }
+  } // @LOCALMOD-END
 
   if (N.getOpcode() != ISD::ADD) {
     Base = N;
@@ -704,6 +777,15 @@ bool ARMDAGToDAGISel::SelectAddrMode3(SDValue N,
       return true;
     }
   }
+
+  // @LOCALMOD-START
+  if (FlagSfiStore && is_store) {
+    Base = N;
+    Offset = CurDAG->getRegister(0, MVT::i32);
+    Opc = CurDAG->getTargetConstant(ARM_AM::getAM3Opc(ARM_AM::add, 0),MVT::i32);
+    return true;
+  }
+  // @LOCALMOD-END
 
   Base = N.getOperand(0);
   Offset = N.getOperand(1);
@@ -741,8 +823,8 @@ bool ARMDAGToDAGISel::SelectAddrMode5(SDValue N,
       int FI = cast<FrameIndexSDNode>(N)->getIndex();
       Base = CurDAG->getTargetFrameIndex(FI, TLI.getPointerTy());
     } else if (N.getOpcode() == ARMISD::Wrapper &&
-               !(Subtarget->useMovt() &&
-                 N.getOperand(0).getOpcode() == ISD::TargetGlobalAddress)) {
+               // @LOCALMOD
+               ShouldOperandBeUnwrappedForUseAsBaseAddress(N, Subtarget)) {
       Base = N.getOperand(0);
     }
     Offset = CurDAG->getTargetConstant(ARM_AM::getAM5Opc(ARM_AM::add, 0),
@@ -1971,6 +2053,8 @@ SDNode *ARMDAGToDAGISel::Select(SDNode *N) {
                  ARM_AM::getSOImmVal(~Val) == -1 &&    // MVN
                  !ARM_AM::isSOImmTwoPartVal(Val));     // two instrs.
     }
+
+    if (FlagSfiDisableCP) UseCP = false; // @LOCALMOD
 
     if (UseCP) {
       SDValue CPIdx =

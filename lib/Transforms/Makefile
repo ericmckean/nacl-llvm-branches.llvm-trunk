@@ -10,6 +10,10 @@
 LEVEL = ../..
 PARALLEL_DIRS = Utils Instrumentation Scalar InstCombine IPO Hello
 
+ifeq ($(SANDBOX_LLVM),1)
+  PARALLEL_DIRS := $(filter-out Hello, $(PARALLEL_DIRS))
+endif
+
 include $(LEVEL)/Makefile.config
 
 # No support for plugins on windows targets

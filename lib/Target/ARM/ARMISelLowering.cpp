@@ -49,6 +49,14 @@
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include <sstream>
+
+// @LOCALMOD-START
+#include "llvm/Support/CommandLine.h"
+namespace llvm {
+  extern cl::opt<bool> FlagSfiStore;
+}
+// @LOCALMOD-END
+
 using namespace llvm;
 
 STATISTIC(NumTailCalls, "Number of tail calls");
@@ -68,6 +76,12 @@ static cl::opt<bool>
 ARMInterworking("arm-interworking", cl::Hidden,
   cl::desc("Enable / disable ARM interworking (for debugging only)"),
   cl::init(true));
+
+// @LOCALMOD-START for debugging TLS models
+static cl::opt<bool> ARMStaticTLS("arm_static_tls",
+                                  cl::desc("Force a static TLS model for ARM"),
+                                  cl::init(false));
+// @LOCALMOD-END
 
 void ARMTargetLowering::addTypeForNEON(EVT VT, EVT PromotedLdStVT,
                                        EVT PromotedBitwiseVT) {
@@ -535,8 +549,13 @@ ARMTargetLowering::ARMTargetLowering(TargetMachine &TM)
   setOperationAction(ISD::GLOBAL_OFFSET_TABLE, MVT::i32, Custom);
   setOperationAction(ISD::GlobalTLSAddress, MVT::i32, Custom);
   setOperationAction(ISD::BlockAddress, MVT::i32, Custom);
-
+  // @LOCALMOD-START
+  if (!Subtarget->useInlineJumpTables())
+    setOperationAction(ISD::JumpTable,     MVT::i32,   Custom);
+  // @LOCALMOD-END
+  
   setOperationAction(ISD::TRAP, MVT::Other, Legal);
+
 
   // Use the default implementation.
   setOperationAction(ISD::VASTART,            MVT::Other, Custom);
@@ -635,8 +654,12 @@ ARMTargetLowering::ARMTargetLowering(TargetMachine &TM)
   setOperationAction(ISD::BR_CC,     MVT::i32,   Custom);
   setOperationAction(ISD::BR_CC,     MVT::f32,   Custom);
   setOperationAction(ISD::BR_CC,     MVT::f64,   Custom);
-  setOperationAction(ISD::BR_JT,     MVT::Other, Custom);
-
+  // @LOCALMOD-START
+  //setOperationAction(ISD::BR_JT,     MVT::Other, Custom);
+  setOperationAction(ISD::BR_JT,     MVT::Other,
+                     Subtarget->useInlineJumpTables() ? Custom : Expand);
+  // @LOCALMOD-END
+  
   // We don't support sin/cos/fmod/copysign/pow
   setOperationAction(ISD::FSIN,      MVT::f64, Expand);
   setOperationAction(ISD::FSIN,      MVT::f32, Expand);
@@ -730,6 +753,7 @@ const char *ARMTargetLowering::getTargetNodeName(unsigned Opcode) const {
   default: return 0;
   case ARMISD::Wrapper:       return "ARMISD::Wrapper";
   case ARMISD::WrapperJT:     return "ARMISD::WrapperJT";
+  case ARMISD::WrapperJT2:    return "ARMISD::WrapperJT2"; // @LOCALMOD
   case ARMISD::CALL:          return "ARMISD::CALL";
   case ARMISD::CALL_PRED:     return "ARMISD::CALL_PRED";
   case ARMISD::CALL_NOLINK:   return "ARMISD::CALL_NOLINK";
@@ -1738,7 +1762,14 @@ static SDValue LowerConstantPool(SDValue Op, SelectionDAG &DAG) {
 }
 
 unsigned ARMTargetLowering::getJumpTableEncoding() const {
-  return MachineJumpTableInfo::EK_Inline;
+  // @LOCALMOD-BEGIN
+  if (Subtarget->useInlineJumpTables()) { 
+    return MachineJumpTableInfo::EK_Inline;
+  } else {
+    // TODO: Find a better way to call the super-class.
+    return TargetLowering::getJumpTableEncoding();
+  }
+  // @LOCALMOD-END
 }
 
 SDValue ARMTargetLowering::LowerBlockAddress(SDValue Op,
@@ -1770,6 +1801,19 @@ SDValue ARMTargetLowering::LowerBlockAddress(SDValue Op,
   SDValue PICLabel = DAG.getConstant(ARMPCLabelIndex, MVT::i32);
   return DAG.getNode(ARMISD::PIC_ADD, DL, PtrVT, Result, PICLabel);
 }
+
+// @LOCALMOD-START
+// more conventional jumptable implementation
+SDValue ARMTargetLowering::LowerJumpTable(SDValue Op, SelectionDAG &DAG) const {
+  assert(!Subtarget->useInlineJumpTables() &&
+         "inline jump tables not custom lowered");
+  const DebugLoc dl = Op.getDebugLoc();
+  EVT PTy = getPointerTy();
+  JumpTableSDNode *JT = cast<JumpTableSDNode>(Op);
+  SDValue JTI = DAG.getTargetJumpTable(JT->getIndex(), PTy);
+  return DAG.getNode(ARMISD::WrapperJT2, dl, MVT::i32, JTI);
+}
+// @LOCALMOD-END
 
 // Lower ISD::GlobalTLSAddress using the "general dynamic" model
 SDValue
@@ -1813,7 +1857,8 @@ ARMTargetLowering::LowerToTLSGeneralDynamicModel(GlobalAddressSDNode *GA,
 // "local exec" model.
 SDValue
 ARMTargetLowering::LowerToTLSExecModels(GlobalAddressSDNode *GA,
-                                        SelectionDAG &DAG) const {
+                                        SelectionDAG &DAG,
+                                        bool InitialExec) const { // @LOCALMOD
   const GlobalValue *GV = GA->getGlobal();
   DebugLoc dl = GA->getDebugLoc();
   SDValue Offset;
@@ -1822,7 +1867,7 @@ ARMTargetLowering::LowerToTLSExecModels(GlobalAddressSDNode *GA,
   // Get the Thread Pointer
   SDValue ThreadPointer = DAG.getNode(ARMISD::THREAD_POINTER, dl, PtrVT);
 
-  if (GV->isDeclaration()) {
+  if (InitialExec) {  // @LOCALMOD
     MachineFunction &MF = DAG.getMachineFunction();
     ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
     unsigned ARMPCLabelIndex = AFI->createConstPoolEntryUId();
@@ -1867,10 +1912,20 @@ ARMTargetLowering::LowerGlobalTLSAddress(SDValue Op, SelectionDAG &DAG) const {
   GlobalAddressSDNode *GA = cast<GlobalAddressSDNode>(Op);
   // If the relocation model is PIC, use the "General Dynamic" TLS Model,
   // otherwise use the "Local Exec" TLS Model
-  if (getTargetMachine().getRelocationModel() == Reloc::PIC_)
-    return LowerToTLSGeneralDynamicModel(GA, DAG);
-  else
-    return LowerToTLSExecModels(GA, DAG);
+  // @LOCALMOD-BEGIN NaCl is testing with Initial Exec for now.
+  // This supports DSOs that are known at startup, but not those
+  // that may or may not be loaded through dlopen.
+  // Must wait for ARM Glibc port.
+  if (getTargetMachine().getRelocationModel() == Reloc::PIC_) {
+    if (ARMStaticTLS)
+      return LowerToTLSExecModels(GA, DAG, true);
+    else
+      return LowerToTLSGeneralDynamicModel(GA, DAG);
+  } else {
+    const GlobalValue *GV = GA->getGlobal();
+    return LowerToTLSExecModels(GA, DAG, GV->isDeclaration());
+  } //@LOCALMOD-END
+
 }
 
 SDValue ARMTargetLowering::LowerGlobalAddressELF(SDValue Op,
@@ -3909,7 +3964,8 @@ SDValue ARMTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   default: llvm_unreachable("Don't know how to custom lower this!");
   case ISD::ConstantPool:  return LowerConstantPool(Op, DAG);
   case ISD::BlockAddress:  return LowerBlockAddress(Op, DAG);
-  case ISD::GlobalAddress:
+  case ISD::JumpTable:    return LowerJumpTable(Op, DAG); // @LOCALMOD
+   case ISD::GlobalAddress:
     return Subtarget->isTargetDarwin() ? LowerGlobalAddressDarwin(Op, DAG) :
       LowerGlobalAddressELF(Op, DAG);
   case ISD::GlobalTLSAddress:   return LowerGlobalTLSAddress(Op, DAG);
@@ -5477,6 +5533,13 @@ ARMTargetLowering::getPreIndexedAddressParts(SDNode *N, SDValue &Base,
   if (Subtarget->isThumb1Only())
     return false;
 
+  // @LOCAMOD-START
+  // NOTE: THIS IS A LITTLE DRASTIC
+  if (FlagSfiStore && N->getOpcode() == ISD::STORE) {
+    return false;
+  }
+  // @LOCAMOD-END
+
   EVT VT;
   SDValue Ptr;
   bool isSEXTLoad = false;
@@ -5515,7 +5578,12 @@ bool ARMTargetLowering::getPostIndexedAddressParts(SDNode *N, SDNode *Op,
                                                    SelectionDAG &DAG) const {
   if (Subtarget->isThumb1Only())
     return false;
-
+   // @LOCALMOD-START
+  // THIS IS A LITTLE DRASTIC
+  if (FlagSfiStore && N->getOpcode() == ISD::STORE) {
+    return false;
+  }
+  // @LOCALMOD-END
   EVT VT;
   SDValue Ptr;
   bool isSEXTLoad = false;

@@ -36,6 +36,7 @@
 #include "llvm/ADT/STLExtras.h"
 using namespace llvm;
 
+
 static cl::opt<bool>
 EnableARM3Addr("enable-arm-3-addr-conv", cl::Hidden,
                cl::desc("Enable ARM 2-addr to 3-addr conv"));
@@ -279,7 +280,7 @@ ARMBaseInstrInfo::emitPopInst(MachineBasicBlock &MBB,
     unsigned Reg = CSI[i-1].getReg();
     if (!(Func)(Reg, Subtarget.isTargetDarwin())) continue;
 
-    if (Reg == ARM::LR && !isVarArg) {
+    if (Reg == ARM::LR && !isVarArg && false /*!IsNaCl*/) { // @LOCALMOD
       Reg = ARM::PC;
       unsigned Opc = AFI->isThumbFunction() ? ARM::t2LDMIA_RET : ARM::LDMIA_RET;
       (*MIB).setDesc(get(Opc));
@@ -581,6 +582,9 @@ static unsigned getNumJTEntries(const std::vector<MachineJumpTableEntry> &JT,
   return JT[JTI].MBBs.size();
 }
 
+// @LOCALMOD-START
+// @NOTE: this needs to be fixe to make the constand island estimates better
+// @LOCALMOD-END
 /// GetInstSize - Return the size of the specified MachineInstr.
 ///
 unsigned ARMBaseInstrInfo::GetInstSizeInBytes(const MachineInstr *MI) const {
@@ -688,7 +692,8 @@ void ARMBaseInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
   bool GPRSrc  = ARM::GPRRegClass.contains(SrcReg);
 
   if (GPRDest && GPRSrc) {
-    AddDefaultCC(AddDefaultPred(BuildMI(MBB, I, DL, get(ARM::MOVr), DestReg)
+    unsigned Opc = ARM::MOVr;
+    AddDefaultCC(AddDefaultPred(BuildMI(MBB, I, DL, get(Opc), DestReg)
                                   .addReg(SrcReg, getKillRegState(KillSrc))));
     return;
   }
@@ -1357,7 +1362,9 @@ void llvm::emitARMRegPlusImmediate(MachineBasicBlock &MBB,
     assert(ARM_AM::getSOImmVal(ThisVal) != -1 && "Bit extraction didn't work?");
 
     // Build the new ADD / SUB.
-    unsigned Opc = isSub ? ARM::SUBri : ARM::ADDri;
+    unsigned Opc;
+    Opc = isSub ? ARM::SUBri : ARM::ADDri;
+
     BuildMI(MBB, MBBI, dl, TII.get(Opc), DestReg)
       .addReg(BaseReg, RegState::Kill).addImm(ThisVal)
       .addImm((unsigned)Pred).addReg(PredReg).addReg(0);

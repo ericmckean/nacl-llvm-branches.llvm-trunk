@@ -258,6 +258,11 @@ namespace llvm {
     virtual bool
     isBlockOnlyReachableByFallthrough(const MachineBasicBlock *MBB) const;
 
+    // @LOCALMOD-START
+    /// UseReadOnlyJumpTables() - true if JumpTableInfo must be in rodata.
+    virtual bool UseReadOnlyJumpTables() const { return false; }
+    // @LOCALMOD-END
+
     //===------------------------------------------------------------------===//
     // Symbol Lowering Routines.
     //===------------------------------------------------------------------===//
@@ -357,6 +362,15 @@ namespace llvm {
 
     /// GetSizeOfEncodedValue - Return the size of the encoding in bytes.
     unsigned GetSizeOfEncodedValue(unsigned Encoding) const;
+
+    /// @LOCALMOD-START
+    /// GetTargetLabelAlign - Get optional alignment for TargetOpcode
+    /// labels E.g., EH_LABEL.
+    virtual unsigned GetTargetLabelAlign(const MachineInstr *MI) const {
+      return 0;
+    }
+    /// @LOCALMOD-END
+
 
     /// EmitReference - Emit a reference to a label with a specified encoding.
     ///
