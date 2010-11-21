@@ -40,6 +40,7 @@
 #include "llvm/Analysis/MemoryBuiltins.h"
 #include "llvm/Analysis/MemoryDependenceAnalysis.h"
 #include "llvm/Analysis/PHITransAddr.h"
+#include "llvm/Support/Allocator.h"
 #include "llvm/Support/CFG.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
@@ -51,6 +52,7 @@
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/SSAUpdater.h"
+#include <list>
 using namespace llvm;
 
 STATISTIC(NumGVNInstr,  "Number of instructions deleted");
@@ -674,7 +676,52 @@ namespace {
     const TargetData* TD;
 
     ValueTable VN;
-    DenseMap<BasicBlock*, ValueNumberScope*> localAvail;
+    
+    /// NumberTable - A mapping from value numers to lists of Value*'s that
+    /// have that value number.  Use lookupNumber to query it.
+    DenseMap<uint32_t, std::pair<Value*, void*> > NumberTable;
+    BumpPtrAllocator TableAllocator;
+    
+    /// insert_table - Push a new Value to the NumberTable onto the list for
+    /// its value number.
+    void insert_table(uint32_t N, Value *V) {
+      std::pair<Value*, void*>& Curr = NumberTable[N];
+      if (!Curr.first) {
+        Curr.first = V;
+        return;
+      }
+      
+      std::pair<Value*, void*>* Node =
+        TableAllocator.Allocate<std::pair<Value*, void*> >();
+      Node->first = V;
+      Node->second = Curr.second;
+      Curr.second = Node;
+    }
+    
+    /// erase_table - Scan the list of values corresponding to a given value
+    /// number, and remove the given value if encountered.
+    void erase_table(uint32_t N, Value *V) {
+      std::pair<Value*, void*>* Prev = 0;
+      std::pair<Value*, void*>* Curr = &NumberTable[N];
+
+      while (Curr->first != V) {
+        Prev = Curr;
+        Curr = static_cast<std::pair<Value*, void*>*>(Curr->second);
+      }
+      
+      if (Prev) {
+        Prev->second = Curr->second;
+      } else {
+        if (!Curr->second) {
+          Curr->first = 0;
+        } else {
+          std::pair<Value*, void*>* Next =
+            static_cast<std::pair<Value*, void*>*>(Curr->second);
+          Curr->first = Next->first;
+          Curr->second = Next->second;
+        }
+      }
+    }
 
     // List of critical edges to be split between iterations.
     SmallVector<std::pair<TerminatorInst*, unsigned>, 4> toSplit;
@@ -701,7 +748,6 @@ namespace {
     bool processBlock(BasicBlock *BB);
     void dump(DenseMap<uint32_t, Value*>& d);
     bool iterateOnFunction(Function &F);
-    Value *CollapsePhi(PHINode* p);
     bool performPRE(Function& F);
     Value *lookupNumber(BasicBlock *BB, uint32_t num);
     void cleanupGlobalSets();
@@ -731,33 +777,6 @@ void GVN::dump(DenseMap<uint32_t, Value*>& d) {
       I->second->dump();
   }
   errs() << "}\n";
-}
-
-static bool isSafeReplacement(PHINode* p, Instruction *inst) {
-  if (!isa<PHINode>(inst))
-    return true;
-
-  for (Instruction::use_iterator UI = p->use_begin(), E = p->use_end();
-       UI != E; ++UI)
-    if (PHINode* use_phi = dyn_cast<PHINode>(*UI))
-      if (use_phi->getParent() == inst->getParent())
-        return false;
-
-  return true;
-}
-
-Value *GVN::CollapsePhi(PHINode *PN) {
-  Value *ConstVal = PN->hasConstantValue(DT);
-  if (!ConstVal) return 0;
-
-  Instruction *Inst = dyn_cast<Instruction>(ConstVal);
-  if (!Inst)
-    return ConstVal;
-
-  if (DT->dominates(Inst, PN))
-    if (isSafeReplacement(PN, Inst))
-      return Inst;
-  return 0;
 }
 
 /// IsValueFullyAvailableInBlock - Return true if we can prove that the value
@@ -1874,17 +1893,31 @@ bool GVN::processLoad(LoadInst *L, SmallVectorImpl<Instruction*> &toErase) {
   return false;
 }
 
+// lookupNumber - In order to find a leader for a given value number at a 
+// specific basic block, we first obtain the list of all Values for that number,
+// and then scan the list to find one whose block dominates the block in 
+// question.  This is fast because dominator tree queries consist of only
+// a few comparisons of DFS numbers.
 Value *GVN::lookupNumber(BasicBlock *BB, uint32_t num) {
-  DenseMap<BasicBlock*, ValueNumberScope*>::iterator I = localAvail.find(BB);
-  if (I == localAvail.end())
-    return 0;
-
-  ValueNumberScope *Locals = I->second;
-  while (Locals) {
-    DenseMap<uint32_t, Value*>::iterator I = Locals->table.find(num);
-    if (I != Locals->table.end())
-      return I->second;
-    Locals = Locals->parent;
+  std::pair<Value*, void*> Vals = NumberTable[num];
+  if (!Vals.first) return 0;
+  Instruction *Inst = dyn_cast<Instruction>(Vals.first);
+  if (!Inst) return Vals.first;
+  BasicBlock *Parent = Inst->getParent();
+  if (DT->dominates(Parent, BB))
+    return Inst;
+  
+  std::pair<Value*, void*>* Next =
+    static_cast<std::pair<Value*, void*>*>(Vals.second);
+  while (Next) {
+    Instruction *CurrInst = dyn_cast<Instruction>(Next->first);
+    if (!CurrInst) return Next->first;
+    
+    BasicBlock *Parent = CurrInst->getParent();
+    if (DT->dominates(Parent, BB))
+      return CurrInst;
+    
+    Next = static_cast<std::pair<Value*, void*>*>(Next->second);
   }
 
   return 0;
@@ -1903,7 +1936,7 @@ bool GVN::processInstruction(Instruction *I,
   // to value numbering it.  Value numbering often exposes redundancies, for
   // example if it determines that %y is equal to %x then the instruction
   // "%z = and i32 %x, %y" becomes "%z = and i32 %x, %x" which we now simplify.
-  if (Value *V = SimplifyInstruction(I, TD)) {
+  if (Value *V = SimplifyInstruction(I, TD, DT)) {
     I->replaceAllUsesWith(V);
     if (MD && V->getType()->isPointerTy())
       MD->invalidateCachedPointerInfo(V);
@@ -1917,7 +1950,7 @@ bool GVN::processInstruction(Instruction *I,
 
     if (!Changed) {
       unsigned Num = VN.lookup_or_add(LI);
-      localAvail[I->getParent()]->table.insert(std::make_pair(Num, LI));
+      insert_table(Num, LI);
     }
 
     return Changed;
@@ -1926,54 +1959,21 @@ bool GVN::processInstruction(Instruction *I,
   uint32_t NextNum = VN.getNextUnusedValueNumber();
   unsigned Num = VN.lookup_or_add(I);
 
-  if (BranchInst *BI = dyn_cast<BranchInst>(I)) {
-    localAvail[I->getParent()]->table.insert(std::make_pair(Num, I));
-
-    if (!BI->isConditional() || isa<Constant>(BI->getCondition()))
-      return false;
-
-    Value *BranchCond = BI->getCondition();
-    uint32_t CondVN = VN.lookup_or_add(BranchCond);
-
-    BasicBlock *TrueSucc = BI->getSuccessor(0);
-    BasicBlock *FalseSucc = BI->getSuccessor(1);
-
-    if (TrueSucc->getSinglePredecessor())
-      localAvail[TrueSucc]->table[CondVN] =
-        ConstantInt::getTrue(TrueSucc->getContext());
-    if (FalseSucc->getSinglePredecessor())
-      localAvail[FalseSucc]->table[CondVN] =
-        ConstantInt::getFalse(TrueSucc->getContext());
-
-    return false;
-
   // Allocations are always uniquely numbered, so we can save time and memory
   // by fast failing them.
-  } else if (isa<AllocaInst>(I) || isa<TerminatorInst>(I)) {
-    localAvail[I->getParent()]->table.insert(std::make_pair(Num, I));
+  if (isa<AllocaInst>(I) || isa<TerminatorInst>(I)) {
+    insert_table(Num, I);
     return false;
   }
 
-  // Collapse PHI nodes
-  if (PHINode* p = dyn_cast<PHINode>(I)) {
-    Value *constVal = CollapsePhi(p);
-
-    if (constVal) {
-      p->replaceAllUsesWith(constVal);
-      if (MD && constVal->getType()->isPointerTy())
-        MD->invalidateCachedPointerInfo(constVal);
-      VN.erase(p);
-
-      toErase.push_back(p);
-    } else {
-      localAvail[I->getParent()]->table.insert(std::make_pair(Num, I));
-    }
-
+  if (isa<PHINode>(I)) {
+    insert_table(Num, I);
+  
   // If the number we were assigned was a brand new VN, then we don't
   // need to do a lookup to see if the number already exists
   // somewhere in the domtree: it can't!
   } else if (Num == NextNum) {
-    localAvail[I->getParent()]->table.insert(std::make_pair(Num, I));
+    insert_table(Num, I);
 
   // Perform fast-path value-number based elimination of values inherited from
   // dominators.
@@ -1987,7 +1987,7 @@ bool GVN::processInstruction(Instruction *I,
     return true;
 
   } else {
-    localAvail[I->getParent()]->table.insert(std::make_pair(Num, I));
+    insert_table(Num, I);
   }
 
   return false;
@@ -2136,20 +2136,19 @@ bool GVN::performPRE(Function &F) {
         if (P == CurrentBlock) {
           NumWithout = 2;
           break;
-        } else if (!localAvail.count(P))  {
+        } else if (!DT->dominates(&F.getEntryBlock(), P))  {
           NumWithout = 2;
           break;
         }
 
-        DenseMap<uint32_t, Value*>::iterator predV =
-                                            localAvail[P]->table.find(ValNo);
-        if (predV == localAvail[P]->table.end()) {
+        Value* predV = lookupNumber(P, ValNo);
+        if (predV == 0) {
           PREPred = P;
           ++NumWithout;
-        } else if (predV->second == CurInst) {
+        } else if (predV == CurInst) {
           NumWithout = 2;
         } else {
-          predMap[P] = predV->second;
+          predMap[P] = predV;
           ++NumWith;
         }
       }
@@ -2208,7 +2207,7 @@ bool GVN::performPRE(Function &F) {
       ++NumGVNPRE;
 
       // Update the availability map to include the new instruction.
-      localAvail[PREPred]->table.insert(std::make_pair(ValNo, PREInstr));
+      insert_table(ValNo, PREInstr);
 
       // Create a PHI to make the value available in this block.
       PHINode* Phi = PHINode::Create(CurInst->getType(),
@@ -2221,12 +2220,13 @@ bool GVN::performPRE(Function &F) {
       }
 
       VN.add(Phi, ValNo);
-      localAvail[CurrentBlock]->table[ValNo] = Phi;
+      insert_table(ValNo, Phi);
 
       CurInst->replaceAllUsesWith(Phi);
       if (MD && Phi->getType()->isPointerTy())
         MD->invalidateCachedPointerInfo(Phi);
       VN.erase(CurInst);
+      erase_table(ValNo, CurInst);
 
       DEBUG(dbgs() << "GVN PRE removed: " << *CurInst << '\n');
       if (MD) MD->removeInstruction(CurInst);
@@ -2258,16 +2258,7 @@ bool GVN::splitCriticalEdges() {
 /// iterateOnFunction - Executes one iteration of GVN
 bool GVN::iterateOnFunction(Function &F) {
   cleanupGlobalSets();
-
-  for (df_iterator<DomTreeNode*> DI = df_begin(DT->getRootNode()),
-       DE = df_end(DT->getRootNode()); DI != DE; ++DI) {
-    if (DI->getIDom())
-      localAvail[DI->getBlock()] =
-                   new ValueNumberScope(localAvail[DI->getIDom()->getBlock()]);
-    else
-      localAvail[DI->getBlock()] = new ValueNumberScope(0);
-  }
-
+  
   // Top-down walk of the dominator tree
   bool Changed = false;
 #if 0
@@ -2287,11 +2278,8 @@ bool GVN::iterateOnFunction(Function &F) {
 
 void GVN::cleanupGlobalSets() {
   VN.clear();
-
-  for (DenseMap<BasicBlock*, ValueNumberScope*>::iterator
-       I = localAvail.begin(), E = localAvail.end(); I != E; ++I)
-    delete I->second;
-  localAvail.clear();
+  NumberTable.clear();
+  TableAllocator.Reset();
 }
 
 /// verifyRemoved - Verify that the specified instruction does not occur in our
@@ -2301,17 +2289,14 @@ void GVN::verifyRemoved(const Instruction *Inst) const {
 
   // Walk through the value number scope to make sure the instruction isn't
   // ferreted away in it.
-  for (DenseMap<BasicBlock*, ValueNumberScope*>::const_iterator
-         I = localAvail.begin(), E = localAvail.end(); I != E; ++I) {
-    const ValueNumberScope *VNS = I->second;
-
-    while (VNS) {
-      for (DenseMap<uint32_t, Value*>::const_iterator
-             II = VNS->table.begin(), IE = VNS->table.end(); II != IE; ++II) {
-        assert(II->second != Inst && "Inst still in value numbering scope!");
-      }
-
-      VNS = VNS->parent;
+  for (DenseMap<uint32_t, std::pair<Value*, void*> >::const_iterator
+       I = NumberTable.begin(), E = NumberTable.end(); I != E; ++I) {
+    std::pair<Value*, void*> const * Node = &I->second;
+    assert(Node->first != Inst && "Inst still in value numbering scope!");
+    
+    while (Node->second) {
+      Node = static_cast<std::pair<Value*, void*>*>(Node->second);
+      assert(Node->first != Inst && "Inst still in value numbering scope!");
     }
   }
 }

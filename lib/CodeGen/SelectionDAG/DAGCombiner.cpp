@@ -6658,6 +6658,11 @@ bool DAGCombiner::SimplifySelectOps(SDNode *TheSelect, SDValue LHS,
         LLD->isVolatile() || RLD->isVolatile() ||
         // If this is an EXTLOAD, the VT's must match.
         LLD->getMemoryVT() != RLD->getMemoryVT() ||
+        // If this is an EXTLOAD, the kind of extension must match.
+        (LLD->getExtensionType() != RLD->getExtensionType() &&
+         // The only exception is if one of the extensions is anyext.
+         LLD->getExtensionType() != ISD::EXTLOAD &&
+         RLD->getExtensionType() != ISD::EXTLOAD) ||
         // FIXME: this discards src value information.  This is
         // over-conservative. It would be beneficial to be able to remember
         // both potential memory locations.  Since we are discarding
@@ -6707,7 +6712,8 @@ bool DAGCombiner::SimplifySelectOps(SDNode *TheSelect, SDValue LHS,
                          LLD->isVolatile(), LLD->isNonTemporal(),
                          LLD->getAlignment());
     } else {
-      Load = DAG.getExtLoad(LLD->getExtensionType(),
+      Load = DAG.getExtLoad(LLD->getExtensionType() == ISD::EXTLOAD ?
+                            RLD->getExtensionType() : LLD->getExtensionType(),
                             TheSelect->getValueType(0),
                             TheSelect->getDebugLoc(),
                             // FIXME: Discards pointer info.

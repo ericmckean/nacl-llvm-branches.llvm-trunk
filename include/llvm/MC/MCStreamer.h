@@ -28,6 +28,7 @@ namespace llvm {
   class MCSymbol;
   class StringRef;
   class TargetAsmBackend;
+  class TargetLoweringObjectFile;
   class Twine;
   class raw_ostream;
   class formatted_raw_ostream;
@@ -342,7 +343,14 @@ namespace llvm {
     /// EmitDwarfFileDirective - Associate a filename with a specified logical
     /// file number.  This implements the DWARF2 '.file 4 "foo.c"' assembler
     /// directive.
-    virtual void EmitDwarfFileDirective(unsigned FileNo,StringRef Filename) = 0;
+    virtual bool EmitDwarfFileDirective(unsigned FileNo,StringRef Filename);
+
+    /// EmitDwarfLocDirective - This implements the DWARF2
+    // '.loc fileno lineno ...' assembler directive.
+    virtual void EmitDwarfLocDirective(unsigned FileNo, unsigned Line,
+                                       unsigned Column, unsigned Flags,
+                                       unsigned Isa,
+                                       unsigned Discriminator);
 
     /// EmitInstruction - Emit the given @p Instruction into the current
     /// section.
@@ -381,6 +389,14 @@ namespace llvm {
                                 MCCodeEmitter *CE = 0,
                                 bool ShowInst = false);
 
+  MCStreamer *createAsmStreamerNoLoc(MCContext &Ctx, formatted_raw_ostream &OS,
+                                     bool isLittleEndian, bool isVerboseAsm,
+                                     const TargetLoweringObjectFile *TLOF,
+                                     int PointerSize,
+                                     MCInstPrinter *InstPrint = 0,
+                                     MCCodeEmitter *CE = 0,
+                                     bool ShowInst = false);
+
   /// createMachOStreamer - Create a machine code streamer which will generate
   /// Mach-O format object files.
   ///
@@ -409,6 +425,13 @@ namespace llvm {
   ///
   /// The new streamer takes ownership of the \arg Child.
   MCStreamer *createLoggingStreamer(MCStreamer *Child, raw_ostream &OS);
+
+  /// createPureStreamer - Create a machine code streamer which will generate
+  /// "pure" MC object files, for use with MC-JIT and testing tools.
+  ///
+  /// Takes ownership of \arg TAB and \arg CE.
+  MCStreamer *createPureStreamer(MCContext &Ctx, TargetAsmBackend &TAB,
+                                 raw_ostream &OS, MCCodeEmitter *CE);
 
 } // end namespace llvm
 

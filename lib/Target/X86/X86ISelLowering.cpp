@@ -1104,16 +1104,6 @@ unsigned X86TargetLowering::getJumpTableEncoding() const {
   return TargetLowering::getJumpTableEncoding();
 }
 
-/// getPICBaseSymbol - Return the X86-32 PIC base.
-MCSymbol *
-X86TargetLowering::getPICBaseSymbol(const MachineFunction *MF,
-                                    MCContext &Ctx) const {
-  const MCAsmInfo &MAI = *getTargetMachine().getMCAsmInfo();
-  return Ctx.GetOrCreateSymbol(Twine(MAI.getPrivateGlobalPrefix())+
-                               Twine(MF->getFunctionNumber())+"$pb");
-}
-
-
 const MCExpr *
 X86TargetLowering::LowerCustomJumpTableEntry(const MachineJumpTableInfo *MJTI,
                                              const MachineBasicBlock *MBB,
@@ -1148,7 +1138,7 @@ getPICJumpTableRelocBaseExpr(const MachineFunction *MF, unsigned JTI,
     return TargetLowering::getPICJumpTableRelocBaseExpr(MF, JTI, Ctx);
 
   // Otherwise, the reference is relative to the PIC base.
-  return MCSymbolRefExpr::Create(getPICBaseSymbol(MF, Ctx), Ctx);
+  return MCSymbolRefExpr::Create(MF->getPICBaseSymbol(), Ctx);
 }
 
 /// getFunctionAlignment - Return the Log2 alignment of this function.
@@ -1184,7 +1174,9 @@ X86TargetLowering::findRepresentativeClass(EVT VT) const{
 unsigned
 X86TargetLowering::getRegPressureLimit(const TargetRegisterClass *RC,
                                        MachineFunction &MF) const {
-  unsigned FPDiff = RegInfo->hasFP(MF) ? 1 : 0;
+  const TargetFrameInfo *TFI = MF.getTarget().getFrameInfo();
+
+  unsigned FPDiff = TFI->hasFP(MF) ? 1 : 0;
   switch (RC->getID()) {
   default:
     return 0;
@@ -5918,12 +5910,11 @@ SDValue X86TargetLowering::LowerJumpTable(SDValue Op, SelectionDAG &DAG) const {
   Result = DAG.getNode(WrapperKind, DL, getPointerTy(), Result);
 
   // With PIC, the address is actually $g + Offset.
-  if (OpFlag) {
+  if (OpFlag)
     Result = DAG.getNode(ISD::ADD, DL, getPointerTy(),
                          DAG.getNode(X86ISD::GlobalBaseReg,
                                      DebugLoc(), getPointerTy()),
                          Result);
-  }
 
   return Result;
 }
@@ -9762,9 +9753,12 @@ X86TargetLowering::EmitVAARG64WithCustomInserter(
   
   // @LOCALMOD-BEGIN
   if (Subtarget->isTargetNaCl()) {
-    // Truncate the address to 32-bits.
+    // Truncate the address to 32-bits
+    MachineBasicBlock::iterator I = endMBB->begin();
+    ++I;
     MachineInstr *CopyMI =
-      BuildMI(endMBB, DL, TII->get(TargetOpcode::COPY), RealDestReg)
+      BuildMI(*endMBB, I, DL,
+              TII->get(TargetOpcode::COPY), RealDestReg)
         .addReg(DestReg);
     CopyMI->getOperand(1).setSubReg(X86::sub_32bit);
   }
@@ -11480,7 +11474,7 @@ bool X86TargetLowering::ExpandInlineAsm(CallInst *CI) const {
 
   // TODO: should remove alternatives from the asmstring: "foo {a|b}" -> "foo a"
   SmallVector<StringRef, 4> AsmPieces;
-  SplitString(AsmStr, AsmPieces, "\n");  // ; as separator?
+  SplitString(AsmStr, AsmPieces, ";\n");
 
   switch (AsmPieces.size()) {
   default: return false;
@@ -11521,6 +11515,35 @@ bool X86TargetLowering::ExpandInlineAsm(CallInst *CI) const {
     }
     break;
   case 3:
+    if (CI->getType()->isIntegerTy(32) &&
+        IA->getConstraintString().compare(0, 5, "=r,0,") == 0) {
+      SmallVector<StringRef, 4> Words;
+      SplitString(AsmPieces[0], Words, " \t,");
+      if (Words.size() == 3 && Words[0] == "rorw" && Words[1] == "$$8" &&
+          Words[2] == "${0:w}") {
+        Words.clear();
+        SplitString(AsmPieces[1], Words, " \t,");
+        if (Words.size() == 3 && Words[0] == "rorl" && Words[1] == "$$16" &&
+            Words[2] == "$0") {
+          Words.clear();
+          SplitString(AsmPieces[2], Words, " \t,");
+          if (Words.size() == 3 && Words[0] == "rorw" && Words[1] == "$$8" &&
+              Words[2] == "${0:w}") {
+            AsmPieces.clear();
+            const std::string &Constraints = IA->getConstraintString();
+            SplitString(StringRef(Constraints).substr(5), AsmPieces, ",");
+            std::sort(AsmPieces.begin(), AsmPieces.end());
+            if (AsmPieces.size() == 4 &&
+                AsmPieces[0] == "~{cc}" &&
+                AsmPieces[1] == "~{dirflag}" &&
+                AsmPieces[2] == "~{flags}" &&
+                AsmPieces[3] == "~{fpsr}") {
+              return LowerToBSwap(CI);
+            }
+          }
+        }
+      }
+    }
     if (CI->getType()->isIntegerTy(64) &&
         Constraints.size() >= 2 &&
         Constraints[0].Codes.size() == 1 && Constraints[0].Codes[0] == "A" &&

@@ -28,6 +28,9 @@ class JITCodeEmitter;
 class formatted_raw_ostream;
 class MCCodeEmitter;
 class TargetAsmBackend;
+class MachineInstr;
+class AsmPrinter;
+class MCInst;
 
 MCCodeEmitter *createARMMCCodeEmitter(const Target &,
                                       TargetMachine &TM,
@@ -55,6 +58,9 @@ FunctionPass *createARMNaClRewritePass();
 
 extern Target TheARMTarget, TheThumbTarget;
 
+void LowerARMMachineInstrToMCInst(const MachineInstr *MI, MCInst &OutMI,
+                                  AsmPrinter &AP);
+  
 } // end namespace llvm;
 
 #endif

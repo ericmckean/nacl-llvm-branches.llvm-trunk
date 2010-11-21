@@ -41,13 +41,12 @@ static MCAsmInfo *createMCAsmInfo(const Target &T, StringRef TT) {
 // This is duplicated code. Refactor this.
 static MCStreamer *createMCStreamer(const Target &T, const std::string &TT,
                                     MCContext &Ctx, TargetAsmBackend &TAB,
-                                    raw_ostream &_OS,
-                                    MCCodeEmitter *_Emitter,
+                                    raw_ostream &OS,
+                                    MCCodeEmitter *Emitter,
                                     bool RelaxAll) {
-  Triple TheTriple(TT);
-  switch (TheTriple.getOS()) {
+  switch (Triple(TT).getOS()) {
   case Triple::Darwin:
-    return createMachOStreamer(Ctx, TAB, _OS, _Emitter, RelaxAll);
+    return createMachOStreamer(Ctx, TAB, OS, Emitter, RelaxAll);
   case Triple::MinGW32:
   case Triple::MinGW64:
   case Triple::Cygwin:
@@ -55,7 +54,7 @@ static MCStreamer *createMCStreamer(const Target &T, const std::string &TT,
     llvm_unreachable("ARM does not support Windows COFF format");
     return NULL;
   default:
-    return createELFStreamer(Ctx, TAB, _OS, _Emitter, RelaxAll);
+    return createELFStreamer(Ctx, TAB, OS, Emitter, RelaxAll);
   }
 }
 
@@ -69,22 +68,16 @@ extern "C" void LLVMInitializeARMTarget() {
   RegisterAsmInfoFn B(TheThumbTarget, createMCAsmInfo);
 
   // Register the MC Code Emitter
-  TargetRegistry::RegisterCodeEmitter(TheARMTarget,
-                                      createARMMCCodeEmitter);
-  TargetRegistry::RegisterCodeEmitter(TheThumbTarget,
-                                      createARMMCCodeEmitter);
+  TargetRegistry::RegisterCodeEmitter(TheARMTarget, createARMMCCodeEmitter);
+  TargetRegistry::RegisterCodeEmitter(TheThumbTarget, createARMMCCodeEmitter);
 
   // Register the asm backend.
-  TargetRegistry::RegisterAsmBackend(TheARMTarget,
-                                     createARMAsmBackend);
-  TargetRegistry::RegisterAsmBackend(TheThumbTarget,
-                                     createARMAsmBackend);
+  TargetRegistry::RegisterAsmBackend(TheARMTarget, createARMAsmBackend);
+  TargetRegistry::RegisterAsmBackend(TheThumbTarget, createARMAsmBackend);
 
   // Register the object streamer.
-  TargetRegistry::RegisterObjectStreamer(TheARMTarget,
-                                         createMCStreamer);
-  TargetRegistry::RegisterObjectStreamer(TheThumbTarget,
-                                         createMCStreamer);
+  TargetRegistry::RegisterObjectStreamer(TheARMTarget, createMCStreamer);
+  TargetRegistry::RegisterObjectStreamer(TheThumbTarget, createMCStreamer);
 
 }
 
@@ -96,7 +89,6 @@ ARMBaseTargetMachine::ARMBaseTargetMachine(const Target &T,
                                            bool isThumb)
   : LLVMTargetMachine(T, TT),
     Subtarget(TT, FS, isThumb),
-    FrameInfo(Subtarget),
     JITInfo(),
     InstrItins(Subtarget.getInstrItineraryData())
 {
@@ -113,7 +105,8 @@ ARMTargetMachine::ARMTargetMachine(const Target &T, const std::string &TT,
                            "v128:64:128-v64:64:64-n32")),
     ELFWriterInfo(*this),
     TLInfo(*this),
-    TSInfo(*this) {
+    TSInfo(*this),
+    FrameInfo(Subtarget) {
   if (!Subtarget.hasARMOps())
     report_fatal_error("CPU: '" + Subtarget.getCPUString() + "' does not "
                        "support ARM mode execution!");
@@ -134,7 +127,10 @@ ThumbTargetMachine::ThumbTargetMachine(const Target &T, const std::string &TT,
                            "v128:64:128-v64:64:64-a:0:32-n32")),
     ELFWriterInfo(*this),
     TLInfo(*this),
-    TSInfo(*this) {
+    TSInfo(*this),
+    FrameInfo(Subtarget.hasThumb2()
+              ? new ARMFrameInfo(Subtarget)
+              : (ARMFrameInfo*)new Thumb1FrameInfo(Subtarget)) {
 }
 
 // Pass Pipeline Configuration

@@ -197,15 +197,27 @@ bool IsSandboxedStackChange(const MachineInstr &MI) {
 
     // These just bump SP by a little (and access the stack),
     // so that is okay due to guard pages.
-    case ARM::STM_UPD:
-    case ARM::VSTMD_UPD:
-    case ARM::VSTMS_UPD:
+    case ARM::STMIA_UPD:
+    case ARM::STMDA_UPD:
+    case ARM::STMDB_UPD:
+    case ARM::STMIB_UPD:
+
+    case ARM::VSTMDIA_UPD:
+    case ARM::VSTMDDB_UPD:
+    case ARM::VSTMSIA_UPD:
+    case ARM::VSTMSDB_UPD:
       return true;
 
     // Similar, unless it is a load into SP...
-    case ARM::LDM_UPD:
-    case ARM::VLDMD_UPD:
-    case ARM::VLDMS_UPD: {
+    case ARM::LDMIA_UPD:
+    case ARM::LDMDA_UPD:
+    case ARM::LDMDB_UPD:
+    case ARM::LDMIB_UPD:
+
+    case ARM::VLDMDIA_UPD:
+    case ARM::VLDMDDB_UPD:
+    case ARM::VLDMSIA_UPD:
+    case ARM::VLDMSDB_UPD: {
       bool dest_SP = false;
       // Dest regs start at operand index 4.
       for (unsigned i = 4; i < MI.getNumOperands(); ++i) {
@@ -485,21 +497,33 @@ static bool IsDangerousStore(const MachineInstr &MI, int *AddrIdx) {
   default: return false;
 
   // Instructions with base address register in position 0...
-  case ARM::STM:
-  case ARM::VSTMD:
-  case ARM::VSTMS:
+  case ARM::STMIA:
+  case ARM::STMDA:
+  case ARM::STMDB:
+  case ARM::STMIB:
+
+  case ARM::VSTMDIA:
+  case ARM::VSTMDDB:
+  case ARM::VSTMSIA:
+  case ARM::VSTMSDB:
     *AddrIdx = 0;
     break;
 
   // Instructions with base address register in position 1...
-  case ARM::STM_UPD: // same reg at position 0 and position 1
+  case ARM::STMIA_UPD: // same reg at position 0 and position 1
+  case ARM::STMDA_UPD:
+  case ARM::STMDB_UPD:
+  case ARM::STMIB_UPD:
+
   case ARM::STRH:
   case ARM::STRi12:
   case ARM::STRrs:
   case ARM::STRBi12:
   case ARM::STRBrs:
-  case ARM::VSTMD_UPD:
-  case ARM::VSTMS_UPD:
+  case ARM::VSTMDIA_UPD:
+  case ARM::VSTMDDB_UPD:
+  case ARM::VSTMSIA_UPD:
+  case ARM::VSTMSDB_UPD:
   case ARM::VSTRS:
   case ARM::VSTRD:
     *AddrIdx = 1;

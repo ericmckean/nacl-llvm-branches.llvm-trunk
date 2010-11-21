@@ -80,6 +80,9 @@ namespace llvm {
     /// The dwarf line information from the .loc directives for the sections
     /// with assembled machine instructions have after seeing .loc directives.
     DenseMap<const MCSection *, MCLineSection *> MCLineSections;
+    /// We need a deterministic iteration order, so we remember the order
+    /// the elements were added.
+    std::vector<const MCSection *> MCLineSectionOrder;
 
     /// Allocator - Allocator object used for creating machine code objects.
     ///
@@ -177,8 +180,17 @@ namespace llvm {
     const std::vector<StringRef> &getMCDwarfDirs() {
       return MCDwarfDirs;
     }
-    DenseMap<const MCSection *, MCLineSection *> &getMCLineSections() {
+
+    const DenseMap<const MCSection *, MCLineSection *>
+    &getMCLineSections() const {
       return MCLineSections;
+    }
+    const std::vector<const MCSection *> &getMCLineSectionOrder() const {
+      return MCLineSectionOrder;
+    }
+    void addMCLineSection(const MCSection *Sec, MCLineSection *Line) {
+      MCLineSections[Sec] = Line;
+      MCLineSectionOrder.push_back(Sec);
     }
 
     /// setCurrentDwarfLoc - saves the information from the currently parsed
@@ -186,12 +198,14 @@ namespace llvm {
     /// is assembled an entry in the line number table with this information and
     /// the address of the instruction will be created.
     void setCurrentDwarfLoc(unsigned FileNum, unsigned Line, unsigned Column,
-                            unsigned Flags, unsigned Isa) {
+                            unsigned Flags, unsigned Isa,
+                            unsigned Discriminator) {
       CurrentDwarfLoc.setFileNum(FileNum);
       CurrentDwarfLoc.setLine(Line);
       CurrentDwarfLoc.setColumn(Column);
       CurrentDwarfLoc.setFlags(Flags);
       CurrentDwarfLoc.setIsa(Isa);
+      CurrentDwarfLoc.setDiscriminator(Discriminator);
       DwarfLocSeen = true;
     }
     void ClearDwarfLocSeen() { DwarfLocSeen = false; }

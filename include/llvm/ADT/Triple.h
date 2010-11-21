@@ -45,7 +45,7 @@ class Triple {
 public:
   enum ArchType {
     UnknownArch,
-    
+
     alpha,   // Alpha: alpha
     arm,     // ARM; arm, armv.*, xscale
     bfin,    // Blackfin: bfin
@@ -72,7 +72,7 @@ public:
   enum VendorType {
     UnknownVendor,
 
-    Apple, 
+    Apple,
     PC
   };
   enum OSType {
@@ -99,7 +99,7 @@ public:
   enum EnvironmentType {
     UnknownEnvironment
   };
-  
+
 private:
   std::string Data;
 
@@ -125,7 +125,7 @@ private:
 public:
   /// @name Constructors
   /// @{
-  
+
   Triple() : Data(), Arch(InvalidArch) {}
   explicit Triple(StringRef Str) : Data(Str), Arch(InvalidArch) {}
   explicit Triple(StringRef ArchStr, StringRef VendorStr, StringRef OSStr)
@@ -160,22 +160,22 @@ public:
   /// @}
   /// @name Typed Component Access
   /// @{
-  
+
   /// getArch - Get the parsed architecture type of this triple.
-  ArchType getArch() const { 
-    if (!isInitialized()) Parse(); 
+  ArchType getArch() const {
+    if (!isInitialized()) Parse();
     return Arch;
   }
-  
+
   /// getVendor - Get the parsed vendor type of this triple.
-  VendorType getVendor() const { 
-    if (!isInitialized()) Parse(); 
+  VendorType getVendor() const {
+    if (!isInitialized()) Parse();
     return Vendor;
   }
-  
+
   /// getOS - Get the parsed operating system type of this triple.
-  OSType getOS() const { 
-    if (!isInitialized()) Parse(); 
+  OSType getOS() const {
+    if (!isInitialized()) Parse();
     return OS;
   }
 
@@ -186,8 +186,8 @@ public:
   }
 
   /// getEnvironment - Get the parsed environment type of this triple.
-  EnvironmentType getEnvironment() const { 
-    if (!isInitialized()) Parse(); 
+  EnvironmentType getEnvironment() const {
+    if (!isInitialized()) Parse();
     return Environment;
   }
 
@@ -219,13 +219,13 @@ public:
   /// if the environment component is present).
   StringRef getOSAndEnvironmentName() const;
 
-  
+
   /// getDarwinNumber - Parse the 'darwin number' out of the specific target
   /// triple.  For example, if we have darwin8.5 return 8,5,0.  If any entry is
   /// not defined, return 0's.  This requires that the triple have an OSType of
   /// darwin before it is called.
   void getDarwinNumber(unsigned &Maj, unsigned &Min, unsigned &Revision) const;
-  
+
   /// getDarwinMajorNumber - Return just the major version number, this is
   /// specialized because it is a common query.
   unsigned getDarwinMajorNumber() const {
@@ -233,7 +233,7 @@ public:
     getDarwinNumber(Maj, Min, Rev);
     return Maj;
   }
-  
+
   /// @}
   /// @name Mutators
   /// @{

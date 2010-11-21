@@ -211,6 +211,21 @@ public:
                                  const std::vector<CalleeSavedInfo> &CSI,
                                  const TargetRegisterInfo *TRI) const;
 
+  bool restoreCalleeSavedRegisters(MachineBasicBlock &MBB,
+                                   MachineBasicBlock::iterator MI,
+                                   const std::vector<CalleeSavedInfo> &CSI,
+                                   const TargetRegisterInfo *TRI) const;
+
+private:
+  void emitPopInst(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI,
+                   const std::vector<CalleeSavedInfo> &CSI, unsigned Opc,
+                   bool isVarArg, bool(*Func)(unsigned, bool)) const;
+  void emitPushInst(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI,
+                    const std::vector<CalleeSavedInfo> &CSI, unsigned Opc,
+                    bool(*Func)(unsigned, bool)) const;
+  
+  
+public:
   // Branch analysis.
   virtual bool AnalyzeBranch(MachineBasicBlock &MBB, MachineBasicBlock *&TBB,
                              MachineBasicBlock *&FBB,
@@ -344,8 +359,12 @@ public:
   /// that we can remove a "comparison with zero".
   virtual bool OptimizeCompareInstr(MachineInstr *CmpInstr, unsigned SrcReg,
                                     int CmpMask, int CmpValue,
-                                    const MachineRegisterInfo *MRI,
-                                    MachineBasicBlock::iterator &MII) const;
+                                    const MachineRegisterInfo *MRI) const;
+
+  /// FoldImmediate - 'Reg' is known to be defined by a move immediate
+  /// instruction, try to fold the immediate into the use instruction.
+  virtual bool FoldImmediate(MachineInstr *UseMI, MachineInstr *DefMI,
+                             unsigned Reg, MachineRegisterInfo *MRI) const;
 
   virtual unsigned getNumMicroOps(const InstrItineraryData *ItinData,
                                   const MachineInstr *MI) const;

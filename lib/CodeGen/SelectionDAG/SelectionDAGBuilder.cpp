@@ -76,12 +76,15 @@ LimitFPPrecision("limit-float-precision",
 // load clustering may not complete in reasonable time. It is difficult to
 // recognize and avoid this situation within each individual analysis, and
 // future analyses are likely to have the same behavior. Limiting DAG width is
-// the safe approach, and will be especially important with global DAGs. See
-// 2010-11-11-ReturnBigBuffer.ll.
+// the safe approach, and will be especially important with global DAGs.
 //
 // MaxParallelChains default is arbitrarily high to avoid affecting
 // optimization, but could be lowered to improve compile time. Any ld-ld-st-st
-// sequence over this should have been converted to llvm.memcpy by the frontend.
+// sequence over this should have been converted to llvm.memcpy by the
+// frontend. It easy to induce this behavior with .ll code such as:
+// %buffer = alloca [4096 x i8]
+// %data = load [4096 x i8]* %argPtr
+// store [4096 x i8] %data, [4096 x i8]* %buffer
 static cl::opt<unsigned>
 MaxParallelChains("dag-chain-limit", cl::desc("Max parallel isel dag chains"),
                   cl::init(64), cl::Hidden);
@@ -5545,9 +5548,6 @@ void SelectionDAGBuilder::visitInlineAsm(ImmutableCallSite CS) {
     // If this is an input or an indirect output, process the call argument.
     // BasicBlocks are labels, currently appearing only in asm's.
     if (OpInfo.CallOperandVal) {
-      // Strip bitcasts, if any.  This mostly comes up for functions.
-      OpInfo.CallOperandVal = OpInfo.CallOperandVal->stripPointerCasts();
-
       if (const BasicBlock *BB = dyn_cast<BasicBlock>(OpInfo.CallOperandVal)) {
         OpInfo.CallOperand = DAG.getBasicBlock(FuncInfo.MBBMap[BB]);
       } else {
