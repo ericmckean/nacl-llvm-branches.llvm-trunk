@@ -183,6 +183,11 @@ def UseMovt          : Predicate<"Subtarget->useMovt()">;
 def DontUseMovt      : Predicate<"!Subtarget->useMovt()">;
 def UseVMLx          : Predicate<"Subtarget->useVMLx()">;
 
+// @LOCALMOD-BEGIN
+def UseConstPool : Predicate<"Subtarget->useConstPool()">;
+def DontUseConstPool : Predicate<"!Subtarget->useConstPool()">;
+// @LOCALMOD-END
+
 //===----------------------------------------------------------------------===//
 // ARM Flag Definitions.
 
@@ -3388,7 +3393,9 @@ def : ARMPat<(ARMWrapper  tglobaladdr :$dst), (MOVi32imm tglobaladdr :$dst)>,
             Requires<[IsARM, UseMovt]>;
 // @LOCALMOD-START
 def : ARMPat<(ARMWrapper  tconstpool :$dst), (MOVi32imm tconstpool :$dst)>,
-            Requires<[IsARM, UseMovt]>;
+            Requires<[IsARM, UseMovt, DontUseConstPool]>;
+def : ARMPat<(ARMWrapper  tconstpool :$dst), (LEApcrel tconstpool :$dst)>,
+            Requires<[IsARM, UseMovt, UseConstPool]>;
 def : ARMPat<(ARMWrapperJT2  tjumptable :$dst), (MOVi32imm tjumptable :$dst)>,
             Requires<[IsARM, UseMovt]>;
 // @LOCALMOD-END

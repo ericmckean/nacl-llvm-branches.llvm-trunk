@@ -20,6 +20,14 @@
 #include "ARMBaseRegisterInfo.h"
 #include <string>
 
+// @LOCALMOD-BEGIN
+#include "llvm/Support/CommandLine.h"
+namespace llvm {
+  extern cl::opt<bool> FlagSfiDisableCP;
+}
+// @LOCALMOD-END
+
+
 namespace llvm {
 class GlobalValue;
 
@@ -205,6 +213,9 @@ protected:
   bool isR9Reserved() const { return IsR9Reserved; }
 
   bool useMovt() const { return UseMovt && hasV6T2Ops(); }
+
+  // @LOCALMOD
+  bool useConstPool() const { return !FlagSfiDisableCP; }
 
   bool allowsUnalignedMem() const { return AllowsUnalignedMem; }
 
