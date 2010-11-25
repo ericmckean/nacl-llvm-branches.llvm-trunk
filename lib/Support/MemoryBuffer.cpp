@@ -144,20 +144,18 @@ MemoryBuffer *MemoryBuffer::getNewMemBuffer(size_t Size, StringRef BufferName) {
 /// returns an empty buffer.
 MemoryBuffer *MemoryBuffer::getFileOrSTDIN(StringRef Filename,
                                            std::string *ErrStr,
-                                           int64_t FileSize,
-                                           struct stat *FileInfo) {
+                                           int64_t FileSize) {
   if (Filename == "-")
     return getSTDIN(ErrStr);
-  return getFile(Filename, ErrStr, FileSize, FileInfo);
+  return getFile(Filename, ErrStr, FileSize);
 }
 
 MemoryBuffer *MemoryBuffer::getFileOrSTDIN(const char *Filename,
                                            std::string *ErrStr,
-                                           int64_t FileSize,
-                                           struct stat *FileInfo) {
+                                           int64_t FileSize) {
   if (strcmp(Filename, "-") == 0)
     return getSTDIN(ErrStr);
-  return getFile(Filename, ErrStr, FileSize, FileInfo);
+  return getFile(Filename, ErrStr, FileSize);
 }
 
 //===----------------------------------------------------------------------===//
@@ -188,13 +186,14 @@ public:
 }
 
 MemoryBuffer *MemoryBuffer::getFile(StringRef Filename, std::string *ErrStr,
-                                    int64_t FileSize, struct stat *FileInfo) {
+                                    int64_t FileSize) {
+  // Ensure the path is null terminated.
   SmallString<256> PathBuf(Filename.begin(), Filename.end());
-  return MemoryBuffer::getFile(PathBuf.c_str(), ErrStr, FileSize, FileInfo);
+  return MemoryBuffer::getFile(PathBuf.c_str(), ErrStr, FileSize);
 }
 
 MemoryBuffer *MemoryBuffer::getFile(const char *Filename, std::string *ErrStr,
-                                    int64_t FileSize, struct stat *FileInfo) {
+                                    int64_t FileSize) {
   int OpenFlags = O_RDONLY;
 #ifdef O_BINARY
   OpenFlags |= O_BINARY;  // Open input file in binary mode on win32.
@@ -204,20 +203,24 @@ MemoryBuffer *MemoryBuffer::getFile(const char *Filename, std::string *ErrStr,
     if (ErrStr) *ErrStr = sys::StrError();
     return 0;
   }
+  
+  return getOpenFile(FD, Filename, ErrStr, FileSize);
+}
+  
+MemoryBuffer *MemoryBuffer::getOpenFile(int FD, const char *Filename,
+                                        std::string *ErrStr, int64_t FileSize) {
   FileCloser FC(FD); // Close FD on return.
   
   // If we don't know the file size, use fstat to find out.  fstat on an open
   // file descriptor is cheaper than stat on a random path.
-  if (FileSize == -1 || FileInfo) {
-    struct stat MyFileInfo;
-    struct stat *FileInfoPtr = FileInfo? FileInfo : &MyFileInfo;
-    
+  if (FileSize == -1) {
+    struct stat FileInfo;
     // TODO: This should use fstat64 when available.
-    if (fstat(FD, FileInfoPtr) == -1) {
+    if (fstat(FD, &FileInfo) == -1) {
       if (ErrStr) *ErrStr = sys::StrError();
       return 0;
     }
-    FileSize = FileInfoPtr->st_size;
+    FileSize = FileInfo.st_size;
   }
   
   
