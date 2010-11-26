@@ -102,6 +102,70 @@ void ARMInstPrinter::printInst(const MCInst *MI, raw_ostream &O) {
     return;
   }
 
+  // @LOCALMOD-BEGIN
+  // TODO(pdox): Kill this code once we switch to MC object emission
+  const char *SFIInst = NULL;
+  unsigned SFIEmitDest = ~0;
+  unsigned SFIEmitPred = ~0;
+  switch (Opcode) {
+  case ARM::SFI_NOP_IF_AT_BUNDLE_END :
+    SFIInst = "sfi_nop_if_at_bundle_end";
+    SFIEmitDest = ~0;
+    SFIEmitPred = ~0;
+    break;
+  case ARM::SFI_GUARD_STORE        :
+    SFIInst = "sfi_store_preamble";
+    SFIEmitDest = 0;
+    SFIEmitPred = 2;
+    break;
+  case ARM::SFI_GUARD_INDIRECT_CALL:
+    SFIInst = "sfi_indirect_call_preamble";
+    SFIEmitDest = 0;
+    SFIEmitPred = 2;
+    break;
+  case ARM::SFI_GUARD_INDIRECT_JMP :
+    SFIInst = "sfi_indirect_jump_preamble";
+    SFIEmitDest = 0;
+    SFIEmitPred = 2;
+    break;
+  case ARM::SFI_DATA_MASK          :
+    SFIInst = "sfi_data_mask";
+    SFIEmitDest = 0;
+    SFIEmitPred = 2;
+    break;
+  case ARM::SFI_GUARD_STORE_TST:
+    SFIInst = "sfi_cstore_preamble";
+    SFIEmitDest = 0;
+    SFIEmitPred = ~0;
+    break;
+  case ARM::SFI_GUARD_CALL     :
+    SFIInst = "sfi_call_preamble";
+    SFIEmitDest = ~0;
+    SFIEmitPred = 0;
+    break;
+  case ARM::SFI_GUARD_RETURN   :
+    SFIInst = "sfi_return_preamble lr,";
+    SFIEmitDest = ~0;
+    SFIEmitPred = 0;
+    break;
+  }
+  if (SFIInst) {
+    O << '\t' << SFIInst;
+    if (SFIEmitDest != ~0) {
+      O << ' ';
+      printOperand(MI, SFIEmitDest, O);
+    }
+    if (SFIEmitDest != ~0 && SFIEmitPred != ~0) {
+      O << ',';
+    }
+    if (SFIEmitPred != ~0) {
+      O << ' ';
+      printPredicateOperand(MI, SFIEmitPred, O);
+    }
+    O << '\n';
+    return;
+  }
+
   printInstruction(MI, O);
 }
 

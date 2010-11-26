@@ -466,7 +466,6 @@ void SelectionDAGISel::CodeGenAndEmitDAG() {
                 FuncInfo->MBB->getBasicBlock()->getNameStr();
 
   DEBUG(dbgs() << "Initial selection DAG:\n"; CurDAG->dump());
-
   if (ViewDAGCombine1) CurDAG->viewGraph("dag-combine1 input for " + BlockName);
 
   // Run the DAG combiner in pre-legalize mode.
@@ -493,7 +492,6 @@ void SelectionDAGISel::CodeGenAndEmitDAG() {
   if (Changed) {
     if (ViewDAGCombineLT)
       CurDAG->viewGraph("dag-combine-lt input for " + BlockName);
-
     // Run the DAG combiner in post-type-legalize mode.
     {
       NamedRegionTimer T("DAG Combining after legalize types", GroupName,
@@ -515,10 +513,8 @@ void SelectionDAGISel::CodeGenAndEmitDAG() {
       NamedRegionTimer T("Type Legalization 2", GroupName, TimePassesIsEnabled);
       CurDAG->LegalizeTypes();
     }
-
     if (ViewDAGCombineLT)
       CurDAG->viewGraph("dag-combine-lv input for " + BlockName);
-
     // Run the DAG combiner in post-type-legalize mode.
     {
       NamedRegionTimer T("DAG Combining after legalize vectors", GroupName,
@@ -529,18 +525,14 @@ void SelectionDAGISel::CodeGenAndEmitDAG() {
     DEBUG(dbgs() << "Optimized vector-legalized selection DAG:\n";
           CurDAG->dump());
   }
-
   if (ViewLegalizeDAGs) CurDAG->viewGraph("legalize input for " + BlockName);
-
   {
     NamedRegionTimer T("DAG Legalization", GroupName, TimePassesIsEnabled);
     CurDAG->Legalize(OptLevel);
   }
-
   DEBUG(dbgs() << "Legalized selection DAG:\n"; CurDAG->dump());
 
   if (ViewDAGCombine2) CurDAG->viewGraph("dag-combine2 input for " + BlockName);
-
   // Run the DAG combiner in post-legalize mode.
   {
     NamedRegionTimer T("DAG Combining 2", GroupName, TimePassesIsEnabled);

@@ -20,6 +20,14 @@
 #include "ARMBaseRegisterInfo.h"
 #include <string>
 
+// @LOCALMOD-BEGIN
+#include "llvm/Support/CommandLine.h"
+namespace llvm {
+  extern cl::opt<bool> FlagSfiDisableCP;
+}
+// @LOCALMOD-END
+
+
 namespace llvm {
 class GlobalValue;
 
@@ -129,6 +137,12 @@ protected:
   /// Selected instruction itineraries (one entry per itinerary class.)
   InstrItineraryData InstrItins;
 
+  // @LOCALMOD-START
+  /// UseInlineJumpTables - True if jump tables should be in-line in the code.
+  bool UseInlineJumpTables;
+  // @LOCALMOD-END
+
+
  public:
   enum {
     isELF, isDarwin
@@ -200,6 +214,9 @@ protected:
 
   bool useMovt() const { return UseMovt && hasV6T2Ops(); }
 
+  // @LOCALMOD
+  bool useConstPool() const { return !FlagSfiDisableCP; }
+
   bool allowsUnalignedMem() const { return AllowsUnalignedMem; }
 
   const std::string & getCPUString() const { return CPUString; }
@@ -223,6 +240,8 @@ protected:
   /// GVIsIndirectSymbol - true if the GV will be accessed via an indirect
   /// symbol.
   bool GVIsIndirectSymbol(const GlobalValue *GV, Reloc::Model RelocM) const;
+
+  bool useInlineJumpTables() const {return UseInlineJumpTables;} // @LOCALMOD
 };
 } // End llvm namespace
 

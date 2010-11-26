@@ -32,6 +32,7 @@ set(sources
   X86MCAsmInfo.cpp
   X86MCCodeEmitter.cpp 
   X86MCInstLower.cpp
+  X86NaClRewritePass.cpp
   X86RegisterInfo.cpp
   X86SelectionDAGInfo.cpp
   X86Subtarget.cpp

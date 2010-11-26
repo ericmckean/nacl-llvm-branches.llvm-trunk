@@ -70,6 +70,12 @@ def SDT_ARMBFI : SDTypeProfile<1, 3, [SDTCisVT<0, i32>, SDTCisVT<1, i32>,
 // Node definitions.
 def ARMWrapper       : SDNode<"ARMISD::Wrapper",     SDTIntUnaryOp>;
 def ARMWrapperJT     : SDNode<"ARMISD::WrapperJT",   SDTIntBinOp>;
+// @LOCALMOD-START
+// support non-inline jumptables
+// we do not use the extre uid immediate that comes with ARMWrapperJT
+// TODO(robertm): figure out what it is used for
+def ARMWrapperJT2    : SDNode<"ARMISD::WrapperJT2",  SDTIntUnaryOp>;
+// @LOCALMOD-END
 
 def ARMcallseq_start : SDNode<"ISD::CALLSEQ_START", SDT_ARMCallSeqStart,
                               [SDNPHasChain, SDNPOutFlag]>;
@@ -176,6 +182,11 @@ def IsNotDarwin      : Predicate<"!Subtarget->isTargetDarwin()">;
 def UseMovt          : Predicate<"Subtarget->useMovt()">;
 def DontUseMovt      : Predicate<"!Subtarget->useMovt()">;
 def UseVMLx          : Predicate<"Subtarget->useVMLx()">;
+
+// @LOCALMOD-BEGIN
+def UseConstPool : Predicate<"Subtarget->useConstPool()">;
+def DontUseConstPool : Predicate<"!Subtarget->useConstPool()">;
+// @LOCALMOD-END
 
 //===----------------------------------------------------------------------===//
 // ARM Flag Definitions.
@@ -478,7 +489,8 @@ def ldst_so_reg : Operand<i32>,
 //           := reg +/- reg shop imm
 //
 def addrmode2 : Operand<i32>,
-                ComplexPattern<i32, 3, "SelectAddrMode2", []> {
+                ComplexPattern<i32, 3, "SelectAddrMode2", [],
+                               [SDNPWantRoot]> { // @LOCALMOD
   string EncoderMethod = "getAddrMode2OpValue";
   let PrintMethod = "printAddrMode2Operand";
   let MIOperandInfo = (ops GPR:$base, GPR:$offsreg, i32imm:$offsimm);
@@ -496,7 +508,8 @@ def am2offset : Operand<i32>,
 // addrmode3 := reg +/- imm8
 //
 def addrmode3 : Operand<i32>,
-                ComplexPattern<i32, 3, "SelectAddrMode3", []> {
+                ComplexPattern<i32, 3, "SelectAddrMode3", [],
+                               [SDNPWantRoot]> { // @LOCALMOD
   let EncoderMethod = "getAddrMode3OpValue";
   let PrintMethod = "printAddrMode3Operand";
   let MIOperandInfo = (ops GPR:$base, GPR:$offsreg, i32imm:$offsimm);
@@ -957,6 +970,37 @@ multiclass AI_str1<bit isByte, string opc, InstrItinClass iii,
 //===----------------------------------------------------------------------===//
 // Instructions
 //===----------------------------------------------------------------------===//
+
+// @LOCALMOD-START
+def SFI_GUARD_STORE :
+PseudoInst<(outs GPR:$dst), (ins GPR:$a, pred:$p), NoItinerary, []>;
+
+let Defs = [CPSR] in
+def SFI_GUARD_STORE_TST :
+PseudoInst<(outs GPR:$dst), (ins GPR:$a), NoItinerary, []>;
+
+def SFI_GUARD_INDIRECT_CALL :
+PseudoInst<(outs GPR:$dst), (ins GPR:$a, pred:$p), NoItinerary, []>;
+
+def SFI_GUARD_INDIRECT_JMP :
+PseudoInst<(outs GPR:$dst), (ins GPR:$a, pred:$p), NoItinerary, []>;
+
+def SFI_GUARD_CALL :
+PseudoInst<(outs), (ins pred:$p), NoItinerary, []>;
+
+// NOTE: the BX_RET instruction hardcodes lr as well
+def SFI_GUARD_RETURN :
+PseudoInst<(outs), (ins pred:$p), NoItinerary, []>;
+
+def SFI_NOP_IF_AT_BUNDLE_END :
+PseudoInst<(outs), (ins), NoItinerary, []>;
+
+// Note: intention is that $src and $dst are the same register.
+def SFI_DATA_MASK :
+PseudoInst<(outs GPR:$dst), (ins GPR:$src, pred:$p), NoItinerary, []>;
+
+// @LOCALMOD-END
+
 
 //===----------------------------------------------------------------------===//
 //  Miscellaneous Instructions.
@@ -2076,6 +2120,8 @@ def UBFX  : I<(outs GPR:$Rd),
 //===----------------------------------------------------------------------===//
 //  Arithmetic Instructions.
 //
+
+
 
 defm ADD  : AsI1_bin_irs<0b0100, "add",
                          IIC_iALUi, IIC_iALUr, IIC_iALUsr,
@@ -3338,9 +3384,20 @@ def MOVi32imm : PseudoInst<(outs GPR:$dst), (ins i32imm:$src), IIC_iMOVix2,
 // ConstantPool, GlobalAddress, and JumpTable
 def : ARMPat<(ARMWrapper  tglobaladdr :$dst), (LEApcrel tglobaladdr :$dst)>,
             Requires<[IsARM, DontUseMovt]>;
-def : ARMPat<(ARMWrapper  tconstpool  :$dst), (LEApcrel tconstpool  :$dst)>;
+// @LOCALMOD-START
+def : ARMPat<(ARMWrapper  tconstpool  :$dst), (LEApcrel tconstpool  :$dst)>,
+            Requires<[IsARM, DontUseMovt]>;
+// @LOCALMOD-END
 def : ARMPat<(ARMWrapper  tglobaladdr :$dst), (MOVi32imm tglobaladdr :$dst)>,
             Requires<[IsARM, UseMovt]>;
+// @LOCALMOD-START
+def : ARMPat<(ARMWrapper  tconstpool :$dst), (MOVi32imm tconstpool :$dst)>,
+            Requires<[IsARM, UseMovt, DontUseConstPool]>;
+def : ARMPat<(ARMWrapper  tconstpool :$dst), (LEApcrel tconstpool :$dst)>,
+            Requires<[IsARM, UseMovt, UseConstPool]>;
+def : ARMPat<(ARMWrapperJT2  tjumptable :$dst), (MOVi32imm tjumptable :$dst)>,
+            Requires<[IsARM, UseMovt]>;
+// @LOCALMOD-END
 def : ARMPat<(ARMWrapperJT tjumptable:$dst, imm:$id),
              (LEApcrelJT tjumptable:$dst, imm:$id)>;
 

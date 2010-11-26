@@ -19,6 +19,7 @@
 #include "ARMInstrInfo.h"
 #include "ARMMachineFunctionInfo.h"
 #include "ARMSubtarget.h"
+#include "ARMTargetMachine.h"  // @LOCALMOD
 #include "llvm/Constants.h"
 #include "llvm/DerivedTypes.h"
 #include "llvm/Function.h"
@@ -60,10 +61,21 @@ ARMBaseRegisterInfo::ARMBaseRegisterInfo(const ARMBaseInstrInfo &tii,
     BasePtr(ARM::R6) {
 }
 
+extern cl::opt<bool> ReserveR9; // @LOCALMOD
+
 const unsigned*
 ARMBaseRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
   static const unsigned CalleeSavedRegs[] = {
     ARM::LR, ARM::R11, ARM::R10, ARM::R9, ARM::R8,
+    ARM::R7, ARM::R6,  ARM::R5,  ARM::R4,
+
+    ARM::D15, ARM::D14, ARM::D13, ARM::D12,
+    ARM::D11, ARM::D10, ARM::D9,  ARM::D8,
+    0
+  };
+
+  static const unsigned CalleeSavedRegsNoR9[] = { // @LOCALMOD
+    ARM::LR, ARM::R11, ARM::R10, ARM::R8,
     ARM::R7, ARM::R6,  ARM::R5,  ARM::R4,
 
     ARM::D15, ARM::D14, ARM::D13, ARM::D12,
@@ -81,7 +93,11 @@ ARMBaseRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
     ARM::D11, ARM::D10, ARM::D9,  ARM::D8,
     0
   };
-  return STI.isTargetDarwin() ? DarwinCalleeSavedRegs : CalleeSavedRegs;
+  if (STI.isTargetDarwin())
+    return DarwinCalleeSavedRegs;
+  if (ReserveR9)
+    return CalleeSavedRegsNoR9; // @LOCALMOD
+  return CalleeSavedRegs;
 }
 
 BitVector ARMBaseRegisterInfo::
@@ -1129,6 +1145,13 @@ emitLoadConstPool(MachineBasicBlock &MBB,
                   unsigned DestReg, unsigned SubIdx, int Val,
                   ARMCC::CondCodes Pred,
                   unsigned PredReg) const {
+  // @LOCALMOD-START
+  // In the sfi case we do not want to use the load const pseudo instr.
+  // Sadly, the ARM backend is not very consistent about using this
+  // pseudo instr. and hence checking this is not sufficient.
+  // But, it should help detect some regressions early.
+  assert(!FlagSfiDisableCP && "unexpected call to emitLoadConstPool");
+  // @LOCALMOD-END
   MachineFunction &MF = *MBB.getParent();
   MachineConstantPool *ConstantPool = MF.getConstantPool();
   const Constant *C =

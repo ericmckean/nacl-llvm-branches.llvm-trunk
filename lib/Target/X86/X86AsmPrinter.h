@@ -50,7 +50,11 @@ class LLVM_LIBRARY_VISIBILITY X86AsmPrinter : public AsmPrinter {
   virtual void EmitEndOfAsmFile(Module &M);
   
   virtual void EmitInstruction(const MachineInstr *MI);
-  
+
+  virtual void EmitFunctionBodyEnd(); // @LOCALMOD
+  virtual bool UseReadOnlyJumpTables() const; // @LOCALMOD
+  virtual unsigned GetTargetLabelAlign(const MachineInstr *MI) const;//@LOCALMOD
+
   void printSymbolOperand(const MachineOperand &MO, raw_ostream &O);
 
   // These methods are used by the tablegen'erated instruction printer.

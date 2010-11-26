@@ -310,14 +310,18 @@ X86RegisterInfo::getMatchingSuperRegClass(const TargetRegisterClass *A,
 
 const TargetRegisterClass *
 X86RegisterInfo::getPointerRegClass(unsigned Kind) const {
+  // @LOCALMOD-BEGIN
+  bool isPTR64Bit = TM.getSubtarget<X86Subtarget>().has64BitPointers();
+  // @LOCALMOD-END
+
   switch (Kind) {
   default: llvm_unreachable("Unexpected Kind in getPointerRegClass!");
   case 0: // Normal GPRs.
-    if (TM.getSubtarget<X86Subtarget>().is64Bit())
+    if (isPTR64Bit)   // @LOCALMOD
       return &X86::GR64RegClass;
     return &X86::GR32RegClass;
   case 1: // Normal GRPs except the stack pointer (for encoding reasons).
-    if (TM.getSubtarget<X86Subtarget>().is64Bit())
+    if (isPTR64Bit)   // @LOCALMOD
       return &X86::GR64_NOSPRegClass;
     return &X86::GR32_NOSPRegClass;
   }
@@ -420,6 +424,21 @@ BitVector X86RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   Reserved.set(X86::ST5);
   Reserved.set(X86::ST6);
   Reserved.set(X86::ST7);
+
+  // @LOCALMOD-START
+  const X86Subtarget& Subtarget = MF.getTarget().getSubtarget<X86Subtarget>();
+  if (Subtarget.isTargetNaCl64()) {
+    Reserved.set(X86::R15);
+    Reserved.set(X86::R15D);
+    Reserved.set(X86::R15W);
+    Reserved.set(X86::R15B);
+    Reserved.set(X86::RBP);
+    Reserved.set(X86::EBP);
+    Reserved.set(X86::BP);
+    Reserved.set(X86::BPL);
+  }
+  // @LOCALMOD-END
+
   return Reserved;
 }
 

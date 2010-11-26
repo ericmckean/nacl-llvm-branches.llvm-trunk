@@ -75,6 +75,14 @@ X86SelectionDAGInfo::EmitTargetCodeForMemset(SelectionDAG &DAG, DebugLoc dl,
     return SDValue();
   }
 
+  // @LOCALMOD-BEGIN
+  if (Subtarget->isTargetNaCl()) {
+    // TODO: Can we allow this optimization for Native Client?
+    // At the very least, pointer size needs to be fixed below.
+    return SDValue();
+  }
+  // @LOCALMOD-END
+
   uint64_t SizeVal = ConstantSize->getZExtValue();
   SDValue InFlag(0, 0);
   EVT AVT;
@@ -186,6 +194,13 @@ X86SelectionDAGInfo::EmitTargetCodeForMemcpy(SelectionDAG &DAG, DebugLoc dl,
   uint64_t SizeVal = ConstantSize->getZExtValue();
   if (!AlwaysInline && SizeVal > Subtarget->getMaxInlineSizeThreshold())
     return SDValue();
+
+  // @LOCALMOD-BEGIN
+  // We can't emit REP MOVSQ on Native Client
+  if (Subtarget->isTargetNaCl()) {
+    return SDValue();
+  }
+  // @LOCALMOD-END
 
   /// If not DWORD aligned, it is more efficient to call the library.  However
   /// if calling the library is not allowed (AlwaysInline), then soldier on as

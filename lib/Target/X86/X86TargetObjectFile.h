@@ -36,6 +36,7 @@ namespace llvm {
     virtual unsigned getLSDAEncoding() const;
     virtual unsigned getFDEEncoding() const;
     virtual unsigned getTTypeEncoding() const;
+    virtual void Initialize(MCContext &Ctx, const TargetMachine &TM); // @LOCALMOD
   };
 
   class X8664_ELFTargetObjectFile : public TargetLoweringObjectFileELF {
@@ -47,6 +48,7 @@ namespace llvm {
     virtual unsigned getLSDAEncoding() const;
     virtual unsigned getFDEEncoding() const;
     virtual unsigned getTTypeEncoding() const;
+    virtual void Initialize(MCContext &Ctx, const TargetMachine &TM); // @LOCALMOD
   };
 
 } // end namespace llvm

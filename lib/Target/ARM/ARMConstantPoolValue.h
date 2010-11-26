@@ -95,6 +95,9 @@ public:
   bool isExtSymbol() const { return Kind == ARMCP::CPExtSymbol; }
   bool isBlockAddress() { return Kind == ARMCP::CPBlockAddress; }
   bool isLSDA() { return Kind == ARMCP::CPLSDA; }
+  // @LOCALMOD-START
+  bool isValue() const { return Kind == ARMCP::CPValue; }
+  // @LOCALMOD-END
 
   virtual unsigned getRelocationInfo() const {
     // FIXME: This is conservatively claiming that these entries require a

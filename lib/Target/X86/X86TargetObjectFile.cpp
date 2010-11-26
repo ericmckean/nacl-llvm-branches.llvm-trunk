@@ -9,9 +9,11 @@
 
 #include "X86TargetObjectFile.h"
 #include "X86TargetMachine.h"
+#include "X86Subtarget.h"  // @LOCALMOD
 #include "llvm/CodeGen/MachineModuleInfoImpls.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCExpr.h"
+#include "llvm/MC/MCSectionELF.h" // @LOCALMOD
 #include "llvm/MC/MCSectionMachO.h"
 #include "llvm/Target/Mangler.h"
 #include "llvm/ADT/SmallString.h"
@@ -116,3 +118,48 @@ unsigned X8664_ELFTargetObjectFile::getTTypeEncoding() const {
 
   return DW_EH_PE_absptr;
 }
+
+// @LOCALMOD-START
+// NOTE: this was largely lifted from
+// lib/Target/ARM/ARMTargetObjectFile.cpp
+//
+// The default is .ctors/.dtors while the arm backend uses
+// .init_array/.fini_array
+//
+// Without this the linker defined symbols __fini_array_start and
+// __fini_array_end do not have useful values. c.f.:
+// http://code.google.com/p/nativeclient/issues/detail?id=805
+void X8664_ELFTargetObjectFile::Initialize(MCContext &Ctx,
+                                           const TargetMachine &TM) {
+  TargetLoweringObjectFileELF::Initialize(Ctx, TM);
+  if (TM.getSubtarget<X86Subtarget>().isTargetNaCl()) {
+    StaticCtorSection =
+      getContext().getELFSection(".init_array", MCSectionELF::SHT_INIT_ARRAY,
+                                 MCSectionELF::SHF_WRITE |
+                                 MCSectionELF::SHF_ALLOC,
+                                 SectionKind::getDataRel());
+    StaticDtorSection =
+      getContext().getELFSection(".fini_array", MCSectionELF::SHT_FINI_ARRAY,
+                                 MCSectionELF::SHF_WRITE |
+                                 MCSectionELF::SHF_ALLOC,
+                                 SectionKind::getDataRel());
+  }
+}
+
+void X8632_ELFTargetObjectFile::Initialize(MCContext &Ctx,
+                                           const TargetMachine &TM) {
+  TargetLoweringObjectFileELF::Initialize(Ctx, TM);
+  if (TM.getSubtarget<X86Subtarget>().isTargetNaCl()) {
+    StaticCtorSection =
+      getContext().getELFSection(".init_array", MCSectionELF::SHT_INIT_ARRAY,
+                                 MCSectionELF::SHF_WRITE |
+                                 MCSectionELF::SHF_ALLOC,
+                                 SectionKind::getDataRel());
+    StaticDtorSection =
+      getContext().getELFSection(".fini_array", MCSectionELF::SHT_FINI_ARRAY,
+                                 MCSectionELF::SHF_WRITE |
+                                 MCSectionELF::SHF_ALLOC,
+                                 SectionKind::getDataRel());
+  }
+}
+// @LOCALMOD-END
