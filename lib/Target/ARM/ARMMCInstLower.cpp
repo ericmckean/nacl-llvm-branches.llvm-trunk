@@ -50,21 +50,20 @@ static MCOperand GetSymbolRef(const MachineOperand &MO, const MCSymbol *Symbol,
   
 }
 
-void llvm::LowerARMMachineInstrToMCInst(const MachineInstr *MI, MCInst &OutMI,
-                                        AsmPrinter &AP) {
-  OutMI.setOpcode(MI->getOpcode());
-
-  for (unsigned i = 0, e = MI->getNumOperands(); i != e; ++i) {
-    const MachineOperand &MO = MI->getOperand(i);
-
-    MCOperand MCOp;
-    switch (MO.getType()) {
+// @LOCALMOD-BEGIN essentially the loop body of LowerARMMachineOperandToMCInst.
+// Returns true if the Operand was really converted to an MCOperand.
+static bool LowerARMMachineOperandToMCOperand(const MachineOperand &MO,
+                                               const MachineInstr *MI,
+                                               AsmPrinter &AP,
+                                               MCOperand &OutOp) {
+  MCOperand MCOp;
+  switch (MO.getType()) {
     default:
       MI->dump();
       assert(0 && "unknown operand type");
     case MachineOperand::MO_Register:
       // Ignore all non-CPSR implicit register operands.
-      if (MO.isImplicit() && MO.getReg() != ARM::CPSR) continue;
+      if (MO.isImplicit() && MO.getReg() != ARM::CPSR) return false;
       assert(!MO.getSubReg() && "Subregs should be eliminated!");
       MCOp = MCOperand::CreateReg(MO.getReg());
       break;
@@ -73,13 +72,13 @@ void llvm::LowerARMMachineInstrToMCInst(const MachineInstr *MI, MCInst &OutMI,
       break;
     case MachineOperand::MO_MachineBasicBlock:
       MCOp = MCOperand::CreateExpr(MCSymbolRefExpr::Create(
-                       MO.getMBB()->getSymbol(), AP.OutContext));
+          MO.getMBB()->getSymbol(), AP.OutContext));
       break;
     case MachineOperand::MO_GlobalAddress:
       MCOp = GetSymbolRef(MO, AP.Mang->getSymbol(MO.getGlobal()), AP);
       break;
     case MachineOperand::MO_ExternalSymbol:
-      MCOp = GetSymbolRef(MO, 
+      MCOp = GetSymbolRef(MO,
                           AP.GetExternalSymbolSymbol(MO.getSymbolName()), AP);
       break;
     case MachineOperand::MO_JumpTableIndex:
@@ -97,8 +96,69 @@ void llvm::LowerARMMachineInstrToMCInst(const MachineInstr *MI, MCInst &OutMI,
       Val.convert(APFloat::IEEEdouble, APFloat::rmTowardZero, &ignored);
       MCOp = MCOperand::CreateFPImm(Val.convertToDouble());
       break;
-    }
+  }
+  OutOp = MCOp;
+  return true;
 
-    OutMI.addOperand(MCOp);
+}
+// @LOCALMOD-END
+
+
+void llvm::LowerARMMachineInstrToMCInst(const MachineInstr *MI, MCInst &OutMI,
+                                        AsmPrinter &AP) {
+  OutMI.setOpcode(MI->getOpcode());
+
+  for (unsigned i = 0, e = MI->getNumOperands(); i != e; ++i) {
+    const MachineOperand &MO = MI->getOperand(i);
+
+    MCOperand MCOp;
+    // @LOCALMOD-BEGIN (code moved to LowerARMMachineOperandToMCOperand)
+    if (LowerARMMachineOperandToMCOperand(MO, MI, AP, MCOp)) {
+      OutMI.addOperand(MCOp);
+    }
+    // @LOCALMOD-END
   }
 }
+
+// @LOCALMOD-BEGIN
+// Unlike LowerARMMachineInstrToMCInst, the opcode has already been set.
+// Otherwise, this is like LowerARMMachineInstrToMCInst, but with special
+// handling where the "immediate" is PC Relative
+// (used for MOVi16PIC / MOVTi16PIC, etc. -- see .td file)
+void llvm::LowerARMMachineInstrToMCInstPCRel(const MachineInstr *MI,
+                                             MCInst &OutMI,
+                                             AsmPrinter &AP,
+                                             unsigned ImmIndex,
+                                             unsigned PCIndex,
+                                             MCSymbol *PCLabel,
+                                             unsigned PCAdjustment) {
+
+  for (unsigned i = 0, e = MI->getNumOperands(); i != e; ++i) {
+    if (i == ImmIndex) {
+      MCContext &Ctx = AP.OutContext;
+      const MCExpr *PCRelExpr = MCSymbolRefExpr::Create(PCLabel, Ctx);
+      if (PCAdjustment) {
+        const MCExpr *AdjExpr = MCConstantExpr::Create(PCAdjustment, Ctx);
+        PCRelExpr = MCBinaryExpr::CreateAdd(PCRelExpr, AdjExpr, Ctx);
+      }
+
+      // Get the usual symbol operand, then subtract the PCRelExpr.
+      const MachineOperand &MOImm = MI->getOperand(ImmIndex);
+      MCOperand SymOp;
+      bool DidLower = LowerARMMachineOperandToMCOperand(MOImm, MI, AP, SymOp);
+      assert (DidLower && "Immediate-like operand should have been lowered");
+      const MCExpr *Expr =
+          MCBinaryExpr::CreateSub(SymOp.getExpr(), PCRelExpr, Ctx);
+      MCOperand MCOp = MCOperand::CreateExpr(Expr);
+      OutMI.addOperand(MCOp);
+    } else if (i == PCIndex) {  // dummy index already handled as PCLabel
+      continue;
+    } else {
+      MCOperand MCOp;
+      if (LowerARMMachineOperandToMCOperand(MI->getOperand(i), MI, AP, MCOp)) {
+        OutMI.addOperand(MCOp);
+      }
+    }
+  }
+}
+// @LOCALMOD-END

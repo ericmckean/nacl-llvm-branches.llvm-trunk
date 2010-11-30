@@ -1395,6 +1395,50 @@ void ARMAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     }
     return;
   }
+
+  // @LOCALMOD-BEGIN
+  // These are pseudo ops for MOVW / MOVT with operands relative to a PC label.
+  // See the comments on MOVi16PIC in the .td file for more details.
+  case ARM::MOVi16PIC: {
+    MCInst TmpInst;
+    // First, build an instruction w/ the real opcode.
+    TmpInst.setOpcode(ARM::MOVi16);
+
+    unsigned ImmIndex = 1;
+    unsigned PIC_id_index = 2;
+    unsigned PCAdjustment = 8;
+    // NOTE: if getPICLabel was a method of "this", or otherwise in scope for
+    // LowerARMMachineInstrToMCInstPCRel, then we wouldn't need to create
+    // it here (as well as below).
+    MCSymbol *PCLabel = getPICLabel(MAI->getPrivateGlobalPrefix(),
+                                    getFunctionNumber(),
+                                    MI->getOperand(PIC_id_index).getImm(),
+                                    OutContext);
+    LowerARMMachineInstrToMCInstPCRel(MI, TmpInst, *this, ImmIndex,
+                                      PIC_id_index, PCLabel, PCAdjustment);
+    OutStreamer.EmitInstruction(TmpInst);
+    return;
+  }
+  case ARM::MOVTi16PIC: {
+    MCInst TmpInst;
+    // First, build an instruction w/ the real opcode.
+    TmpInst.setOpcode(ARM::MOVTi16);
+
+    unsigned ImmIndex = 2;
+    unsigned PIC_id_index = 3;
+    unsigned PCAdjustment = 8;
+
+    MCSymbol *PCLabel = getPICLabel(MAI->getPrivateGlobalPrefix(),
+                                    getFunctionNumber(),
+                                    MI->getOperand(PIC_id_index).getImm(),
+                                    OutContext);
+
+    LowerARMMachineInstrToMCInstPCRel(MI, TmpInst, *this, ImmIndex,
+                                      PIC_id_index, PCLabel, PCAdjustment);
+    OutStreamer.EmitInstruction(TmpInst);
+    return;
+  }
+  //@LOCALMOD-END
   }
 
   MCInst TmpInst;
