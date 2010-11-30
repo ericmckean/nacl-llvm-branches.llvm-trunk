@@ -38,6 +38,7 @@ namespace {
     const ARMBaseInstrInfo *TII;
     const TargetRegisterInfo *TRI;
     const ARMSubtarget *STI;
+    bool IsRelocPIC; // @LOCALMOD
 
     virtual bool runOnMachineFunction(MachineFunction &Fn);
 
@@ -726,14 +727,45 @@ bool ARMExpandPseudo::ExpandMBB(MachineBasicBlock &MBB) {
         MI.eraseFromParent();
         break;
       }
+      // @LOCALMOD-BEGIN
+      unsigned LO16Opcode;
+      unsigned HI16Opcode;
+
+      // If constant pools are "disabled" (actually, moved to rodata), then
+      // many addresses (e.g., the addresses of what used to be the "pools")
+      // may not be materialized in a pc-relative manner, because MOVT / MOVW
+      // are used to materialize the addresses.
+      // We need to know if it matters that references are pc-relative
+      // (e.g., to be PIC).
+      // See the comments on MOVi16PIC / MOVTi16PIC for more details.
+      const bool ShouldUseMOV16PIC = FlagSfiDisableCP && IsRelocPIC &&
+          (MO.isCPI() || MO.isJTI() || MO.isGlobal()); // TODO check this list.
+
+      // Why didn't the original code check for MOVCCi32imm also?
+      // (it is one of the non "t2*" opcodes in this case).
+      const bool NotThumb2 = (Opcode == ARM::MOVi32imm);
+      // Choose an opcode for the MOVW/MOVT, depending on the current mode.
+      if (ShouldUseMOV16PIC) {
+        if (NotThumb2) {
+          LO16Opcode = ARM::MOVi16PIC;
+          HI16Opcode = ARM::MOVTi16PIC;
+        } else {
+          llvm_unreachable("FIXME: add PIC versions of t2MOVi16");
+        }
+      } else if (NotThumb2) {
+        LO16Opcode = ARM::MOVi16;
+        HI16Opcode = ARM::MOVTi16;
+      } else {
+        LO16Opcode = ARM::t2MOVi16;
+        HI16Opcode = ARM::t2MOVTi16;
+      }
+      //@LOCALMOD-END
 
       LO16 = BuildMI(MBB, MBBI, MI.getDebugLoc(),
-                     TII->get(Opcode == ARM::MOVi32imm ?
-                              ARM::MOVi16 : ARM::t2MOVi16),
+                     TII->get(LO16Opcode), // @LOCALMOD
                      DstReg);
       HI16 = BuildMI(MBB, MBBI, MI.getDebugLoc(),
-                     TII->get(Opcode == ARM::MOVi32imm ?
-                              ARM::MOVTi16 : ARM::t2MOVTi16))
+                     TII->get(HI16Opcode)) // @LOCALMOD
         .addReg(DstReg, RegState::Define | getDeadRegState(DstIsDead))
         .addReg(DstReg);
 
@@ -752,8 +784,8 @@ bool ARMExpandPseudo::ExpandMBB(MachineBasicBlock &MBB) {
       } else if (MO.isCPI()) {
         int i = MO.getIndex();
         unsigned TF = MO.getTargetFlags();
-        LO16 = LO16.addConstantPoolIndex(i, MO.getOffset(), TF | ARMII::MO_LO16);
-        HI16 = HI16.addConstantPoolIndex(i, MO.getOffset(), TF | ARMII::MO_HI16);
+        LO16 = LO16.addConstantPoolIndex(i, MO.getOffset(), TF|ARMII::MO_LO16);
+        HI16 = HI16.addConstantPoolIndex(i, MO.getOffset(), TF|ARMII::MO_HI16);
       } else if (MO.isJTI()){
         unsigned TF = MO.getTargetFlags();
         LO16 = LO16.addJumpTableIndex(MO.getIndex(), TF | ARMII::MO_LO16);
@@ -762,6 +794,28 @@ bool ARMExpandPseudo::ExpandMBB(MachineBasicBlock &MBB) {
         assert (0 && "unexpected operand");
       // @LOCALMOD-END
       }
+      // @LOCALMOD-BEGIN
+      if (ShouldUseMOV16PIC) {
+        // Throw in a PICADD, and tack on the PC label ID to the MOVT/MOVWs
+        MachineFunction &MF = *MI.getParent()->getParent();
+        ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
+
+        // Make a unique ID for this PC by pulling from pool of constPoolIDs
+        unsigned PC_ID = AFI->createConstPoolEntryUId();
+        MachineInstrBuilder PicADD =
+            BuildMI(MBB, MBBI, MI.getDebugLoc(),
+                    TII->get(NotThumb2 ? ARM::PICADD : ARM::tPICADD))
+            .addReg(DstReg, RegState::Define | getDeadRegState(DstIsDead))
+            .addReg(DstReg)
+            .addImm(PC_ID)
+            .addImm(Pred)
+            .addReg(PredReg);
+
+        // Add the PC label ID after what would have been an absolute address.
+        LO16 = LO16.addImm(PC_ID);
+        HI16 = HI16.addImm(PC_ID);
+      }
+      // @LOCALMOD-END
       (*LO16).setMemRefs(MI.memoperands_begin(), MI.memoperands_end());
       (*HI16).setMemRefs(MI.memoperands_begin(), MI.memoperands_end());
       LO16.addImm(Pred).addReg(PredReg);
@@ -1088,6 +1142,7 @@ bool ARMExpandPseudo::runOnMachineFunction(MachineFunction &MF) {
   TII = static_cast<const ARMBaseInstrInfo*>(MF.getTarget().getInstrInfo());
   TRI = MF.getTarget().getRegisterInfo();
   STI = &MF.getTarget().getSubtarget<ARMSubtarget>();
+  IsRelocPIC = MF.getTarget().getRelocationModel() == Reloc::PIC_;
 
   bool Modified = false;
   for (MachineFunction::iterator MFI = MF.begin(), E = MF.end(); MFI != E;

@@ -2011,6 +2011,54 @@ def MOVTi16 : AI1<0b1010, (outs GPR:$Rd), (ins GPR:$src, movt_imm:$imm),
   let Inst{25} = 1;
 }
 
+// @LOCALMOD-BEGIN
+// PIC / PC-relative versions of MOVi16/MOVTi16, which have an extra 
+// operand representing the ID of the PICADD instruction that corrects
+// for relativity. This is used to materialize addresses into
+// a register in a PC-relative manner.
+// 
+// E.g. Rather than have an absolute address in $imm, and transferred to 
+// a register with:
+//    movw $Rd, :lower16:$imm
+//    movt $Rd, :upper16:$imm
+//
+// we will instead have a relative offset:
+//    movw $Rd, :lower16:$imm - ($pic_add_id + 8)
+//    ...
+//    movt $Rd, :upper16:$imm - ($pic_add_id + 8)
+//    ...
+// $pic_add_id:
+//    add  $Rd, pc, $Rd
+//
+// One way these pseudo instructions (and the corresponding PICADD) 
+// come about is during expansion of the MOVi32imm pseudo instruction
+// (see ARMExpandPseudo::ExpandMBB).
+// These pseudo instructions become real instructions when they are
+// finally lowered to MCInsts (e.g., at ARMAsmPrinter::EmitInstruction),
+// and the extra pclabel ID becomes part of the appropriate operand.
+//
+// NOTE: aside from adding the pclabel operand, all other operands should
+// be the same as the non-PIC versions to simplify conversion to the 
+// non-pseudo instructions.
+let isReMaterializable = 1, isAsCheapAsAMove = 1, isMoveImm = 1 in
+def MOVi16PIC : PseudoInst<(outs GPR:$Rd), (ins movt_imm:$imm,
+                                                pclabel:$pic_add_id,
+                                                pred:$p),
+                           IIC_iMOVi,
+                           []>,
+                 Requires<[IsARM, HasV6T2]>, UnaryDP;
+
+let Constraints = "$src = $Rd" in
+def MOVTi16PIC : PseudoInst<(outs GPR:$Rd), (ins GPR:$src,
+                                                 movt_imm:$imm,
+                                                 pclabel:$pic_add_id,
+                                                 pred:$p),
+                            IIC_iMOVi,
+                            []>,
+                 UnaryDP, Requires<[IsARM, HasV6T2]>;
+// @LOCALMOD-END
+
+
 def : ARMPat<(or GPR:$src, 0xffff0000), (MOVTi16 GPR:$src, 0xffff)>,
       Requires<[IsARM, HasV6T2]>;
 
