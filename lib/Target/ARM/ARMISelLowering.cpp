@@ -54,6 +54,7 @@
 #include "llvm/Support/CommandLine.h"
 namespace llvm {
   extern cl::opt<bool> FlagSfiStore;
+  extern cl::opt<bool> FlagSfiDisableCP;
 }
 // @LOCALMOD-END
 
@@ -1821,22 +1822,66 @@ ARMTargetLowering::LowerToTLSGeneralDynamicModel(GlobalAddressSDNode *GA,
                                                  SelectionDAG &DAG) const {
   DebugLoc dl = GA->getDebugLoc();
   EVT PtrVT = getPointerTy();
-  unsigned char PCAdj = Subtarget->isThumb() ? 4 : 8;
-  MachineFunction &MF = DAG.getMachineFunction();
-  ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
-  unsigned ARMPCLabelIndex = AFI->createConstPoolEntryUId();
-  ARMConstantPoolValue *CPV =
-    new ARMConstantPoolValue(GA->getGlobal(), ARMPCLabelIndex,
-                             ARMCP::CPValue, PCAdj, ARMCP::TLSGD, true);
-  SDValue Argument = DAG.getTargetConstantPool(CPV, PtrVT, 4);
-  Argument = DAG.getNode(ARMISD::Wrapper, dl, MVT::i32, Argument);
-  Argument = DAG.getLoad(PtrVT, dl, DAG.getEntryNode(), Argument,
-                         MachinePointerInfo::getConstantPool(),
-                         false, false, 0);
-  SDValue Chain = Argument.getValue(1);
+  // @LOCALMOD-BEGIN
+  SDValue Chain;
+  SDValue Argument;
 
-  SDValue PICLabel = DAG.getConstant(ARMPCLabelIndex, MVT::i32);
-  Argument = DAG.getNode(ARMISD::PIC_ADD, dl, PtrVT, Argument, PICLabel);
+  if (FlagSfiDisableCP) {
+    // With constant pools "disabled" (moved to rodata), this constant pool
+    // entry is no longer in text, and simultaneous PC relativeness
+    // and CP Addr relativeness is no longer expressible.
+    // So, instead of having:
+    //
+    // .LCPI12_0:
+    //   .long var(tlsgd)-((.LPC12_0+8) - .)
+    // ...
+    //    ldr r2, .LCPI12_0
+    // .LPC12_0:
+    //    add r0, pc, r2
+    //
+    // we have:
+    //
+    // .LCPI12_0:
+    //   .long var(tlsgd)
+    // ...
+    //    // get addr of .LCPI12_0 into r2
+    //    ldr r0, [r2]
+    //    add r0, r2, r0
+    // (1) No longer subtracting pc, so no longer adding that back
+    // (2) Not adding "." in the CP entry, so adding it via instructions.
+    //
+    unsigned char PCAdj = 0;
+    MachineFunction &MF = DAG.getMachineFunction();
+    ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
+    unsigned ARMPCLabelIndex = AFI->createConstPoolEntryUId();
+    ARMConstantPoolValue *CPV =
+        new ARMConstantPoolValue(GA->getGlobal(), ARMPCLabelIndex,
+                                 ARMCP::CPValue, PCAdj, ARMCP::TLSGD, false);
+    SDValue CPAddr = DAG.getTargetConstantPool(CPV, PtrVT, 4);
+    CPAddr = DAG.getNode(ARMISD::Wrapper, dl, MVT::i32, CPAddr);
+    Argument = DAG.getLoad(PtrVT, dl, DAG.getEntryNode(), CPAddr,
+                                   MachinePointerInfo::getConstantPool(),
+                                   false, false, 0);
+    Chain = Argument.getValue(1);
+    Argument = DAG.getNode(ISD::ADD, dl, PtrVT, Argument, CPAddr);
+  } else { // sort of @LOCALMOD-END
+    unsigned char PCAdj = Subtarget->isThumb() ? 4 : 8;
+    MachineFunction &MF = DAG.getMachineFunction();
+    ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
+    unsigned ARMPCLabelIndex = AFI->createConstPoolEntryUId();
+    ARMConstantPoolValue *CPV =
+        new ARMConstantPoolValue(GA->getGlobal(), ARMPCLabelIndex,
+                                 ARMCP::CPValue, PCAdj, ARMCP::TLSGD, true);
+    Argument = DAG.getTargetConstantPool(CPV, PtrVT, 4); // @ LOCALMOD
+    Argument = DAG.getNode(ARMISD::Wrapper, dl, MVT::i32, Argument);
+    Argument = DAG.getLoad(PtrVT, dl, DAG.getEntryNode(), Argument,
+                           MachinePointerInfo::getConstantPool(),
+                           false, false, 0);
+    Chain = Argument.getValue(1); // @LOCALMOD
+
+    SDValue PICLabel = DAG.getConstant(ARMPCLabelIndex, MVT::i32);
+    Argument = DAG.getNode(ARMISD::PIC_ADD, dl, PtrVT, Argument, PICLabel);
+  } // @LOCALMOD-END
 
   // call __tls_get_addr.
   ArgListTy Args;
@@ -1871,24 +1916,48 @@ ARMTargetLowering::LowerToTLSExecModels(GlobalAddressSDNode *GA,
     MachineFunction &MF = DAG.getMachineFunction();
     ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
     unsigned ARMPCLabelIndex = AFI->createConstPoolEntryUId();
-    // Initial exec model.
-    unsigned char PCAdj = Subtarget->isThumb() ? 4 : 8;
-    ARMConstantPoolValue *CPV =
-      new ARMConstantPoolValue(GA->getGlobal(), ARMPCLabelIndex,
-                               ARMCP::CPValue, PCAdj, ARMCP::GOTTPOFF, true);
-    Offset = DAG.getTargetConstantPool(CPV, PtrVT, 4);
-    Offset = DAG.getNode(ARMISD::Wrapper, dl, MVT::i32, Offset);
-    Offset = DAG.getLoad(PtrVT, dl, Chain, Offset,
-                         MachinePointerInfo::getConstantPool(),
-                         false, false, 0);
-    Chain = Offset.getValue(1);
 
-    SDValue PICLabel = DAG.getConstant(ARMPCLabelIndex, MVT::i32);
-    Offset = DAG.getNode(ARMISD::PIC_ADD, dl, PtrVT, Offset, PICLabel);
+    // @LOCALMOD-BEGIN
+    if (FlagSfiDisableCP) {
+      // Similar to change to LowerToTLSGeneralDynamicModel, and
+      // for the same reason.
+      unsigned char PCAdj = 0;
+      ARMConstantPoolValue *CPV =
+          new ARMConstantPoolValue(GA->getGlobal(), ARMPCLabelIndex,
+                                   ARMCP::CPValue, PCAdj, ARMCP::GOTTPOFF,
+                                   false);
+      SDValue CPAddr = DAG.getTargetConstantPool(CPV, PtrVT, 4);
+      CPAddr = DAG.getNode(ARMISD::Wrapper, dl, MVT::i32, CPAddr);
+      Offset = DAG.getLoad(PtrVT, dl, Chain, CPAddr,
+                           MachinePointerInfo::getConstantPool(),
+                           false, false, 0);
+      Chain = Offset.getValue(1);
 
-    Offset = DAG.getLoad(PtrVT, dl, Chain, Offset,
-                         MachinePointerInfo::getConstantPool(),
-                         false, false, 0);
+      Offset = DAG.getNode(ISD::ADD, dl, PtrVT, Offset, CPAddr);
+
+      Offset = DAG.getLoad(PtrVT, dl, Chain, Offset,
+                           MachinePointerInfo::getConstantPool(),
+                           false, false, 0);
+    } else { // sort of @LOCALMOD-END (indentation)
+      // Initial exec model.
+      unsigned char PCAdj = Subtarget->isThumb() ? 4 : 8;
+      ARMConstantPoolValue *CPV =
+          new ARMConstantPoolValue(GA->getGlobal(), ARMPCLabelIndex,
+                                   ARMCP::CPValue, PCAdj, ARMCP::GOTTPOFF, true);
+      Offset = DAG.getTargetConstantPool(CPV, PtrVT, 4);
+      Offset = DAG.getNode(ARMISD::Wrapper, dl, MVT::i32, Offset);
+      Offset = DAG.getLoad(PtrVT, dl, Chain, Offset,
+                           MachinePointerInfo::getConstantPool(),
+                           false, false, 0);
+      Chain = Offset.getValue(1);
+
+      SDValue PICLabel = DAG.getConstant(ARMPCLabelIndex, MVT::i32);
+      Offset = DAG.getNode(ARMISD::PIC_ADD, dl, PtrVT, Offset, PICLabel);
+
+      Offset = DAG.getLoad(PtrVT, dl, Chain, Offset,
+                           MachinePointerInfo::getConstantPool(),
+                           false, false, 0);
+    } // @LOCALMOD-END
   } else {
     // local exec model
     ARMConstantPoolValue *CPV = new ARMConstantPoolValue(GV, ARMCP::TPOFF);
@@ -2014,17 +2083,90 @@ SDValue ARMTargetLowering::LowerGLOBAL_OFFSET_TABLE(SDValue Op,
   unsigned ARMPCLabelIndex = AFI->createConstPoolEntryUId();
   EVT PtrVT = getPointerTy();
   DebugLoc dl = Op.getDebugLoc();
-  unsigned PCAdj = Subtarget->isThumb() ? 4 : 8;
-  ARMConstantPoolValue *CPV = new ARMConstantPoolValue(*DAG.getContext(),
-                                                       "_GLOBAL_OFFSET_TABLE_",
-                                                       ARMPCLabelIndex, PCAdj);
-  SDValue CPAddr = DAG.getTargetConstantPool(CPV, PtrVT, 4);
-  CPAddr = DAG.getNode(ARMISD::Wrapper, dl, MVT::i32, CPAddr);
-  SDValue Result = DAG.getLoad(PtrVT, dl, DAG.getEntryNode(), CPAddr,
-                               MachinePointerInfo::getConstantPool(),
-                               false, false, 0);
-  SDValue PICLabel = DAG.getConstant(ARMPCLabelIndex, MVT::i32);
-  return DAG.getNode(ARMISD::PIC_ADD, dl, PtrVT, Result, PICLabel);
+
+  // @LOCALMOD-BEGIN
+  if (FlagSfiDisableCP) {
+    // With constant pools "disabled" (moved to rodata), the constant pool
+    // entry is no longer in text, and the PC relativeness is
+    // no longer expressible.
+    //
+    // Instead of having:
+    //
+    // .LCPI12_0:
+    //   .long _GLOBAL_OFFSET_TABLE_-(.LPC12_0+8)
+    // ...
+    //    ldr r2, .LCPI12_0
+    // .LPC12_0:
+    //    add r0, pc, r2
+    //
+    // Things to try:
+    // (1) get the address of the GOT through a pc-relative MOVW / MOVT.
+    //
+    //    movw r0, :lower16:_GLOBAL_OFFSET_TABLE_ - (.LPC12_0 + 8)
+    //    movt r0, :upper16:_GLOBAL_OFFSET_TABLE_ - (.LPC12_0 + 8)
+    // .LPC12_0:
+    //    add r0, pc, r0
+    //
+    // (2) Make the constant pool entry relative to its own location
+    //
+    // .LCPI12_0:
+    //   .long _GLOBAL_OFFSET_TABLE_-.
+    // ...
+    //    // get address of LCPI12_0 into r0 (possibly 3 instructions for PIC)
+    //    ldr r1, [r0]
+    //    add r1, r0, r1
+    //
+    // We will try (2) for now, since for (1) I don't know how to make a DAG
+    // node that represents "_GLOBAL_OFFSET_TABLE_" and can be placed in a
+    // ARMISD::Wrapper, where it will then transform:
+    // Wrapper -> MOVi32imm --> MOVi16PIC
+    //
+    // Wrappers are currently used for: globals, cp-indexes, jt-indexes.
+    // It's certainly neither a cp-index nor jt-index.
+    // If we make _GLOBAL_OFFSET_TABLE_ a "global variable" I'm not sure if
+    // there will be circularity (will it try to lower that in terms of the
+    // _GLOBAL_OFFSET_TABLE_ too?!).
+    // Do we then, need to make a new kind of DAG node and MachineOperand?
+    // Also, is using the R_ARM_MOVW_PREL_NC relocation really going to
+    // do the right thing with the GOT? The linker does seem to be happy
+    // with that (no undefined symbols, etc.), so maybe the problem is
+    // just with expressing this in LLVM.
+    //
+    // (2) is a lot closer what is already being done, but it uses
+    // around 2x more instructions.
+    // TODO: try to get something more like (1) for better performance.
+    //
+    unsigned PCAdj = 0;
+    unsigned RelToCurrentAddress = true;
+    // TODO: may be able merge "duplicates" of these const-pool values
+    // representing the relative address of GOT.
+    ARMConstantPoolValue *CPV =
+        new ARMConstantPoolValue(*DAG.getContext(),
+                                 "_GLOBAL_OFFSET_TABLE_",
+                                 ARMPCLabelIndex,
+                                 PCAdj,
+                                 ARMCP::no_modifier,
+                                 RelToCurrentAddress);
+    SDValue CPAddr = DAG.getTargetConstantPool(CPV, PtrVT, 4);
+    CPAddr = DAG.getNode(ARMISD::Wrapper, dl, MVT::i32, CPAddr);
+    SDValue RelGOTValue = DAG.getLoad(PtrVT, dl, DAG.getEntryNode(), CPAddr,
+                                      MachinePointerInfo::getConstantPool(),
+                                      false, false, 0);
+    // Finally, add the Address of the constant pool back in.
+    return DAG.getNode(ISD::ADD, dl, PtrVT, RelGOTValue, CPAddr);
+  } else { // Sort of LOCALMOD-END (indentation only
+    unsigned PCAdj = Subtarget->isThumb() ? 4 : 8;
+    ARMConstantPoolValue *CPV = new ARMConstantPoolValue(*DAG.getContext(),
+                                                         "_GLOBAL_OFFSET_TABLE_",
+                                                         ARMPCLabelIndex, PCAdj);
+    SDValue CPAddr = DAG.getTargetConstantPool(CPV, PtrVT, 4);
+    CPAddr = DAG.getNode(ARMISD::Wrapper, dl, MVT::i32, CPAddr);
+    SDValue Result = DAG.getLoad(PtrVT, dl, DAG.getEntryNode(), CPAddr,
+                                 MachinePointerInfo::getConstantPool(),
+                                 false, false, 0);
+    SDValue PICLabel = DAG.getConstant(ARMPCLabelIndex, MVT::i32);
+    return DAG.getNode(ARMISD::PIC_ADD, dl, PtrVT, Result, PICLabel);
+  } // @LOCALMOD-END
 }
 
 SDValue

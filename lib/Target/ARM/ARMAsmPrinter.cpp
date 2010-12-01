@@ -785,7 +785,20 @@ EmitMachineConstantPoolValue(MachineConstantPoolValue *MCPV) {
       PCRelExpr = MCBinaryExpr::CreateSub(PCRelExpr, DotExpr, OutContext);
     }
     Expr = MCBinaryExpr::CreateSub(Expr, PCRelExpr, OutContext);
+  } else {   // @LOCALMOD-BEGIN
+    // Check mustAddCurrentAddress() when getPCAdjustment() == 0,
+    // and make it actually *Subtract* the current address.
+    // A more appropriate name is probably "relativeToCurrentAddress",
+    // since the assembler can't actually handle "X + .", only "X - .".
+    if (ACPV->mustAddCurrentAddress()) {
+      MCSymbol *DotSym = OutContext.CreateTempSymbol();
+      OutStreamer.EmitLabel(DotSym);
+      const MCExpr *DotExpr = MCSymbolRefExpr::Create(DotSym, OutContext);
+      Expr = MCBinaryExpr::CreateSub(Expr, DotExpr, OutContext);
+    }
   }
+  // @LOCALMOD-END
+
   OutStreamer.EmitValue(Expr, Size);
 }
 
