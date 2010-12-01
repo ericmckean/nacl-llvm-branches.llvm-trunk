@@ -43,7 +43,8 @@ ARMConstantPoolValue::ARMConstantPoolValue(const GlobalValue *gv,
                                            ARMCP::ARMCPModifier Modif)
   : MachineConstantPoolValue((const Type*)Type::getInt32Ty(gv->getContext())),
     CVal(gv), S(NULL), LabelId(0), Kind(ARMCP::CPValue), PCAdjust(0),
-    Modifier(Modif) {}
+    Modifier(Modif), AddCurrentAddress(false) {}
+    // @LOCALMOD     ^^^ (should show up in next merge)
 
 
 const GlobalValue *ARMConstantPoolValue::getGV() const {
