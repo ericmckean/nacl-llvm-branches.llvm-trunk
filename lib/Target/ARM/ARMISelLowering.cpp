@@ -566,6 +566,12 @@ ARMTargetLowering::ARMTargetLowering(TargetMachine &TM)
   setOperationAction(ISD::STACKSAVE,          MVT::Other, Expand);
   setOperationAction(ISD::STACKRESTORE,       MVT::Other, Expand);
   setOperationAction(ISD::EHSELECTION,        MVT::i32,   Expand);
+  // @LOCALMOD-START
+  setOperationAction(ISD::EXCEPTIONADDR, MVT::i32, Expand);
+  // TODO: the use of ARM:R1 here and ARM:R0 below needs to be revisited
+  // once we get to the point where the c++ personality routine is invoked
+  setExceptionPointerRegister(ARM::R1);
+  // @LOCALMOD-END
   // FIXME: Shouldn't need this, since no register is used, but the legalizer
   // doesn't yet know how to not do that for SjLj.
   setExceptionSelectorRegister(ARM::R0);
