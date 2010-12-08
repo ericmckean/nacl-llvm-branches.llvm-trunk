@@ -2122,44 +2122,9 @@ SDValue ARMTargetLowering::LowerGLOBAL_OFFSET_TABLE(SDValue Op,
     //    ldr r1, [r0]
     //    add r1, r0, r1
     //
-    // We will try (2) for now, since for (1) I don't know how to make a DAG
-    // node that represents "_GLOBAL_OFFSET_TABLE_" and can be placed in a
-    // ARMISD::Wrapper, where it will then transform:
-    // Wrapper -> MOVi32imm --> MOVi16PIC
-    //
-    // Wrappers are currently used for: globals, cp-indexes, jt-indexes.
-    // It's certainly neither a cp-index nor jt-index.
-    // If we make _GLOBAL_OFFSET_TABLE_ a "global variable" I'm not sure if
-    // there will be circularity (will it try to lower that in terms of the
-    // _GLOBAL_OFFSET_TABLE_ too?!).
-    // Do we then, need to make a new kind of DAG node and MachineOperand?
-    // Also, is using the R_ARM_MOVW_PREL_NC relocation really going to
-    // do the right thing with the GOT? The linker does seem to be happy
-    // with that (no undefined symbols, etc.), so maybe the problem is
-    // just with expressing this in LLVM.
-    //
-    // (2) is a lot closer what is already being done, but it uses
-    // around 2x more instructions.
-    // TODO: try to get something more like (1) for better performance.
-    //
-    unsigned PCAdj = 0;
-    unsigned RelToCurrentAddress = true;
-    // TODO: may be able merge "duplicates" of these const-pool values
-    // representing the relative address of GOT.
-    ARMConstantPoolValue *CPV =
-        new ARMConstantPoolValue(*DAG.getContext(),
-                                 "_GLOBAL_OFFSET_TABLE_",
-                                 ARMPCLabelIndex,
-                                 PCAdj,
-                                 ARMCP::no_modifier,
-                                 RelToCurrentAddress);
-    SDValue CPAddr = DAG.getTargetConstantPool(CPV, PtrVT, 4);
-    CPAddr = DAG.getNode(ARMISD::Wrapper, dl, MVT::i32, CPAddr);
-    SDValue RelGOTValue = DAG.getLoad(PtrVT, dl, DAG.getEntryNode(), CPAddr,
-                                      MachinePointerInfo::getConstantPool(),
-                                      false, false, 0);
-    // Finally, add the Address of the constant pool back in.
-    return DAG.getNode(ISD::ADD, dl, PtrVT, RelGOTValue, CPAddr);
+    // We will try (1) for now, since (2) takes about 3 more instructions
+    // (and one of them is a load).
+    return DAG.getNode(ARMISD::WrapperGOT, dl, MVT::i32);
   } else { // Sort of LOCALMOD-END (indentation only
     unsigned PCAdj = Subtarget->isThumb() ? 4 : 8;
     ARMConstantPoolValue *CPV = new ARMConstantPoolValue(*DAG.getContext(),

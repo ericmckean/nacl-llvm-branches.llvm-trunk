@@ -75,6 +75,8 @@ def ARMWrapperJT     : SDNode<"ARMISD::WrapperJT",   SDTIntBinOp>;
 // we do not use the extre uid immediate that comes with ARMWrapperJT
 // TODO(robertm): figure out what it is used for
 def ARMWrapperJT2    : SDNode<"ARMISD::WrapperJT2",  SDTIntUnaryOp>;
+// Support for MOVW/MOVT'ing the GOT address directly into a register.
+def ARMWrapperGOT       : SDNode<"ARMISD::WrapperGOT",  SDTPtrLeaf>;
 // @LOCALMOD-END
 
 def ARMcallseq_start : SDNode<"ISD::CALLSEQ_START", SDT_ARMCallSeqStart,
@@ -2058,6 +2060,20 @@ def MOVTi16PIC : PseudoInst<(outs GPR:$Rd), (ins GPR:$src,
                  UnaryDP, Requires<[IsARM, HasV6T2]>;
 // @LOCALMOD-END
 
+// @LOCALMOD-BEGIN
+// Pseudo-instruction that will be expanded into MOVW / MOVT (PIC versions) w/
+// GOT as the operand. 
+// The alternative is to create a constant pool entry with the (relative)
+// GOT address and load from the constant pool. This is currently used
+// when constant islands are turned off, since MOVW / MOVT will be faster.
+let isReMaterializable = 1, isMoveImm = 1 in
+def MOVGOTAddr : PseudoInst<(outs GPR:$dst), (ins),
+                           IIC_iMOVix2, // will expand to two MOVi's
+                           []>,
+                           Requires<[IsARM, UseMovt]>;
+
+def : ARMPat<(ARMWrapperGOT), (MOVGOTAddr)>;
+// @LOCALMOD-END
 
 def : ARMPat<(or GPR:$src, 0xffff0000), (MOVTi16 GPR:$src, 0xffff)>,
       Requires<[IsARM, HasV6T2]>;

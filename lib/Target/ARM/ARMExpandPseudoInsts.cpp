@@ -55,6 +55,16 @@ namespace {
     void ExpandLaneOp(MachineBasicBlock::iterator &MBBI);
     void ExpandVTBL(MachineBasicBlock::iterator &MBBI,
                     unsigned Opc, bool IsExt, unsigned NumRegs);
+    // @LOCALMOD-BEGIN
+    void AddPICADD_MOVi16_PICID(MachineInstr &MI,
+                                MachineBasicBlock &MBB,
+                                MachineBasicBlock::iterator &MBBI,
+                                bool NotThumb,
+                                unsigned PredReg, ARMCC::CondCodes Pred,
+                                unsigned DstReg, bool DstIsDead,
+                                MachineInstrBuilder &LO16,
+                                MachineInstrBuilder &HI16);
+    // @LOCALMOD-END
   };
   char ARMExpandPseudo::ID = 0;
 }
@@ -585,6 +595,42 @@ void ARMExpandPseudo::ExpandVTBL(MachineBasicBlock::iterator &MBBI,
   MI.eraseFromParent();
 }
 
+
+// @LOCALMOD-BEGIN
+// AddPICADD_MOVi16_PICID - Inserts a PICADD into the given basic block,
+// and adds the PC label ID (of the PICADD) as an operand of the LO16 / HI16
+// MOVs. The ID operand will follow the "Immediate" operand (assumes that
+// operand is already added).
+void ARMExpandPseudo::AddPICADD_MOVi16_PICID(MachineInstr &MI,
+                                       MachineBasicBlock &MBB,
+                                       MachineBasicBlock::iterator &MBBI,
+                                       bool NotThumb,
+                                       unsigned PredReg, ARMCC::CondCodes Pred,
+                                       unsigned DstReg, bool DstIsDead,
+                                       MachineInstrBuilder &LO16,
+                                       MachineInstrBuilder &HI16) {
+  // Throw in a PICADD, and tack on the PC label ID to the MOVT/MOVWs
+  MachineFunction &MF = *MI.getParent()->getParent();
+  ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
+
+  // Make a unique ID for this PC by pulling from pool of constPoolIDs
+  unsigned PC_ID = AFI->createConstPoolEntryUId();
+  MachineInstrBuilder PicADD =
+      BuildMI(MBB, MBBI, MI.getDebugLoc(),
+              TII->get(NotThumb ? ARM::PICADD : ARM::tPICADD))
+      .addReg(DstReg, RegState::Define | getDeadRegState(DstIsDead))
+      .addReg(DstReg)
+      .addImm(PC_ID)
+      .addImm(Pred)
+      .addReg(PredReg);
+  (void)PicADD; // squelch unused warning.
+
+  // Add the PC label ID after what would have been an absolute address.
+  LO16 = LO16.addImm(PC_ID);
+  HI16 = HI16.addImm(PC_ID);
+}
+// @LOCALMOD-END
+
 bool ARMExpandPseudo::ExpandMBB(MachineBasicBlock &MBB) {
   bool Modified = false;
 
@@ -796,24 +842,8 @@ bool ARMExpandPseudo::ExpandMBB(MachineBasicBlock &MBB) {
       }
       // @LOCALMOD-BEGIN
       if (ShouldUseMOV16PIC) {
-        // Throw in a PICADD, and tack on the PC label ID to the MOVT/MOVWs
-        MachineFunction &MF = *MI.getParent()->getParent();
-        ARMFunctionInfo *AFI = MF.getInfo<ARMFunctionInfo>();
-
-        // Make a unique ID for this PC by pulling from pool of constPoolIDs
-        unsigned PC_ID = AFI->createConstPoolEntryUId();
-        MachineInstrBuilder PicADD =
-            BuildMI(MBB, MBBI, MI.getDebugLoc(),
-                    TII->get(NotThumb2 ? ARM::PICADD : ARM::tPICADD))
-            .addReg(DstReg, RegState::Define | getDeadRegState(DstIsDead))
-            .addReg(DstReg)
-            .addImm(PC_ID)
-            .addImm(Pred)
-            .addReg(PredReg);
-
-        // Add the PC label ID after what would have been an absolute address.
-        LO16 = LO16.addImm(PC_ID);
-        HI16 = HI16.addImm(PC_ID);
+        AddPICADD_MOVi16_PICID(MI, MBB, MBBI, NotThumb2,
+                               PredReg, Pred, DstReg, DstIsDead, LO16, HI16);
       }
       // @LOCALMOD-END
       (*LO16).setMemRefs(MI.memoperands_begin(), MI.memoperands_end());
@@ -824,6 +854,41 @@ bool ARMExpandPseudo::ExpandMBB(MachineBasicBlock &MBB) {
       MI.eraseFromParent();
       break;
     }
+
+    // @LOCALMOD-BEGIN
+    case ARM::MOVGOTAddr : {
+      // Expand the pseudo-inst that requests for the GOT address
+      // to be materialized into a register. We use MOVW/MOVT for this.
+      // See ARMISelLowering.cpp for a comment on the strategy.
+      unsigned PredReg = 0;
+      ARMCC::CondCodes Pred = llvm::getInstrPredicate(&MI, PredReg);
+      unsigned DstReg = MI.getOperand(0).getReg();
+      bool DstIsDead = MI.getOperand(0).isDead();
+      MachineInstrBuilder LO16, HI16;
+
+      LO16 = BuildMI(MBB, MBBI, MI.getDebugLoc(),
+                     TII->get(ARM::MOVi16PIC),
+                     DstReg)
+        .addExternalSymbol("_GLOBAL_OFFSET_TABLE_", ARMII::MO_LO16);
+
+      HI16 = BuildMI(MBB, MBBI, MI.getDebugLoc(),
+                     TII->get(ARM::MOVTi16PIC))
+        .addReg(DstReg, RegState::Define | getDeadRegState(DstIsDead))
+        .addReg(DstReg)
+        .addExternalSymbol("_GLOBAL_OFFSET_TABLE_", ARMII::MO_HI16);
+
+      AddPICADD_MOVi16_PICID(MI, MBB, MBBI, true,
+                             PredReg, Pred, DstReg, DstIsDead, LO16, HI16);
+
+      (*LO16).setMemRefs(MI.memoperands_begin(), MI.memoperands_end());
+      (*HI16).setMemRefs(MI.memoperands_begin(), MI.memoperands_end());
+      LO16.addImm(Pred).addReg(PredReg);
+      HI16.addImm(Pred).addReg(PredReg);
+      TransferImpOps(MI, LO16, HI16);
+      MI.eraseFromParent();
+      break;
+    }
+    // @LOCALMOD-END
 
     case ARM::VMOVQQ: {
       unsigned DstReg = MI.getOperand(0).getReg();
