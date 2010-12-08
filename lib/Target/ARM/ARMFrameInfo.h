@@ -43,7 +43,7 @@ public:
   int ResolveFrameIndexReference(const MachineFunction &MF, int FI,
                                  unsigned &FrameReg, int SPAdj) const;
   int getFrameIndexOffset(const MachineFunction &MF, int FI) const;
-
+  void getInitialFrameState(std::vector<MachineMove> &Moves) const;  // @LOCALMOD
 };
 
 } // End llvm namespace
