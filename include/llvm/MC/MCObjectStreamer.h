@@ -60,6 +60,18 @@ public:
   /// @name MCStreamer Interface
   /// @{
 
+  // @LOCALMOD-BEGIN
+  void EmitBundleLock();
+  void EmitBundleUnlock();
+  void EmitBundleAlignStart();
+  void EmitBundleAlignEnd();
+  // @LOCALMOD-END
+
+  // EmitBundlePadding -
+  //   If the current section is not BundleLocked, then emit a
+  //   BundlePaddingFragment in preparation for the next instruction.
+  void EmitBundlePadding() const;
+
   virtual void EmitULEB128Value(const MCExpr *Value, unsigned AddrSpace = 0);
   virtual void EmitSLEB128Value(const MCExpr *Value, unsigned AddrSpace = 0);
   virtual void EmitWeakReference(MCSymbol *Alias, const MCSymbol *Symbol);

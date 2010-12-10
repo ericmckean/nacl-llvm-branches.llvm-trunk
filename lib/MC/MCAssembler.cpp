@@ -227,10 +227,23 @@ MCSectionData::MCSectionData(const MCSection &_Section, MCAssembler *A)
   : Section(&_Section),
     Alignment(1),
     Address(~UINT64_C(0)),
-    HasInstructions(false)
+    HasInstructions(false),
+// @LOCALMOD-BEGIN
+    BundlingEnabled(false),
+    BundleLocked(false),
+    BundleAlignNext(MCBundlePaddingFragment::BundleAlignNone)
+// @LOCALMOD-END
 {
   if (A)
     A->getSectionList().push_back(this);
+
+  // @LOCALMOD-BEGIN
+  unsigned BundleSize = A->getBackend().getBundleSize();
+  if (BundleSize && _Section.UseCodeAlign()) {
+    BundlingEnabled = true;
+    setAlignment(BundleSize);
+  }
+  // @LOCALMOD-END
 }
 
 /* *** */
@@ -350,7 +363,14 @@ uint64_t MCAssembler::ComputeFragmentSize(MCAsmLayout &Layout,
 
   case MCFragment::FT_LEB:
     return cast<MCLEBFragment>(F).getSize();
-
+// @LOCALMOD-BEGIN
+  case MCFragment::FT_Tiny:
+    return cast<MCTinyFragment>(F).getContents().size();
+  case MCFragment::FT_BundlePadding: {
+    const MCBundlePaddingFragment &BPF = cast<MCBundlePaddingFragment>(F);
+    return BPF.ComputeSize(Layout, SectionAddress, FragmentOffset);
+  }
+// @LOCALMOD-END
   case MCFragment::FT_Align: {
     const MCAlignFragment &AF = cast<MCAlignFragment>(F);
 
@@ -422,6 +442,93 @@ void MCAsmLayout::LayoutFragment(MCFragment *F) {
   }
 }
 
+// @LOCALMOD-BEGIN
+
+// Returns number of bytes of padding needed to align to bundle start.
+static uint64_t AddressToBundlePadding(uint64_t Address, uint64_t BundleMask) {
+  return (~Address + 1) & BundleMask;
+}
+
+uint64_t MCAssembler::getBundleSize() const {
+  return getBackend().getBundleSize();
+}
+
+uint64_t MCAssembler::getBundleMask() const {
+  uint64_t BundleSize = getBundleSize();
+  uint64_t BundleMask = BundleSize - 1;
+  assert(BundleSize != 0);
+  assert((BundleSize & BundleMask) == 0 &&
+         "Bundle size must be a power of 2!");
+  return BundleMask;
+}
+
+void MCBundlePaddingFragment::ComputeGroupSize() {
+  bool FirstFrag = true;
+  bool DisallowMore = false;
+
+  GroupSize = 0;
+  MCFragment *Cur = this->getNextNode();
+  while (Cur && Cur->getKind() != MCFragment::FT_BundlePadding) {
+    if (DisallowMore)
+      llvm_unreachable("Bundle lock cannot contain .align, .org, or .fill");
+
+    switch (Cur->getKind()) {
+    default: llvm_unreachable("Unexpected fragment type!");
+    case MCFragment::FT_Align:
+    case MCFragment::FT_Org:
+    case MCFragment::FT_Fill:
+      DisallowMore = true;
+      if (!FirstFrag)
+        llvm_unreachable("Bundle lock cannot contain .align, .org, or .fill");
+      break;
+    case MCFragment::FT_Inst:
+      GroupSize += cast<MCInstFragment>(Cur)->getInstSize();
+      break;
+    case MCFragment::FT_Data:
+      GroupSize += cast<MCDataFragment>(Cur)->getContents().size();
+      break;
+    case MCFragment::FT_Tiny:
+      GroupSize += cast<MCTinyFragment>(Cur)->getContents().size();
+      break;
+    }
+    Cur = Cur->getNextNode();
+    FirstFrag = false;
+  }
+}
+
+uint64_t MCBundlePaddingFragment::ComputeSize(const MCAsmLayout &Layout,
+                                              uint64_t SectionAddress,
+                                              uint64_t FragmentOffset) const {
+  uint64_t BundleSize = Layout.getAssembler().getBundleSize();
+  uint64_t BundleMask = Layout.getAssembler().getBundleMask();
+
+  assert(GroupSize <= BundleSize &&
+         "Bundle lock contents too large!");
+  assert((SectionAddress & BundleMask) == 0 &&
+         "Section not bundle aligned!");
+
+  uint64_t Padding = 0;
+  uint64_t OffsetInBundle = FragmentOffset & BundleMask;
+  DEBUG(dbgs() << "Frag#" << this->getLayoutOrder() << " (" << this << ")\n");
+  DEBUG(dbgs() << "   OffsetInBundle = " << OffsetInBundle << "\n");
+  DEBUG(dbgs() << "   BundleAlign = " << BundleAlign << "\n");
+
+  if (OffsetInBundle + GroupSize > BundleSize ||
+      BundleAlign == MCBundlePaddingFragment::BundleAlignStart) {
+    // Pad up to start of the next bundle
+    Padding += AddressToBundlePadding(OffsetInBundle, BundleMask);
+    OffsetInBundle = 0;
+  }
+  if (BundleAlign == MCBundlePaddingFragment::BundleAlignEnd) {
+    // Push to the end of the bundle
+    Padding += AddressToBundlePadding(OffsetInBundle + GroupSize, BundleMask);
+  }
+  DEBUG(dbgs() << "   Computed Padding: " << Padding <<
+        " (GroupSize=" << GroupSize << ")\n");
+  return Padding;
+}
+// @LOCALMOD-END
+
 void MCAsmLayout::LayoutSection(MCSectionData *SD) {
   unsigned SectionOrderIndex = SD->getLayoutOrder();
 
@@ -440,6 +547,33 @@ void MCAsmLayout::LayoutSection(MCSectionData *SD) {
   // Set the section address.
   SD->Address = StartAddress;
 }
+
+// @LOCALMOD-BEGIN
+// Write out BundlePadding bytes in NOPs, being careful not to cross a bundle boundary.
+static void WriteBundlePadding(const MCAssembler &Asm,
+                               const MCAsmLayout &Layout,
+                               uint64_t Offset, uint64_t TotalPadding,
+                               MCObjectWriter *OW) {
+  uint64_t BundleSize = Asm.getBundleSize();
+  uint64_t BundleMask = Asm.getBundleMask();
+  uint64_t PaddingLeft = TotalPadding;
+  uint64_t StartPos = Offset;
+
+  bool FirstWrite = true;
+  while (PaddingLeft > 0) {
+    uint64_t NopsToWrite =
+      FirstWrite ? AddressToBundlePadding(StartPos, BundleMask) :
+                   BundleSize;
+    if (NopsToWrite > PaddingLeft)
+      NopsToWrite = PaddingLeft;
+    if (!Asm.getBackend().WriteNopData(NopsToWrite, OW))
+      report_fatal_error("unable to write nop sequence of " +
+                         Twine(NopsToWrite) + " bytes");
+    PaddingLeft -= NopsToWrite;
+    FirstWrite = false;
+  }
+}
+// @LOCALMOD-END
 
 /// WriteFragmentData - Write the \arg F data to the output file.
 static void WriteFragmentData(const MCAssembler &Asm, const MCAsmLayout &Layout,
@@ -472,6 +606,16 @@ static void WriteFragmentData(const MCAssembler &Asm, const MCAsmLayout &Layout,
     // bytes left to fill use the the Value and ValueSize to fill the rest.
     // If we are aligning with nops, ask that target to emit the right data.
     if (AF.hasEmitNops()) {
+      // @LOCALMOD-BEGIN
+      if (Asm.getBundleSize()) {
+        WriteBundlePadding(Asm, Layout,
+                           Layout.getFragmentOffset(&F),
+                           Layout.getFragmentEffectiveSize(&F),
+                           OW);
+        break;
+      }
+      // @LOCALMOD-END
+
       if (!Asm.getBackend().WriteNopData(Count, OW))
         report_fatal_error("unable to write nop sequence of " +
                           Twine(Count) + " bytes");
@@ -499,6 +643,15 @@ static void WriteFragmentData(const MCAssembler &Asm, const MCAsmLayout &Layout,
     break;
   }
 
+  // @LOCALMOD-BEGIN
+  case MCFragment::FT_Tiny: {
+    MCTinyFragment &TF = cast<MCTinyFragment>(F);
+    assert(FragmentSize == TF.getContents().size() && "Invalid size!");
+    OW->WriteBytes(TF.getContents().str());
+    break;
+  }
+  // @LOCALMOD-END
+
   case MCFragment::FT_Fill: {
     MCFillFragment &FF = cast<MCFillFragment>(F);
 
@@ -516,6 +669,14 @@ static void WriteFragmentData(const MCAssembler &Asm, const MCAsmLayout &Layout,
     }
     break;
   }
+  // @LOCALMOD-BEGIN
+  case MCFragment::FT_BundlePadding:
+    WriteBundlePadding(Asm, Layout,
+                       Layout.getFragmentOffset(&F),
+                       Layout.getFragmentEffectiveSize(&F),
+                       OW);
+    break;
+  // @LOCALMOD-END
 
   case MCFragment::FT_Inst:
     llvm_unreachable("unexpected inst fragment after lowering");
@@ -876,6 +1037,23 @@ bool MCAssembler::RelaxDwarfLineAddr(const MCObjectWriter &Writer,
   return OldSize != DF.getSize();  
 }
 
+// @LOCALMOD-BEGIN ====================================================
+bool MCAssembler::RelaxBPF(const MCObjectWriter &Writer,
+                           MCAsmLayout &Layout,
+                           MCBundlePaddingFragment &BPF) {
+
+  uint64_t OldGroupSize = BPF.getGroupSize();
+
+  BPF.ComputeGroupSize();
+
+  if (BPF.getGroupSize() != OldGroupSize) {
+    return true;
+  }
+  return false;
+}
+// @LOCALMOD-END   ====================================================
+
+
 bool MCAssembler::LayoutOnce(const MCObjectWriter &Writer,
                              MCAsmLayout &Layout) {
   ++stats::RelaxationSteps;
@@ -909,6 +1087,12 @@ bool MCAssembler::LayoutOnce(const MCObjectWriter &Writer,
       case MCFragment::FT_LEB:
         relaxedFrag = RelaxLEB(Writer, Layout, *cast<MCLEBFragment>(it2));
         break;
+      // @LOCALMOD-BEGIN
+      case MCFragment::FT_BundlePadding:
+        WasRelaxed |= RelaxBPF(Writer, Layout,
+                               *cast<MCBundlePaddingFragment>(it2));
+        break;
+      // @LOCALMOD-END
       }
       // Update the layout, and remember that we relaxed.
       if (relaxedFrag)
@@ -1009,6 +1193,10 @@ void MCFragment::dump() {
   case MCFragment::FT_Org:   OS << "MCOrgFragment"; break;
   case MCFragment::FT_Dwarf: OS << "MCDwarfFragment"; break;
   case MCFragment::FT_LEB:   OS << "MCLEBFragment"; break;
+  // @LOCALMOD-BEGIN
+  case MCFragment::FT_Tiny: OS << "MCTinyFragment"; break;
+  case MCFragment::FT_BundlePadding: OS << "MCBundlePaddingFragment"; break;
+  // @LOCALMOD-END
   }
 
   OS << "<MCFragment " << (void*) this << " LayoutOrder:" << LayoutOrder
@@ -1063,6 +1251,26 @@ void MCFragment::dump() {
     IF->getInst().dump_pretty(OS);
     break;
   }
+  // @LOCALMOD-BEGIN
+  case MCFragment::FT_Tiny: {
+    const MCTinyFragment *TF = cast<MCTinyFragment>(this);
+    OS << "\n       ";
+    OS << " Contents:[";
+    const SmallVectorImpl<char> &Contents = TF->getContents();
+    for (unsigned i = 0, e = Contents.size(); i != e; ++i) {
+      if (i) OS << ",";
+      OS << hexdigit((Contents[i] >> 4) & 0xF) << hexdigit(Contents[i] & 0xF);
+    }
+    OS << "] (" << Contents.size() << " bytes)";
+    break;
+  }
+  case MCFragment::FT_BundlePadding:  {
+    const MCBundlePaddingFragment *BPF = cast<MCBundlePaddingFragment>(this);
+    OS << "\n       GroupSize:" << BPF->getGroupSize();
+    OS << "\n       BundleAlign:" << (unsigned)BPF->getBundleAlign();
+    break;
+  }
+  // @LOCALMOD-END
   case MCFragment::FT_Org:  {
     const MCOrgFragment *OF = cast<MCOrgFragment>(this);
     OS << "\n       ";

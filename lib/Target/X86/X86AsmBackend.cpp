@@ -10,6 +10,7 @@
 #include "llvm/Target/TargetAsmBackend.h"
 #include "X86.h"
 #include "X86FixupKinds.h"
+#include "X86InstrNaCl.h" // @LOCALMOD
 #include "llvm/ADT/Twine.h"
 #include "llvm/MC/MCAssembler.h"
 #include "llvm/MC/MCExpr.h"
@@ -153,6 +154,16 @@ static unsigned getRelaxedOpcodeArith(unsigned Op) {
   case X86::CMP32mi8: return X86::CMP32mi;
   case X86::CMP64ri8: return X86::CMP64ri32;
   case X86::CMP64mi8: return X86::CMP64mi32;
+
+  // @LOCALMOD-BEGIN
+  // This is needed to fix an LLVM bug.
+  // It has already been fixed upstream and should be pulled
+  // during the next merge.
+  case X86::PUSHi8   : return X86::PUSHi16;
+  case X86::PUSHi16  : return X86::PUSHi32;
+  case X86::PUSH64i8 : return X86::PUSH64i16;
+  case X86::PUSH64i16: return X86::PUSH64i32;
+  // @LOCALMOD-END
   }
 }
 
@@ -257,6 +268,13 @@ bool X86AsmBackend::WriteNopData(uint64_t Count, MCObjectWriter *OW) const {
 
   // Write an optimal sequence for the first 15 bytes.
   uint64_t OptimalCount = (Count < 16) ? Count : 15;
+
+  // @LOCALMOD-BEGIN
+  // Disable fancy NOPs until we can make the validator happy.
+  // For now, only emit 0x90.
+  OptimalCount = 0;
+  // @LOCALMOD-END
+
   for (uint64_t i = 0, e = OptimalCount; i != e; i++)
     OW->Write8(Nops[OptimalCount - 1][i]);
 
@@ -289,6 +307,20 @@ public:
     const MCSectionELF &ES = static_cast<const MCSectionELF&>(Section);
     return ES.getFlags() & MCSectionELF::SHF_MERGE;
   }
+
+  // @LOCALMOD-BEGIN
+  unsigned getBundleSize() const {
+    return OSType == Triple::NativeClient ? 32 : 0;
+  }
+
+  bool CustomExpandInst(const MCInst &Inst, MCStreamer &Out) const {
+    if (OSType == Triple::NativeClient) {
+      return CustomExpandInstNaCl(Inst, Out);
+    }
+    return false;
+  }
+  // @LOCALMOD-END
+
 };
 
 class ELFX86_32AsmBackend : public ELFX86AsmBackend {

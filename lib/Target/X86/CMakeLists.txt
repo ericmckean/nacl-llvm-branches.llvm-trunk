@@ -28,6 +28,7 @@ set(sources
   X86ISelDAGToDAG.cpp
   X86ISelLowering.cpp
   X86InstrInfo.cpp
+  X86InstrNaCl.cpp
   X86JITInfo.cpp
   X86MCAsmInfo.cpp
   X86MCCodeEmitter.cpp 

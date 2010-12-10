@@ -78,7 +78,14 @@ namespace TargetOpcode {
 
     /// COPY - Target-independent register copy. This instruction can also be
     /// used to copy between subregisters of virtual registers.
-    COPY = 13
+    COPY = 13,
+
+    // @LOCALMOD-BEGIN
+    BUNDLE_ALIGN_START = 14,
+    BUNDLE_ALIGN_END = 15,
+    BUNDLE_LOCK = 16,
+    BUNDLE_UNLOCK = 17
+    // @LOCALMOD-END
   };
 } // end namespace TargetOpcode
 } // end namespace llvm

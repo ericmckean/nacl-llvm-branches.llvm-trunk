@@ -736,7 +736,12 @@ const MCSymbol *ELFObjectWriter::SymbolToReloc(const MCAssembler &Asm,
   if (&Sec2 != &Section &&
       (Kind == MCSymbolRefExpr::VK_PLT ||
        Kind == MCSymbolRefExpr::VK_GOTPCREL ||
-       Kind == MCSymbolRefExpr::VK_GOTOFF)) {
+       Kind == MCSymbolRefExpr::VK_GOTOFF ||
+  // @LOCALMOD-BEGIN
+  // Fixes an LLVM bug. This bug has already been fixed upstream
+  // and should disappear on the next merge.
+       Kind == MCSymbolRefExpr::VK_NTPOFF)) {
+  // @LOCALMOD-END
     if (Renamed)
       return Renamed;
     return &Symbol;
@@ -1272,6 +1277,12 @@ void ELFObjectWriter::WriteSection(MCAssembler &Asm,
   case ELF::SHT_NOBITS:
   case ELF::SHT_NULL:
   case ELF::SHT_ARM_ATTRIBUTES:
+  // @LOCALMOD-BEGIN
+  // Fixes upstream bug. This still needs to be fixed upstream.
+  case ELF::SHT_PREINIT_ARRAY:
+  case ELF::SHT_INIT_ARRAY:
+  case ELF::SHT_FINI_ARRAY:
+  // @LOCALMOD-END
     // Nothing to do.
     break;
 

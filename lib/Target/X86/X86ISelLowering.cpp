@@ -10280,7 +10280,7 @@ X86TargetLowering::EmitInstrWithCustomInserter(MachineInstr *MI,
     return EmitVAStartSaveXMMRegsWithCustomInserter(MI, BB);
 
   case X86::VAARG_64:
-  case X86::NACL_VAARG_64:
+  case X86::NACL_CG_VAARG_64:
     return EmitVAARG64WithCustomInserter(MI, BB);
   }
 }

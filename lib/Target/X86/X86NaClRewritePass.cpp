@@ -24,6 +24,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/FormattedStream.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/CommandLine.h"
 
 using namespace llvm;
 
@@ -47,26 +48,14 @@ namespace {
     const X86Subtarget *Subtarget;
     bool Is64Bit;
 
-    typedef enum {
-      SFIStack,       // Stack Pointer (RSP) Modification
-      SFIControl,     // CALL / RET / etc
-      SFIFrame,       // Frame Pointer (RBP) Modification
-      SFIMemory       // Load/Store
-    } SFIType;
-
-    struct SFIPattern {
-      SFIType  Type;
-      unsigned Arch;
-      unsigned OrigOpcode;
-      unsigned NewOpcode;
-    };
-
-    void InitPatternTable();
-    const SFIPattern *SFIPatternTable;
-    unsigned NumSFIPatterns;
-
     bool runOnMachineBasicBlock(MachineBasicBlock &MBB);
 
+    void TraceLog(const char *func,
+                  const MachineBasicBlock &MBB,
+                  const MachineBasicBlock::iterator MBBI) const;
+
+    bool ApplyRewrites(MachineBasicBlock &MBB,
+                      MachineBasicBlock::iterator MBBI);
     bool ApplyStackSFI(MachineBasicBlock &MBB,
                        MachineBasicBlock::iterator MBBI);
 
@@ -79,103 +68,12 @@ namespace {
     bool ApplyControlSFI(MachineBasicBlock &MBB,
                          MachineBasicBlock::iterator MBBI);
 
-    const SFIPattern *FindPatternMatch(const MachineInstr &MI,
-                                       SFIType Type);
-
-    bool ApplyPattern(MachineInstr &MI,
-                      const SFIPattern *Pat);
-
-
     void PassLightWeightValidator(MachineBasicBlock &MBB);
     bool AlignJumpTableTargets(MachineFunction &MF);
   };
 
   char X86NaClRewritePass::ID = 0;
 
-}
-
-// TODO(pdox): Get rid of this table when we've switched completely to
-//             the new style for pseudo-instructions.
-
-void X86NaClRewritePass::InitPatternTable() {
-  static const SFIPattern TheTable[] = {
-    { SFIStack,   64, X86::MOV32rr,     X86::NACL_SET_SPr  },
-    { SFIStack,   64, X86::MOV64rr,     X86::NACL_SET_SPr  },
-    { SFIStack,   64, X86::MOV32rm,     X86::NACL_SET_SPm  },
-    { SFIStack,   64, X86::ADD64ri8,    X86::NACL_ADD_SP   },
-    { SFIStack,   64, X86::ADD64ri32,   X86::NACL_ADD_SP   },
-    { SFIStack,   64, X86::SUB64ri8,    X86::NACL_SUB_SP   },
-    { SFIStack,   64, X86::SUB64ri32,   X86::NACL_SUB_SP   },
-    { SFIStack,   64, X86::LEA64r,      X86::NACL_ADJ_SP   },
-
-    { SFIControl, 32, X86::JMP32r,      X86::NACL_JMP32r   },
-    { SFIControl, 32, X86::TAILJMPr,    X86::NACL_TAILJMPr },
-    { SFIControl, 32, X86::TRAP,        X86::NACL_TRAP32   },
-    { SFIControl, 64, X86::TRAP,        X86::NACL_TRAP64   },
-
-    { SFIControl, 32, X86::RET,         X86::NACL_RET32,   },
-    { SFIControl, 64, X86::RET,         X86::NACL_RET64    },
-    { SFIControl, 32, X86::RETI,        X86::NACL_RETI32   },
-
-    // EH_RETURN has a single argment which is not actually used directly.
-    // The argument gives the location where to reposition the stack pointer
-    // before returning. EmitPrologue takes care of that repositioning.
-    // So EH_RETURN just ultimately emits a plain "ret"
-    { SFIControl, 32, X86::EH_RETURN,   X86::NACL_RET32    },
-    { SFIControl, 64, X86::EH_RETURN,   X86::NACL_RET64    },
-
-    // Opcodes below are already safe
-    { SFIControl, 32, X86::NACL_CALLpcrel32,   0 },
-    { SFIControl, 32, X86::NACL_CALL32r,       0 },
-    { SFIControl, 64, X86::NACL_CALL64r,       0 },
-    { SFIControl, 64, X86::NACL_CALL64pcrel32, 0 },
-
-    { SFIControl, 32, X86::NACL_TAILJMPr,      0 },
-    { SFIControl, 32, X86::NACL_TAILJMPd,      0 },
-    { SFIControl, 32, X86::NACL_TCRETURNri,    0 },
-    { SFIControl, 32, X86::NACL_TCRETURNdi,    0 },
-
-    { SFIControl, 64, X86::NACL_TCRETURNdi64,  0 },
-    { SFIControl, 64, X86::NACL_TCRETURNri64,  0 },
-    { SFIControl, 64, X86::NACL_TAILJMPd64,    0 },
-    { SFIControl, 64, X86::NACL_TAILJMPr64,    0 },
-    { SFIControl, 64, X86::NACL_JMP64r,        0 }
-};
-  SFIPatternTable = TheTable;
-  NumSFIPatterns = sizeof(TheTable)/sizeof(*TheTable);
-}
-
-const X86NaClRewritePass::SFIPattern *
-X86NaClRewritePass::FindPatternMatch(const MachineInstr &MI,
-                                     SFIType Type) {
-  unsigned Arch = Is64Bit ? 64 : 32;
-  unsigned Opc = MI.getOpcode();
-
-  for (unsigned i=0; i < NumSFIPatterns; i++) {
-    const SFIPattern &Pat = SFIPatternTable[i];
-    if (Pat.Type == Type &&
-        Pat.Arch == Arch &&
-        Pat.OrigOpcode == Opc) {
-      return &Pat;
-    }
-  }
-  return NULL;
-}
-
-// Apply the pattern instruction change.
-// If a change occured, return true.
-bool X86NaClRewritePass::ApplyPattern(MachineInstr &MI,
-                                      const SFIPattern *Pat) {
-  if (Pat->NewOpcode) {
-    DEBUG(dbgs() << "@ApplyPattern INSTRUCTION BEFORE:\n");
-    DEBUG(dbgs() << MI << "\n");
-    MI.setDesc(TII->get(Pat->NewOpcode));
-    DEBUG(dbgs() << "@ApplyPattern INSTRUCTION AFTER:\n");
-    DEBUG(dbgs() << MI << "\n");
-    return true;
-  } else {
-    return false;
-  }
 }
 
 static void DumpInstructionVerbose(const MachineInstr &MI);
@@ -190,6 +88,8 @@ static bool IsPushPop(MachineInstr &MI) {
     return true;
   }
 }
+
+static bool IsSandboxed(MachineInstr &MI);
 
 static bool IsStore(MachineInstr &MI) {
   return MI.getDesc().mayStore();
@@ -258,6 +158,15 @@ static unsigned PromoteRegTo64(unsigned RegIn) {
   return RegOut;
 }
 
+static unsigned DemoteRegTo32(unsigned RegIn) {
+  if (RegIn == 0)
+    return 0;
+  unsigned RegOut = getX86SubSuperRegister(RegIn, MVT::i32, false);
+  assert(RegOut != 0);
+  return RegOut;
+}
+
+
 //
 // True if this MI restores RSP from RBP with a slight adjustment offset.
 //
@@ -275,8 +184,16 @@ static bool MatchesSPAdj(const MachineInstr &MI) {
           Offset.isImm());
 }
 
+void
+X86NaClRewritePass::TraceLog(const char *func,
+                             const MachineBasicBlock &MBB,
+                             const MachineBasicBlock::iterator MBBI) const {
+  DEBUG(dbgs() << "@" << func << "(" << MBB.getName() << ", " << (*MBBI) << ")\n");
+}
+
 bool X86NaClRewritePass::ApplyStackSFI(MachineBasicBlock &MBB,
                                        MachineBasicBlock::iterator MBBI) {
+  TraceLog("ApplyStackSFI", MBB, MBBI);
   assert(Is64Bit);
   MachineInstr &MI = *MBBI;
 
@@ -287,8 +204,24 @@ bool X86NaClRewritePass::ApplyStackSFI(MachineBasicBlock &MBB,
     return false;
 
   unsigned Opc = MI.getOpcode();
+  DebugLoc DL = MI.getDebugLoc();
   unsigned DestReg = MI.getOperand(0).getReg();
   assert(DestReg == X86::ESP || DestReg == X86::RSP);
+
+  unsigned NewOpc = 0;
+  switch (Opc) {
+  case X86::ADD64ri8 : NewOpc = X86::NACL_ASPi8; break;
+  case X86::ADD64ri32: NewOpc = X86::NACL_ASPi32; break;
+  case X86::SUB64ri8 : NewOpc = X86::NACL_SSPi8; break;
+  case X86::SUB64ri32: NewOpc = X86::NACL_SSPi32; break;
+  }
+  if (NewOpc) {
+    BuildMI(MBB, MBBI, DL, TII->get(NewOpc))
+      .addImm(MI.getOperand(2).getImm())
+      .addReg(X86::R15);
+    MI.eraseFromParent();
+    return true;
+  }
 
   // Promote "MOV ESP, EBP" to a 64-bit move
   if (Opc == X86::MOV32rr && MI.getOperand(1).getReg() == X86::EBP) {
@@ -320,15 +253,34 @@ bool X86NaClRewritePass::ApplyStackSFI(MachineBasicBlock &MBB,
     Opc = X86::LEA64r;
   }
 
-  // Make sure LEA64r matches the safe pattern
-  if (Opc == X86::LEA64r) {
-    assert(MatchesSPAdj(MI));
+  if (Opc == X86::LEA64r && MatchesSPAdj(MI)) {
+    const MachineOperand &Offset = MI.getOperand(4);
+    BuildMI(MBB, MBBI, DL, TII->get(X86::NACL_SPADJi32))
+      .addImm(Offset.getImm())
+      .addReg(X86::R15);
+    MI.eraseFromParent();
+    return true;
   }
 
-  // General case
-  const SFIPattern *Pat = FindPatternMatch(MI, SFIStack);
-  if (Pat)
-    return ApplyPattern(MI, Pat);
+  if (Opc == X86::MOV32rr || Opc == X86::MOV64rr) {
+    BuildMI(MBB, MBBI, DL, TII->get(X86::NACL_RESTSPr))
+      .addReg(DemoteRegTo32(MI.getOperand(1).getReg()))
+      .addReg(X86::R15);
+    MI.eraseFromParent();
+    return true;
+  }
+
+  if (Opc == X86::MOV32rm) {
+    BuildMI(MBB, MBBI, DL, TII->get(X86::NACL_RESTSPm))
+      .addOperand(MI.getOperand(1)) // Base
+      .addOperand(MI.getOperand(2)) // Scale
+      .addOperand(MI.getOperand(3)) // Index
+      .addOperand(MI.getOperand(4)) // Offset
+      .addOperand(MI.getOperand(5)) // Segment
+      .addReg(X86::R15);
+    MI.eraseFromParent();
+    return true;
+  }
 
   DumpInstructionVerbose(MI);
   llvm_unreachable("Unhandled Stack SFI");
@@ -336,6 +288,7 @@ bool X86NaClRewritePass::ApplyStackSFI(MachineBasicBlock &MBB,
 
 bool X86NaClRewritePass::ApplyFrameSFI(MachineBasicBlock &MBB,
                                        MachineBasicBlock::iterator MBBI) {
+  TraceLog("ApplyFrameSFI", MBB, MBBI);
   assert(Is64Bit);
   MachineInstr &MI = *MBBI;
 
@@ -352,8 +305,33 @@ bool X86NaClRewritePass::ApplyFrameSFI(MachineBasicBlock &MBB,
   }
 
   // Popping onto RBP
+  // Rewrite to:
+  //   naclrestbp (%rsp), %r15
+  //   naclasp $8, %r15
+  //
+  // TODO(pdox): Consider rewriting to this instead:
+  //   .bundle_lock
+  //   pop %rbp
+  //   mov %ebp,%ebp
+  //   add %r15, %rbp
+  //   .bundle_unlock
   if (Opc == X86::POP64r) {
-    MI.setDesc(TII->get(X86::NACL_POP_RBP));
+    assert(MI.getOperand(0).getReg() == X86::RBP);
+    DebugLoc DL = MI.getDebugLoc();
+
+    BuildMI(MBB, MBBI, DL, TII->get(X86::NACL_RESTBPm))
+      .addReg(X86::RSP)  // Base
+      .addImm(1)  // Scale
+      .addReg(0)  // Index
+      .addImm(0)  // Offset
+      .addReg(0)  // Segment
+      .addReg(X86::R15); // rZP
+
+    BuildMI(MBB, MBBI, DL, TII->get(X86::NACL_ASPi8))
+      .addImm(8)
+      .addReg(X86::R15);
+
+    MI.eraseFromParent();
     return true;
   }
 
@@ -363,6 +341,7 @@ bool X86NaClRewritePass::ApplyFrameSFI(MachineBasicBlock &MBB,
 
 bool X86NaClRewritePass::ApplyControlSFI(MachineBasicBlock &MBB,
                                          MachineBasicBlock::iterator MBBI) {
+  TraceLog("ApplyControlSFI", MBB, MBBI);
   MachineInstr &MI = *MBBI;
 
   if (!HasControlFlow(MI))
@@ -372,15 +351,84 @@ bool X86NaClRewritePass::ApplyControlSFI(MachineBasicBlock &MBB,
   if (IsDirectBranch(MI))
     return false;
 
+  DebugLoc DL = MI.getDebugLoc();
   unsigned Opc = MI.getOpcode();
 
-  // General Case
-  const SFIPattern *Pat = FindPatternMatch(MI, SFIControl);
-  if (Pat)
-    return ApplyPattern(MI, Pat);
+  // Rewrite indirect jump/call instructions
+  unsigned NewOpc = 0;
+  switch (Opc) {
+  // 32-bit
+  case X86::JMP32r               : NewOpc = X86::NACL_JMP32r; break;
+  case X86::TAILJMPr             : NewOpc = X86::NACL_JMP32r; break;
+  case X86::NACL_CG_CALL32r      : NewOpc = X86::NACL_CALL32r; break;
+  // 64-bit
+  case X86::NACL_CG_JMP64r       : NewOpc = X86::NACL_JMP64r; break;
+  case X86::NACL_CG_CALL64r      : NewOpc = X86::NACL_CALL64r; break;
+  case X86::NACL_CG_TAILJMPr64   : NewOpc = X86::NACL_JMP64r; break;
+  }
+  if (NewOpc) {
+    MachineInstrBuilder NewMI =
+     BuildMI(MBB, MBBI, DL, TII->get(NewOpc))
+       .addOperand(MI.getOperand(0));
+    if (Is64Bit) {
+      NewMI.addReg(X86::R15);
+    }
+    MI.eraseFromParent();
+    return true;
+  }
+
+  // EH_RETURN has a single argment which is not actually used directly.
+  // The argument gives the location where to reposition the stack pointer
+  // before returning. EmitPrologue takes care of that repositioning.
+  // So EH_RETURN just ultimately emits a plain "ret"
+  if (Opc == X86::RET || Opc == X86::EH_RETURN || Opc == X86::EH_RETURN64) {
+    // To maintain compatibility with nacl-as, for now we don't emit naclret.
+    // MI.setDesc(TII->get(Is64Bit ? X86::NACL_RET64 : X86::NACL_RET32));
+    if (Is64Bit) {
+      BuildMI(MBB, MBBI, DL, TII->get(X86::POP64r), X86::RCX);
+      BuildMI(MBB, MBBI, DL, TII->get(X86::NACL_JMP64r))
+        .addReg(X86::ECX)
+        .addReg(X86::R15);
+    } else {
+      BuildMI(MBB, MBBI, DL, TII->get(X86::POP32r), X86::ECX);
+      BuildMI(MBB, MBBI, DL, TII->get(X86::NACL_JMP32r))
+        .addReg(X86::ECX);
+    }
+    MI.eraseFromParent();
+    return true;
+  }
+
+  if (Opc == X86::RETI) {
+    // To maintain compatibility with nacl-as, for now we don't emit naclret.
+    // MI.setDesc(TII->get(X86::NACL_RETI32));
+    assert(!Is64Bit);
+    BuildMI(MBB, MBBI, DL, TII->get(X86::POP32r), X86::ECX);
+    BuildMI(MBB, MBBI, DL, TII->get(X86::ADD32ri), X86::ESP)
+      .addReg(X86::ESP)
+      .addOperand(MI.getOperand(0));
+    BuildMI(MBB, MBBI, DL, TII->get(X86::NACL_JMP32r))
+      .addReg(X86::ECX);
+    MI.eraseFromParent();
+    return true;
+  }
+
+  // Rewrite trap
+  if (Opc == X86::TRAP) {
+    // To maintain compatibility with nacl-as, for now we don't emit nacltrap.
+    // MI.setDesc(TII->get(Is64Bit ? X86::NACL_TRAP64 : X86::NACL_TRAP32));
+    BuildMI(MBB, MBBI, DL, TII->get(X86::MOV32mi))
+      .addReg(Is64Bit ? X86::R15 : 0) // Base
+      .addImm(1) // Scale
+      .addReg(0) // Index
+      .addImm(0) // Offset
+      .addReg(0) // Segment
+      .addImm(0); // Value
+    MI.eraseFromParent();
+    return true;
+  }
 
   DumpInstructionVerbose(MI);
-  llvm_unreachable("Unhandled control flow");
+  llvm_unreachable("Unhandled Control SFI");
 }
 
 //
@@ -388,6 +436,7 @@ bool X86NaClRewritePass::ApplyControlSFI(MachineBasicBlock &MBB,
 //
 bool X86NaClRewritePass::ApplyMemorySFI(MachineBasicBlock &MBB,
                                         MachineBasicBlock::iterator MBBI) {
+  TraceLog("ApplyMemorySFI", MBB, MBBI);
   assert(Is64Bit);
   MachineInstr &MI = *MBBI;
 
@@ -430,10 +479,50 @@ bool X86NaClRewritePass::ApplyMemorySFI(MachineBasicBlock &MBB,
   }
 
   if (AddrReg) {
-   assert(!SegmentReg.getReg() && "Unexpected segment register");
-   SegmentReg.setReg(X86::PSEUDO_NACL_SEG);
+    assert(!SegmentReg.getReg() && "Unexpected segment register");
+    SegmentReg.setReg(X86::PSEUDO_NACL_SEG);
+    return true;
   }
-  return true;
+
+  return false;
+}
+
+bool X86NaClRewritePass::ApplyRewrites(MachineBasicBlock &MBB,
+                                       MachineBasicBlock::iterator MBBI) {
+
+  MachineInstr &MI = *MBBI;
+  DebugLoc DL = MI.getDebugLoc();
+  unsigned Opc = MI.getOpcode();
+
+  // These direct jumps need their opcode rewritten
+  // and variable operands removed.
+  unsigned NewOpc = 0;
+  switch (Opc) {
+  case X86::NACL_CG_CALLpcrel32  : NewOpc = X86::NACL_CALL32d; break;
+  case X86::TAILJMPd             : NewOpc = X86::JMP_4; break;
+  case X86::NACL_CG_TAILJMPd64   : NewOpc = X86::JMP_4; break;
+  case X86::NACL_CG_CALL64pcrel32: NewOpc = X86::NACL_CALL64d; break;
+  }
+  if (NewOpc) {
+    BuildMI(MBB, MBBI, DL, TII->get(NewOpc))
+      .addOperand(MI.getOperand(0));
+    MI.eraseFromParent();
+    return true;
+  }
+
+  if (Opc == X86::NACL_CG_TLS_addr64) {
+    // Rewrite to:
+    //   movq $sym, %rdi
+    //   call __tls_get_addr@PLT   // sandbox separately
+    BuildMI(MBB, MBBI, DL, TII->get(X86::MOV64ri32), X86::RDI)
+      .addGlobalAddress(MI.getOperand(3).getGlobal(), 0,
+                        MI.getOperand(3).getTargetFlags());
+    BuildMI(MBB, MBBI, DL, TII->get(X86::NACL_CALL64d))
+      .addExternalSymbol("__tls_get_addr", X86II::MO_PLT);
+    MI.eraseFromParent();
+    return true;
+  }
+  return false;
 }
 
 bool X86NaClRewritePass::AlignJumpTableTargets(MachineFunction &MF) {
@@ -466,127 +555,70 @@ bool X86NaClRewritePass::runOnMachineFunction(MachineFunction &MF) {
 
   assert(Subtarget->isTargetNaCl() && "Unexpected target in NaClRewritePass!");
 
-  InitPatternTable();
-
   DEBUG(dbgs() << "*************** NaCl Rewrite Pass ***************\n");
   for (MachineFunction::iterator MFI = MF.begin(), E = MF.end();
        MFI != E;
        ++MFI) {
     Modified |= runOnMachineBasicBlock(*MFI);
-    PassLightWeightValidator(*MFI);
   }
   Modified |= AlignJumpTableTargets(MF);
+  DEBUG(dbgs() << "*************** NaCl Rewrite DONE  ***************\n");
   return Modified;
 }
 
 bool X86NaClRewritePass::runOnMachineBasicBlock(MachineBasicBlock &MBB) {
   bool Modified = false;
-  for (MachineBasicBlock::iterator MBBI = MBB.begin(), E = MBB.end();
-       MBBI != E;
-       ++MBBI) {
-    if (Is64Bit) {
-      Modified |= ApplyStackSFI(MBB, MBBI);
-      Modified |= ApplyMemorySFI(MBB, MBBI);
-      Modified |= ApplyFrameSFI(MBB, MBBI);
+  for (MachineBasicBlock::iterator MBBI = MBB.begin(), NextMBBI = MBBI;
+       MBBI != MBB.end(); MBBI = NextMBBI) {
+    ++NextMBBI;
+    // When one of these methods makes a change,
+    // it returns true, skipping the others.
+    if (ApplyRewrites(MBB, MBBI) ||
+        (Is64Bit && ApplyStackSFI(MBB, MBBI)) ||
+        (Is64Bit && ApplyMemorySFI(MBB, MBBI)) ||
+        (Is64Bit && ApplyFrameSFI(MBB, MBBI)) ||
+        ApplyControlSFI(MBB, MBBI)) {
+      Modified = true;
     }
-    Modified |= ApplyControlSFI(MBB, MBBI);
   }
-
   return Modified;
 }
 
+static bool IsSandboxed(MachineInstr &MI) {
+  switch (MI.getOpcode()) {
+  // 32-bit
+  case X86::NACL_TRAP32:
+  case X86::NACL_RET32:
+  case X86::NACL_RETI32:
+  case X86::NACL_JMP32r:
+  case X86::NACL_CALL32d:
+  case X86::NACL_CALL32r:
 
-/// createX86NaClRewritePassPass - returns an instance of the pass.
-namespace llvm {
-  FunctionPass* createX86NaClRewritePass() {
-    return new X86NaClRewritePass();
+  // 64-bit
+  case X86::NACL_TRAP64:
+  case X86::NACL_RET64:
+  case X86::NACL_JMP64r:
+  case X86::NACL_CALL64r:
+  case X86::NACL_CALL64d:
+
+  case X86::NACL_ASPi8:
+  case X86::NACL_ASPi32:
+  case X86::NACL_SSPi8:
+  case X86::NACL_SSPi32:
+  case X86::NACL_SPADJi32:
+  case X86::NACL_RESTSPr:
+  case X86::NACL_RESTSPm:
+  case X86::NACL_RESTBPr:
+  case X86::NACL_RESTBPm:
+    return true;
+
+  case X86::MOV64rr:
+    // copy from safe regs
+    const MachineOperand &DestReg = MI.getOperand(0);
+    const MachineOperand &SrcReg = MI.getOperand(1);
+    return DestReg.getReg() == X86::RSP && SrcReg.getReg() == X86::RBP;
   }
-}
-
-// ======================== LIGHT-WEIGHT VALIDATOR ======================= //
-
-
-static bool IsUnsandboxedControlFlow(MachineInstr &MI) {
-  const unsigned Opcode = MI.getOpcode();
-  switch (Opcode) {
-   default:
-    return false;
-
-   case X86::TRAP:
-     return true;
-
-   // Returns
-   case X86::RET:
-   case X86::RETI:
-    return true;
-
-    // Indirect Jumps
-   case X86::JMP32r:
-   case X86::JMP64r:
-    return true;
-
-   case X86::CALL32r:
-   case X86::CALL64r:
-   case X86::TAILJMPr64:
-   case X86::TAILJMPr:
-    return true;
-
-    // Probably overkill - we do not expect these
-   case X86::FARJMP16i:
-   case X86::FARJMP32i:
-   case X86::FARJMP16m:
-   case X86::FARJMP32m:
-
-   case X86::TCRETURNdi:
-   case X86::TCRETURNri:
-   case X86::TCRETURNmi:
-   case X86::TCRETURNdi64:
-   case X86::TCRETURNri64:
-   case X86::TCRETURNmi64:
-   case X86::EH_RETURN:
-   case X86::EH_RETURN64:
-    return true;
-
-
-  }
-}
-
-
-static bool IsFunctionCall(MachineInstr &MI) {
-  const unsigned Opcode = MI.getOpcode();
-  switch (Opcode) {
-   default:
-    return false;
-   case X86::CALL32r:
-   case X86::CALLpcrel32:
-    return true;
-  }
-}
-
-static bool IsSandboxedStackChange(MachineInstr &MI) {
- const unsigned Opcode = MI.getOpcode();
-  switch (Opcode) {
-   default:
-    return false;
-   case X86::NACL_SET_SPr:
-   case X86::NACL_SET_SPm:
-   case X86::NACL_ADD_SP:
-   case X86::NACL_SUB_SP:
-   case X86::NACL_ADJ_SP:
-    return true;
-
-   // trivially sandboxed
-   case X86::PUSH64r:
-   case X86::POP64r:
-   case X86::NACL_POP_RBP:
-    return true;
-
-   // copy from safe regs
-   case X86::MOV64rr:
-     const MachineOperand &DestReg = MI.getOperand(0);
-     const MachineOperand &SrcReg = MI.getOperand(1);
-     return DestReg.getReg() == X86::RSP && SrcReg.getReg() == X86::RBP;
-  }
+  return false;
 }
 
 static void DumpInstructionVerbose(const MachineInstr &MI) {
@@ -599,55 +631,9 @@ static void DumpInstructionVerbose(const MachineInstr &MI) {
   dbgs() << "\n";
 }
 
-//
-// A primitive validator to catch problems at compile time
-//
-void X86NaClRewritePass::PassLightWeightValidator(MachineBasicBlock &MBB) {
-  for (MachineBasicBlock::iterator MBBI = MBB.begin(), E = MBB.end();
-       MBBI != E;
-       ++MBBI) {
-
-    MachineInstr &MI = *MBBI;
-
-    if (Is64Bit) {
-      if (IsStackChange(MI)) {
-        if (!IsSandboxedStackChange(MI)) {
-            dbgs() << "@VALIDATOR: BAD STACKCHANGE\n\n";
-            DumpInstructionVerbose(MI);
-          }
-      }
-
-      if (IsUnsandboxedControlFlow(MI)) {
-        // TODO(robertm): add proper test
-        dbgs() << "@VALIDATOR: BAD 64-bit INDIRECT JUMP\n\n";
-        DumpInstructionVerbose(MI);
-      }
-
-      if (IsFunctionCall(MI)) {
-        // TODO(robertm): add proper test
-        dbgs() << "@VALIDATOR: BAD 64-bit FUNCTION CALL\n\n";
-        DumpInstructionVerbose(MI);
-      }
-
-      if ((IsStore(MI) || IsLoad(MI)) && !IsPushPop(MI)) {
-        unsigned memOperand = FindMemoryOperand(MI);
-        // Base should be a safe reg.
-        // If not, base should be unspecified, index should be a safe reg,
-        // and Scale should be one.
-        MachineOperand &BaseReg  = MI.getOperand(memOperand + 0);
-        MachineOperand &Scale     = MI.getOperand(memOperand + 1);
-        MachineOperand &IndexReg  = MI.getOperand(memOperand + 2);
-        unsigned base_reg = BaseReg.getReg();
-        unsigned maybe_safe_reg =
-            base_reg ? base_reg : IndexReg.getReg();
-        bool scale_safe = base_reg ? true : Scale.getImm() == 1;
-        if (!scale_safe || !IsRegAbsolute(maybe_safe_reg)) {
-          // TODO(robertm): add proper test
-          dbgs() << "@VALIDATOR: MEM OP WITH BAD BASE\n\n";
-          DumpInstructionVerbose(MI);
-          // assert (false);
-        }
-      }
-    }
+/// createX86NaClRewritePassPass - returns an instance of the pass.
+namespace llvm {
+  FunctionPass* createX86NaClRewritePass() {
+    return new X86NaClRewritePass();
   }
 }

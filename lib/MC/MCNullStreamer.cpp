@@ -82,6 +82,13 @@ namespace {
     virtual void EmitValueToOffset(const MCExpr *Offset,
                                    unsigned char Value = 0) {}
     
+    // @LOCALMOD-BEGIN
+    virtual void EmitBundleLock() {}
+    virtual void EmitBundleUnlock() {}
+    virtual void EmitBundleAlignStart() {}
+    virtual void EmitBundleAlignEnd() {}
+    // @LOCALMOD-END
+
     virtual void EmitFileDirective(StringRef Filename) {}
     virtual bool EmitDwarfFileDirective(unsigned FileNo,StringRef Filename) {
       return false;

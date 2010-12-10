@@ -170,7 +170,8 @@ let isCall = 1 in
     let isAsmParserOnly = 1 in
       def CALLpcrel16 : Ii16PCRel<0xE8, RawFrm,
                        (outs), (ins i16imm_pcrel:$dst, variable_ops),
-                       "callw\t$dst", []>, OpSize;
+                       "callw\t$dst", []>, OpSize,
+                       Requires<[NotNaCl]>; // @LOCALMOD
   }
 
 
@@ -185,14 +186,14 @@ let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1,
       Uses = [ESP] in {
   def TCRETURNdi : I<0, Pseudo, (outs), 
                      (ins i32imm_pcrel:$dst, i32imm:$offset, variable_ops),
-                   "#TC_RETURN $dst $offset", []>, Requires<[NotNaCl]>;
+                   "#TC_RETURN $dst $offset", []>;
   def TCRETURNri : I<0, Pseudo, (outs), 
                      (ins GR32_TC:$dst, i32imm:$offset, variable_ops),
-                     "#TC_RETURN $dst $offset", []>, Requires<[NotNaCl]>;
+                     "#TC_RETURN $dst $offset", []>;
   let mayLoad = 1 in
   def TCRETURNmi : I<0, Pseudo, (outs), 
                      (ins i32mem_TC:$dst, i32imm:$offset, variable_ops),
-                     "#TC_RETURN $dst $offset", []>, Requires<[NotNaCl]>;
+                     "#TC_RETURN $dst $offset", []>;
 
   // FIXME: The should be pseudo instructions that are lowered when going to
   // mcinst.
@@ -232,7 +233,7 @@ let isCall = 1 in
                         Requires<[In64BitMode, NotWin64, NotNaCl]>;
     def CALL64r       : I<0xFF, MRM2r, (outs), (ins GR64:$dst, variable_ops),
                           "call{q}\t{*}$dst", [(X86call GR64:$dst)]>,
-                        Requires<[In64BitMode, NotWin64]>;
+                        Requires<[In64BitMode, NotWin64, NotNaCl]>;
     def CALL64m       : I<0xFF, MRM2m, (outs), (ins i64mem:$dst, variable_ops),
                           "call{q}\t{*}$dst", [(X86call (loadi64 addr:$dst))]>,
                         Requires<[In64BitMode, NotWin64, NotNaCl]>;

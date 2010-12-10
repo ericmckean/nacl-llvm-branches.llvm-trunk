@@ -171,6 +171,13 @@ public:
   virtual void EmitValueToOffset(const MCExpr *Offset,
                                  unsigned char Value = 0);
 
+  // @LOCALMOD-BEGIN
+  virtual void EmitBundleLock();
+  virtual void EmitBundleUnlock();
+  virtual void EmitBundleAlignStart();
+  virtual void EmitBundleAlignEnd();
+  // @LOCALMOD-END
+
   virtual void EmitFileDirective(StringRef Filename);
   virtual bool EmitDwarfFileDirective(unsigned FileNo, StringRef Filename);
   virtual void EmitDwarfLocDirective(unsigned FileNo, unsigned Line,
@@ -659,6 +666,27 @@ void MCAsmStreamer::EmitValueToOffset(const MCExpr *Offset,
   EmitEOL();
 }
 
+// @LOCALMOD-BEGIN
+void MCAsmStreamer::EmitBundleLock() {
+  OS << "\t.bundle_lock";
+  EmitEOL();
+}
+
+void MCAsmStreamer::EmitBundleUnlock() {
+  OS << "\t.bundle_unlock";
+  EmitEOL();
+}
+
+void MCAsmStreamer::EmitBundleAlignStart() {
+  OS << "\t.bundle_align_start";
+  EmitEOL();
+}
+
+void MCAsmStreamer::EmitBundleAlignEnd() {
+  OS << "\t.bundle_align_end";
+  EmitEOL();
+}
+// @LOCALMOD-END
 
 void MCAsmStreamer::EmitFileDirective(StringRef Filename) {
   assert(MAI.hasSingleParameterDotFile());

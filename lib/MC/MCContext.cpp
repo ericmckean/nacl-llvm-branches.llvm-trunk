@@ -79,8 +79,13 @@ MCSymbol *MCContext::GetOrCreateSymbol(const Twine &Name) {
 }
 
 MCSymbol *MCContext::CreateTempSymbol() {
+  // @LOCALMOD-BEGIN
+  // This is a temporary hack to fix an LLVM bug. It has been fixed
+  // correctly upstream and should be pulled down in the next merge.
+  unsigned R = (uint64_t)this;
+  // @LOCALMOD-END
   return GetOrCreateSymbol(Twine(MAI.getPrivateGlobalPrefix()) +
-                           "tmp" + Twine(NextUniqueID++));
+                           "tmp" + Twine(R+NextUniqueID++)); // @LOCALMOD
 }
 
 unsigned MCContext::NextInstance(int64_t LocalLabelVal) {

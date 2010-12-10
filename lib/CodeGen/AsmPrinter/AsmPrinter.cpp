@@ -670,6 +670,20 @@ void AsmPrinter::EmitFunctionBody() {
       case TargetOpcode::KILL:
         if (isVerbose()) EmitKill(II, *this);
         break;
+      // @LOCALMOD-BEGIN
+      case TargetOpcode::BUNDLE_ALIGN_START:
+        OutStreamer.EmitBundleAlignStart();
+        break;
+      case TargetOpcode::BUNDLE_ALIGN_END:
+        OutStreamer.EmitBundleAlignEnd();
+        break;
+      case TargetOpcode::BUNDLE_LOCK:
+        OutStreamer.EmitBundleLock();
+        break;
+      case TargetOpcode::BUNDLE_UNLOCK:
+        OutStreamer.EmitBundleUnlock();
+        break;
+      // @LOCALMOD-END
       default:
         EmitInstruction(II);
         break;
@@ -947,7 +961,11 @@ void AsmPrinter::EmitConstantPool() {
 /// by the current function to the current output stream.  
 ///
 void AsmPrinter::EmitJumpTableInfo() {
-  OutStreamer.EmitRawText(Twine("# @LOCALMOD: JUMPTABLE\n")); // @LOCALMOD
+  // @LOCALMOD-BEGIN
+  if (isVerbose()) {
+    OutStreamer.EmitRawText(Twine("# @LOCALMOD: JUMPTABLE\n"));
+  }
+  // @LOCALMOD-END
   const MachineJumpTableInfo *MJTI = MF->getJumpTableInfo();
   if (MJTI == 0) return;
   if (MJTI->getEntryKind() == MachineJumpTableInfo::EK_Inline) return;
@@ -1868,6 +1886,18 @@ isBlockOnlyReachableByFallthrough(const MachineBasicBlock *MBB) const {
   
   // Otherwise, check the last instruction.
   const MachineInstr &LastInst = Pred->back();
+
+  // @LOCALMOD-BEGIN
+  // This function checks the last instruction in a basic block to
+  // determine whether the block falls through to the next one.
+  // However, if the last instruction is BUNDLE_UNLOCK, then we have
+  // to look at the one before it instead.
+  if (LastInst.getOpcode() == TargetOpcode::BUNDLE_UNLOCK) {
+    MachineBasicBlock::const_iterator MBBI = LastInst;
+    --MBBI;
+    return !MBBI->getDesc().isBarrier();
+  }
+  // @LOCALMOD-END
   return !LastInst.getDesc().isBarrier();
 }
 
