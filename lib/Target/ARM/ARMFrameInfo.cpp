@@ -149,9 +149,14 @@ void ARMFrameInfo::emitPrologue(MachineFunction &MF) const {
 
   // @LOCALMOD-START
   MachineModuleInfo &MMI = MF.getMMI();
-  const bool needsFrameMoves = MMI.hasDebugInfo() ||
-                               !MF.getFunction()->doesNotThrow() ||
-                               UnwindTablesMandatory;
+  // This condition was gleaned from x86
+  bool needsFrameMoves = MMI.hasDebugInfo() ||
+                         !MF.getFunction()->doesNotThrow() ||
+                         UnwindTablesMandatory;
+  // TODO: figure out what the right condition is, for now always emit
+  // unwind info
+  // c.f. http://code.google.com/p/nativeclient/issues/detail?id=1241
+  needsFrameMoves = true;
   // @LOCALMOD-END
   
   // Allocate the vararg register save area. This is not counted in NumBytes.
@@ -263,9 +268,10 @@ void ARMFrameInfo::emitPrologue(MachineFunction &MF) const {
       // frame pointer should be pointing. gcc points after the return address
       // and llvm one word further down (two words = 8).
       // This should be fine as long as we are consistent.
-      // TODO: this is very hackish and needs to be revisited
+      // NOTE: this is related to the offset computed for
+      // ISD::FRAME_TO_ARGS_OFFSET
       MachineLocation dst(MachineLocation::VirtualFP);
-      MachineLocation src(FramePtr, -GPRCS1Size + 8);
+      MachineLocation src(FramePtr, -8);
       MMI.getFrameMoves().push_back(MachineMove(AfterFramePointerInit, dst, src));
     }
     // @LOCALMOD-END
