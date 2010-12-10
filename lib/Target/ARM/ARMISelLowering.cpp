@@ -571,6 +571,8 @@ ARMTargetLowering::ARMTargetLowering(TargetMachine &TM)
   // TODO: the use of ARM:R1 here and ARM:R0 below needs to be revisited
   // once we get to the point where the c++ personality routine is invoked
   setExceptionPointerRegister(ARM::R1);
+  
+  setOperationAction(ISD::FRAME_TO_ARGS_OFFSET, MVT::i32, Custom);
   // @LOCALMOD-END
   // FIXME: Shouldn't need this, since no register is used, but the legalizer
   // doesn't yet know how to not do that for SjLj.
@@ -4192,6 +4194,16 @@ SDValue ARMTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   case ISD::FCOPYSIGN:     return LowerFCOPYSIGN(Op, DAG);
   case ISD::RETURNADDR:    return LowerRETURNADDR(Op, DAG);
   case ISD::FRAMEADDR:     return LowerFRAMEADDR(Op, DAG);
+  // @LOCALMOD-START
+  // The exact semantics of this ISD are not completely clear.
+  // LLVM seems to always point the fp after the push ra and the old fp, i.e.
+  // two register slots after the beginning of the stack frame.
+  // It is not clear what happens when there is no frame pointer but
+  // but llvm unlike gcc seems to always force one when this node is
+  // encountered.
+  case ISD::FRAME_TO_ARGS_OFFSET: return DAG.getIntPtrConstant(2*4);
+  // @LOCALMOD-END
+   
   case ISD::GLOBAL_OFFSET_TABLE: return LowerGLOBAL_OFFSET_TABLE(Op, DAG);
   case ISD::EH_SJLJ_SETJMP: return LowerEH_SJLJ_SETJMP(Op, DAG);
   case ISD::EH_SJLJ_LONGJMP: return LowerEH_SJLJ_LONGJMP(Op, DAG);
