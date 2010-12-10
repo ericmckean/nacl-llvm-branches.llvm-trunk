@@ -466,9 +466,24 @@ void ELFObjectWriter::WriteHeader(uint64_t SectionDataSize,
   switch (OSType) {
     case Triple::FreeBSD:  Write8(ELF::ELFOSABI_FREEBSD); break;
     case Triple::Linux:    Write8(ELF::ELFOSABI_LINUX); break;
+    // @LOCALMOD-BEGIN
+    case Triple::NativeClient:
+      Write8(ELF::ELFOSABI_NACL);
+      break;
+    // @LOCALMOD-END
     default:               Write8(ELF::ELFOSABI_NONE); break;
   }
-  Write8(0);                  // e_ident[EI_ABIVERSION]
+
+  // @LOCALMOD-BEGIN
+  switch (OSType) {
+  case Triple::NativeClient:
+    Write8(ELF::ELFABIVERSION_NACL);
+    break;
+  default:
+    Write8(0);                    // e_ident[EI_ABIVERSION]
+    break;
+  }
+  // @LOCALMOD-END
 
   WriteZeros(ELF::EI_NIDENT - ELF::EI_PAD);
 
