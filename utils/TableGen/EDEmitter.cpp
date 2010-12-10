@@ -292,7 +292,6 @@ static int X86TypeFromOpName(LiteralConstantEmitter *type,
   MEM("i16mem");
   MEM("i32mem");
   MEM("i32mem_TC");
-  MEM("i32mem_TC_64"); // @LOCALMOD
   MEM("f32mem");
   MEM("ssmem");
   MEM("opaque32mem");

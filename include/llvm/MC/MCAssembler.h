@@ -51,7 +51,9 @@ public:
     FT_Inst,
     FT_Org,
     FT_Dwarf,
-    FT_LEB
+    FT_LEB,
+    FT_BundlePadding, // @LOCALMOD
+    FT_Tiny           // @LOCALMOD
   };
 
 private:
@@ -108,8 +110,29 @@ public:
   void dump();
 };
 
+// @LOCALMOD-BEGIN
+// This is just a tiny data fragment with no fixups.
+// (To help with memory usage)
+class MCTinyFragment : public MCFragment {
+ private:
+  SmallString<6> Contents;
+
+ public:
+
+  MCTinyFragment(MCSectionData *SD = 0) : MCFragment(FT_Tiny, SD) {}
+
+  SmallString<6> &getContents() { return Contents; }
+  const SmallString<6> &getContents() const { return Contents; }
+
+  static bool classof(const MCFragment *F) {
+    return F->getKind() == MCFragment::FT_Tiny;
+  }
+  static bool classof(const MCTinyFragment *) { return true; }
+};
+// @LOCALMOD-END
+
 class MCDataFragment : public MCFragment {
-  SmallString<32> Contents;
+  SmallString<6> Contents;  // @LOCALMOD: Memory efficiency
 
   /// Fixups - The list of fixups in this fragment.
   std::vector<MCFixup> Fixups;
@@ -124,8 +147,8 @@ public:
   /// @name Accessors
   /// @{
 
-  SmallString<32> &getContents() { return Contents; }
-  const SmallString<32> &getContents() const { return Contents; }
+  SmallString<6> &getContents() { return Contents; }  // @LOCALMOD
+  const SmallString<6> &getContents() const { return Contents; } // @LOCALMOD
 
   /// @}
   /// @name Fixup Access
@@ -416,6 +439,66 @@ public:
   static bool classof(const MCDwarfLineAddrFragment *) { return true; }
 };
 
+// @LOCALMOD-BEGIN
+// In a code section, bundle padding fragments are automatically inserted
+// between all other fragments (containing instruction data). However, when
+// a group of instructions is bundle locked together, there are no padding
+// fragments inserted in between them.
+//
+// Bundle padding fragments produce NOPs when they detect that the
+// instruction(s) following it will cross a bundle boundary without them.
+// However, bundle padding fragments can also have an alignment type:
+// BundleAlignStart or BundleAlignEnd. If marked BundleAlignStart, then
+// padding is always produced to align to the start of a bundle. If marked
+// BundleAlignEnd, then padding is produced so that the fragment(s) following
+// it end at the end of the bundle.
+class MCBundlePaddingFragment : public MCFragment {
+public:
+  enum BundleAlignType {
+    BundleAlignNone  = 0,
+    BundleAlignStart = 1,
+    BundleAlignEnd   = 2
+  };
+
+private:
+  uint64_t GroupSize;
+  BundleAlignType BundleAlign;
+
+public:
+  MCBundlePaddingFragment(MCSectionData *SD = 0)
+    : MCFragment(FT_BundlePadding, SD),
+      GroupSize(0), BundleAlign(BundleAlignNone) {
+  }
+
+
+  // ComputeSize - Compute the amount of padding this fragment should emit.
+  uint64_t ComputeSize(const MCAsmLayout &Layout,
+                       uint64_t SectionAddress,
+                       uint64_t FragmentOffset) const;
+
+  /// ComputeGroupSize -
+  /// Compute how many bytes of code exist between this bundle
+  /// padding fragment and the next one.
+  void ComputeGroupSize();
+
+  uint64_t getGroupSize() const {
+    return GroupSize;
+  }
+
+  BundleAlignType getBundleAlign() const {
+    return BundleAlign;
+  }
+
+  void setBundleAlign(BundleAlignType Value) {
+    BundleAlign = Value;
+  }
+
+  static bool classof(const MCFragment *F) {
+    return F->getKind() == MCFragment::FT_BundlePadding;
+  }
+  static bool classof(const MCBundlePaddingFragment *) { return true; }
+};
+
 // FIXME: Should this be a separate class, or just merged into MCSection? Since
 // we anticipate the fast path being through an MCAssembler, the only reason to
 // keep it out is for API abstraction.
@@ -460,6 +543,14 @@ private:
   /// it.
   unsigned HasInstructions : 1;
 
+  // @LOCALMOD-BEGIN
+  bool BundlingEnabled;
+  bool BundleLocked;
+
+  typedef MCBundlePaddingFragment::BundleAlignType BundleAlignType;
+  BundleAlignType BundleAlignNext;
+  // @LOCALMOD-END
+
   /// @}
 
 public:
@@ -480,6 +571,16 @@ public:
 
   unsigned getLayoutOrder() const { return LayoutOrder; }
   void setLayoutOrder(unsigned Value) { LayoutOrder = Value; }
+
+  // @LOCALMOD-BEGIN
+  bool isBundlingEnabled() const { return BundlingEnabled; }
+
+  bool isBundleLocked() const { return BundleLocked; }
+  void setBundleLocked(bool Value) { BundleLocked = Value; }
+
+  BundleAlignType getBundleAlignNext() const { return BundleAlignNext; }
+  void setBundleAlignNext(BundleAlignType Value) { BundleAlignNext = Value; }
+  // @LOCALMOD-END
 
   /// @name Fragment Access
   /// @{
@@ -737,6 +838,14 @@ private:
   bool RelaxDwarfLineAddr(const MCObjectWriter &Writer, MCAsmLayout &Layout,
 			  MCDwarfLineAddrFragment &DF);
 
+  // @LOCALMOD-BEGIN
+  // RelaxBPF - Relax a BundlePaddingFragment.
+  // This just recalculuates the amount of padding necessary.
+  bool RelaxBPF(const MCObjectWriter &Writer,
+                MCAsmLayout &Layout,
+                MCBundlePaddingFragment &BPF);
+  /// @LOCALMOD-END
+
   /// FinishLayout - Finalize a layout, including fragment lowering.
   void FinishLayout(MCAsmLayout &Layout);
 
@@ -777,6 +886,12 @@ public:
   MCContext &getContext() const { return Context; }
 
   TargetAsmBackend &getBackend() const { return Backend; }
+
+  // @LOCALMOD-BEGIN
+  uint64_t getBundleSize() const;
+  uint64_t getBundleMask() const;
+  // @LOCALMOD-END
+
 
   MCCodeEmitter &getEmitter() const { return Emitter; }
 

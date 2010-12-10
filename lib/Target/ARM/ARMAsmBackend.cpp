@@ -83,6 +83,12 @@ public:
   void ApplyFixup(const MCFixup &Fixup, MCDataFragment &DF,
                   uint64_t Value) const;
 
+  // @LOCALMOD-BEGIN
+  unsigned getBundleSize() const {
+    return (OSType == Triple::NativeClient) ? 16 : 0;
+  }
+ // @LOCALMOD-END
+
   MCObjectWriter *createObjectWriter(raw_ostream &OS) const {
     return createELFObjectWriter(OS, /*Is64Bit=*/false,
                                  OSType, ELF::EM_ARM,

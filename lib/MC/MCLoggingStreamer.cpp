@@ -200,6 +200,28 @@ public:
     return Child->EmitValueToOffset(Offset, Value);
   }
 
+  // @LOCALMOD-BEGIN
+  virtual void EmitBundleLock() {
+    LogCall("EmitBundleLock");
+    return Child->EmitBundleLock();
+  }
+
+  virtual void EmitBundleUnlock() {
+    LogCall("EmitBundleUnlock");
+    return Child->EmitBundleUnlock();
+  }
+
+  virtual void EmitBundleAlignStart() {
+    LogCall("EmitBundleAlignStart");
+    return Child->EmitBundleAlignStart();
+  }
+
+  virtual void EmitBundleAlignEnd() {
+    LogCall("EmitBundleAlignEnd");
+    return Child->EmitBundleAlignEnd();
+  }
+  // @LOCALMOD-END
+
   virtual void EmitFileDirective(StringRef Filename) {
     LogCall("EmitFileDirective", "FileName:" + Filename);
     return Child->EmitFileDirective(Filename);

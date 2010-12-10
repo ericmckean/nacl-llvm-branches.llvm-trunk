@@ -582,8 +582,6 @@ void X86FrameInfo::emitEpilogue(MachineFunction &MF,
     llvm_unreachable("Can only insert epilog into returning blocks");
   case X86::RET:
   case X86::RETI:
-  case X86::NACL_RET64: // @LOCALMOD
-  case X86::NACL_RET32: // @LOCALMOD
   case X86::TCRETURNdi:
   case X86::TCRETURNri:
   case X86::TCRETURNmi:
@@ -591,10 +589,8 @@ void X86FrameInfo::emitEpilogue(MachineFunction &MF,
   case X86::TCRETURNri64:
   case X86::TCRETURNmi64:
   // @LOCALMOD-START
-  case X86::NACL_TCRETURNdi:
-  case X86::NACL_TCRETURNri:
-  case X86::NACL_TCRETURNdi64:
-  case X86::NACL_TCRETURNri64:
+  case X86::NACL_CG_TCRETURNdi64:
+  case X86::NACL_CG_TCRETURNri64:
   // @LOCALMOD-END
   case X86::EH_RETURN:
   case X86::EH_RETURN64:
@@ -696,12 +692,9 @@ void X86FrameInfo::emitEpilogue(MachineFunction &MF,
              RetOpcode == X86::TCRETURNmi ||
              RetOpcode == X86::TCRETURNri64 || RetOpcode == X86::TCRETURNdi64 ||
              RetOpcode == X86::TCRETURNmi64 ||
-             RetOpcode == X86::TCRETURNmi64 ||
              // @LOCALMOD-START
-             RetOpcode == X86::NACL_TCRETURNri ||
-             RetOpcode == X86::NACL_TCRETURNdi ||
-             RetOpcode == X86::NACL_TCRETURNri64 ||
-             RetOpcode == X86::NACL_TCRETURNdi64
+             RetOpcode == X86::NACL_CG_TCRETURNri64 ||
+             RetOpcode == X86::NACL_CG_TCRETURNdi64
              // @LOCALMOD-END
              ) {
     bool isMem = RetOpcode == X86::TCRETURNmi || RetOpcode == X86::TCRETURNmi64;
@@ -733,6 +726,12 @@ void X86FrameInfo::emitEpilogue(MachineFunction &MF,
                                      ? X86::TAILJMPd : X86::TAILJMPd64)).
         addGlobalAddress(JumpTarget.getGlobal(), JumpTarget.getOffset(),
                          JumpTarget.getTargetFlags());
+    // @LOCALMOD-BEGIN
+    } else if (RetOpcode == X86::NACL_CG_TCRETURNdi64) {
+      BuildMI(MBB, MBBI, DL, TII.get(X86::NACL_CG_TAILJMPd64)).
+        addGlobalAddress(JumpTarget.getGlobal(), JumpTarget.getOffset(),
+                         JumpTarget.getTargetFlags());
+    // @LOCALMOD-END
     } else if (RetOpcode == X86::TCRETURNmi || RetOpcode == X86::TCRETURNmi64) {
       MachineInstrBuilder MIB =
         BuildMI(MBB, MBBI, DL, TII.get((RetOpcode == X86::TCRETURNmi)
@@ -742,24 +741,11 @@ void X86FrameInfo::emitEpilogue(MachineFunction &MF,
     } else if (RetOpcode == X86::TCRETURNri64) {
       BuildMI(MBB, MBBI, DL, TII.get(X86::TAILJMPr64)).
         addReg(JumpTarget.getReg(), RegState::Kill);
-// @LOCALMOD-START
-    } else if (RetOpcode == X86::NACL_TCRETURNdi ||
-               RetOpcode == X86::NACL_TCRETURNdi64) {
-      // This particular (direct jump) is currently the same across NaCl
-      // and non-NaCl targets, but a separate case is added for consistency.
-      BuildMI(MBB, MBBI, DL, TII.get((RetOpcode == X86::NACL_TCRETURNdi)
-                                     ? X86::NACL_TAILJMPd
-                                     : X86::NACL_TAILJMPd64)).
-        addGlobalAddress(JumpTarget.getGlobal(), JumpTarget.getOffset(),
-                         JumpTarget.getTargetFlags());
-    } else if (RetOpcode == X86::NACL_TCRETURNri) {
-      // These NACL indirect jumps require sandboxing.
-      BuildMI(MBB, MBBI, DL, TII.get(X86::NACL_TAILJMPr),
-              JumpTarget.getReg());
-    } else if (RetOpcode == X86::NACL_TCRETURNri64) {
-      BuildMI(MBB, MBBI, DL, TII.get(X86::NACL_TAILJMPr64),
-              JumpTarget.getReg());
-// @LOCALMOD-END
+    // @LOCALMOD-BEGIN
+    } else if (RetOpcode == X86::NACL_CG_TCRETURNri64) {
+      BuildMI(MBB, MBBI, DL, TII.get(X86::NACL_CG_TAILJMPr64)).
+        addReg(JumpTarget.getReg(), RegState::Kill);
+    // @LOCALMOD-END
     } else {
       BuildMI(MBB, MBBI, DL, TII.get(X86::TAILJMPr)).
         addReg(JumpTarget.getReg(), RegState::Kill);
@@ -771,9 +757,7 @@ void X86FrameInfo::emitEpilogue(MachineFunction &MF,
 
     // Delete the pseudo instruction TCRETURN.
     MBB.erase(MBBI);
-  } else if ((RetOpcode == X86::RET || RetOpcode == X86::RETI ||
-              RetOpcode == X86::NACL_RET32 ||    // @LOCALMOD
-              RetOpcode == X86::NACL_RET64)      // @LOCALMOD
+  } else if ((RetOpcode == X86::RET || RetOpcode == X86::RETI)
              && (X86FI->getTCReturnAddrDelta() < 0)) {
 
     // Add the return addr area delta back since we are not tail calling.

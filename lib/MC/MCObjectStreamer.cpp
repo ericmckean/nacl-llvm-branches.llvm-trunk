@@ -14,6 +14,7 @@
 #include "llvm/MC/MCCodeEmitter.h"
 #include "llvm/MC/MCDwarf.h"
 #include "llvm/MC/MCExpr.h"
+#include "llvm/MC/MCSection.h" // @LOCALMOD
 #include "llvm/Target/TargetAsmBackend.h"
 using namespace llvm;
 
@@ -43,7 +44,21 @@ MCFragment *MCObjectStreamer::getCurrentFragment() const {
   return 0;
 }
 
+void MCObjectStreamer::EmitBundlePadding() const {
+  MCSectionData *SD = getCurrentSectionData();
+
+  if (SD->isBundlingEnabled() && !SD->isBundleLocked()) {
+    MCBundlePaddingFragment *BPF = new MCBundlePaddingFragment(SD);
+    BPF->setBundleAlign(SD->getBundleAlignNext());
+    SD->setBundleAlignNext(MCBundlePaddingFragment::BundleAlignNone);
+  }
+}
+
 MCDataFragment *MCObjectStreamer::getOrCreateDataFragment() const {
+  // @LOCALMOD-BEGIN
+  EmitBundlePadding();
+  // @LOCALMOD-END
+
   MCDataFragment *F = dyn_cast_or_null<MCDataFragment>(getCurrentFragment());
   if (!F)
     F = new MCDataFragment(getCurrentSectionData());
@@ -90,6 +105,46 @@ void MCObjectStreamer::EmitWeakReference(MCSymbol *Alias,
   report_fatal_error("This file format doesn't support weak aliases.");
 }
 
+// @LOCALMOD-BEGIN ========================================================
+
+void MCObjectStreamer::EmitBundleAlignStart() {
+  MCSectionData *SD = getCurrentSectionData();
+  assert(SD->isBundlingEnabled() &&
+         ".bundle_align_start called, but bundling disabled!");
+  assert(!SD->isBundleLocked() &&
+         ".bundle_align_start while bundle locked");
+  SD->setBundleAlignNext(MCBundlePaddingFragment::BundleAlignStart);
+}
+
+void MCObjectStreamer::EmitBundleAlignEnd() {
+  MCSectionData *SD = getCurrentSectionData();
+  assert(SD->isBundlingEnabled() &&
+         ".bundle_align_end called, but bundling disabled!");
+  assert(!SD->isBundleLocked() &&
+         ".bundle_align_end while bundle locked");
+  SD->setBundleAlignNext(MCBundlePaddingFragment::BundleAlignEnd);
+}
+
+void MCObjectStreamer::EmitBundleLock() {
+  MCSectionData *SD = getCurrentSectionData();
+  assert(SD->isBundlingEnabled() &&
+         ".bundle_lock called, but bundling disabled!");
+  assert(!SD->isBundleLocked() &&
+         ".bundle_lock issued when bundle already locked");
+  EmitBundlePadding();
+  SD->setBundleLocked(true);
+}
+
+void MCObjectStreamer::EmitBundleUnlock() {
+  MCSectionData *SD = getCurrentSectionData();
+  assert(SD->isBundlingEnabled() &&
+         ".bundle_unlock called, but bundling disabled!");
+  assert(SD->isBundleLocked() &&
+         ".bundle_unlock called when bundle not locked");
+  SD->setBundleLocked(false);
+}
+// @LOCALMOD-END ==========================================================
+
 void MCObjectStreamer::SwitchSection(const MCSection *Section) {
   assert(Section && "Cannot switch to a null section!");
 
@@ -102,6 +157,13 @@ void MCObjectStreamer::SwitchSection(const MCSection *Section) {
 }
 
 void MCObjectStreamer::EmitInstruction(const MCInst &Inst) {
+
+  // @LOCALMOD-BEGIN
+  if (getAssembler().getBackend().CustomExpandInst(Inst, *this)) {
+    return;
+  }
+  // @LOCALMOD-END
+
   // Scan for values.
   for (unsigned i = Inst.getNumOperands(); i--; )
     if (Inst.getOperand(i).isExpr())

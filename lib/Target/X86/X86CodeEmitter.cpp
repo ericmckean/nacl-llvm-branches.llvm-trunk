@@ -790,9 +790,7 @@ void Emitter<CodeEmitter>::emitInstruction(MachineInstr &MI,
     
     assert(MO.isImm() && "Unknown RawFrm operand!");
     if (Opcode == X86::CALLpcrel32 || Opcode == X86::CALL64pcrel32 ||
-        Opcode == X86::WINCALL64pcrel32 ||
-        Opcode == X86::NACL_CALLpcrel32 ||      // @LOCALMOD
-        Opcode == X86::NACL_CALL64pcrel32) {    // @LOCALMOD
+        Opcode == X86::WINCALL64pcrel32) {
       // Fix up immediate operand for pc relative calls.
       intptr_t Imm = (intptr_t)MO.getImm();
       Imm = Imm - MCE.getCurrentPCValue() - 4;

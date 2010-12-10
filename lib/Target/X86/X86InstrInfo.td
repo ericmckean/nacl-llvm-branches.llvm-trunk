@@ -426,10 +426,12 @@ def In32BitMode  : Predicate<"!Subtarget->is64Bit()">, AssemblerPredicate;
 def In64BitMode  : Predicate<"Subtarget->is64Bit()">, AssemblerPredicate;
 def IsWin64      : Predicate<"Subtarget->isTargetWin64()">;
 def NotWin64     : Predicate<"!Subtarget->isTargetWin64()">;
-def IsNaCl       : Predicate<"Subtarget->isTargetNaCl()">;     // @LOCALMOD
-def IsNaCl32     : Predicate<"Subtarget->isTargetNaCl32()">;   // @LOCALMOD
-def IsNaCl64     : Predicate<"Subtarget->isTargetNaCl64()">;   // @LOCALMOD
-def NotNaCl      : Predicate<"!Subtarget->isTargetNaCl()">;    // @LOCALMOD
+// @LOCALMOD-BEGIN
+def IsNaCl       : Predicate<"Subtarget->isTargetNaCl()">, AssemblerPredicate;
+def IsNaCl32     : Predicate<"Subtarget->isTargetNaCl32()">, AssemblerPredicate;
+def IsNaCl64     : Predicate<"Subtarget->isTargetNaCl64()">, AssemblerPredicate;
+def NotNaCl      : Predicate<"!Subtarget->isTargetNaCl()">, AssemblerPredicate;
+// @LOCALMOD-END
 def SmallCode    : Predicate<"TM.getCodeModel() == CodeModel::Small">;
 def KernelCode   : Predicate<"TM.getCodeModel() == CodeModel::Kernel">;
 def FarData      : Predicate<"TM.getCodeModel() != CodeModel::Small &&"
@@ -1276,8 +1278,10 @@ include "X86InstrCompiler.td"
 // Assembler Mnemonic Aliases
 //===----------------------------------------------------------------------===//
 
-def : MnemonicAlias<"call", "calll">, Requires<[In32BitMode]>;
-def : MnemonicAlias<"call", "callq">, Requires<[In64BitMode]>;
+def : MnemonicAlias<"call", "calll">,
+      Requires<[In32BitMode,NotNaCl]>; // @LOCALMOD
+def : MnemonicAlias<"call", "callq">,
+      Requires<[In64BitMode,NotNaCl]>; // @LOCALMOD
 
 def : MnemonicAlias<"cbw",  "cbtw">;
 def : MnemonicAlias<"cwd",  "cwtd">;
