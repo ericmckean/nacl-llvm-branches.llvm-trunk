@@ -497,8 +497,16 @@ void ELFObjectWriter::WriteHeader(uint64_t SectionDataSize,
   WriteWord(SectionDataSize + (Is64Bit ? sizeof(ELF::Elf64_Ehdr) :
             sizeof(ELF::Elf32_Ehdr)));  // e_shoff = sec hdr table off in bytes
 
-  // FIXME: Make this configurable.
-  Write32(0);   // e_flags = whatever the target wants
+  // @LOCALMOD-BEGIN
+  switch (OSType) {
+  case Triple::NativeClient:
+    Write32(ELF::EF_NACL_ALIGN_32);
+    break;
+  default:
+    Write32(0);   // e_flags = whatever the target wants
+    break;
+  }
+  // @LOCALMOD-END
 
   // e_ehsize = ELF header size
   Write16(Is64Bit ? sizeof(ELF::Elf64_Ehdr) : sizeof(ELF::Elf32_Ehdr));
