@@ -117,10 +117,12 @@ let Defs = [RSP], Uses = [RBP], isAsmParserOnly = 1 in {
 
 let Defs = [RSP], isAsmParserOnly = 1 in {
   def NACL_RESTSPr   : NaClPI64<(outs), (ins GR32:$src, GR64:$rZP),
-                       "naclrestsp\t{$src, $rZP|$rZP, $src}">;
+                       "naclrestsp_noflags\t{$src, $rZP|$rZP, $src}">;
   def NACL_RESTSPm   : NaClPI64<(outs), (ins i32mem:$src, GR64:$rZP),
-                       "naclrestsp\t{$src, $rZP|$rZP, $src}">;
+                       "naclrestsp_noflags\t{$src, $rZP|$rZP, $src}">;
 }
+
+def : MnemonicAlias<"naclrestsp", "naclrestsp_noflags">;
 
 let Defs = [RBP], isAsmParserOnly = 1 in {
   def NACL_RESTBPr   : NaClPI64<(outs), (ins GR32:$src, GR64:$rZP),

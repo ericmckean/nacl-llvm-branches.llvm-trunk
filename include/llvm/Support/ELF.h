@@ -187,6 +187,14 @@ enum {
 enum {
   ELFABIVERSION_NACL = 7
 };
+
+// Native-client specific flags
+enum {
+  EF_NACL_ALIGN_LIB =  0x000000,
+  EF_NACL_ALIGN_16 =   0x100000,
+  EF_NACL_ALIGN_32 =   0x200000,
+  EF_NACL_ALIGN_MASK = 0x300000
+};
 // @LOCALMOD-END
 
 // X86_64 relocations.
