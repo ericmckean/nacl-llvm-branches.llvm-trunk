@@ -79,6 +79,17 @@ bool MCAsmLayout::isFragmentUpToDate(const MCFragment *F) const {
 }
 
 void MCAsmLayout::Invalidate(MCFragment *F) {
+  // @LOCALMOD-BEGIN
+  if (F->getParent()->isBundlingEnabled()) {
+    // If this fragment is part of a bundle locked group,
+    // we need to invalidate all the way to the first fragment
+    // in the group.
+    while (F && !F->isBundleGroupStart())
+      F = F->getPrevNode();
+    assert(F);
+  }
+  // @LOCALMOD-END
+
   // If this fragment wasn't already up-to-date, we don't need to do anything.
   if (!isFragmentUpToDate(F))
     return;
@@ -130,6 +141,13 @@ void MCAsmLayout::ReplaceFragment(MCFragment *Src, MCFragment *Dst) {
   Dst->Offset = Src->Offset;
   Dst->EffectiveSize = Src->EffectiveSize;
 
+  // @LOCALMOD-BEGIN
+  Dst->BundlePadding = Src->BundlePadding;
+  Dst->BundleGroupStart = Src->BundleGroupStart;
+  Dst->BundleGroupEnd = Src->BundleGroupEnd;
+  Dst->BundleAlign = Src->BundleAlign;
+  // @LOCALMOD-END
+
   // Remove Src, but don't delete it yet.
   SD->getFragmentList().remove(Src);
 }
@@ -165,6 +183,14 @@ uint64_t MCAsmLayout::getFragmentOffset(const MCFragment *F) const {
   assert(F->Offset != ~UINT64_C(0) && "Address not set!");
   return F->Offset;
 }
+
+// @LOCALMOD-BEGIN
+uint8_t MCAsmLayout::getFragmentPadding(const MCFragment *F) const {
+  EnsureValid(F);
+  assert(F->BundlePadding != ~UINT8_C(0) && "Padding not set!");
+  return F->BundlePadding;
+}
+// @LOCALMOD-END
 
 uint64_t MCAsmLayout::getSymbolAddress(const MCSymbolData *SD) const {
   assert(SD->getFragment() && "Invalid getAddress() on undefined symbol!");
@@ -213,10 +239,31 @@ MCFragment::~MCFragment() {
 
 MCFragment::MCFragment(FragmentType _Kind, MCSectionData *_Parent)
   : Kind(_Kind), Parent(_Parent), Atom(0), Offset(~UINT64_C(0)),
-    EffectiveSize(~UINT64_C(0))
+    EffectiveSize(~UINT64_C(0)),
+    // @LOCALMOD-BEGIN
+    BundleAlign(BundleAlignNone),
+    BundleGroupStart(false),
+    BundleGroupEnd(false),
+    BundlePadding(~UINT8_C(0))
+    // @LOCALMOD-END
 {
   if (Parent)
     Parent->getFragmentList().push_back(this);
+
+  // @LOCALMOD-BEGIN
+  if (Parent && Parent->isBundlingEnabled()) {
+    BundleAlign = Parent->getBundleAlignNext();
+    Parent->setBundleAlignNext(MCFragment::BundleAlignNone);
+    if (Parent->isBundleLocked()) {
+      BundleGroupStart = Parent->isBundleGroupFirstFrag();
+      BundleGroupEnd = false;
+      Parent->setBundleGroupFirstFrag(false);
+    } else {
+      BundleGroupStart = true;
+      BundleGroupEnd = true;
+    }
+  }
+  // @LOCALMOD-END
 }
 
 /* *** */
@@ -231,7 +278,8 @@ MCSectionData::MCSectionData(const MCSection &_Section, MCAssembler *A)
 // @LOCALMOD-BEGIN
     BundlingEnabled(false),
     BundleLocked(false),
-    BundleAlignNext(MCBundlePaddingFragment::BundleAlignNone)
+    BundleGroupFirstFrag(false),
+    BundleAlignNext(MCFragment::BundleAlignNone)
 // @LOCALMOD-END
 {
   if (A)
@@ -366,10 +414,6 @@ uint64_t MCAssembler::ComputeFragmentSize(MCAsmLayout &Layout,
 // @LOCALMOD-BEGIN
   case MCFragment::FT_Tiny:
     return cast<MCTinyFragment>(F).getContents().size();
-  case MCFragment::FT_BundlePadding: {
-    const MCBundlePaddingFragment &BPF = cast<MCBundlePaddingFragment>(F);
-    return BPF.ComputeSize(Layout, SectionAddress, FragmentOffset);
-  }
 // @LOCALMOD-END
   case MCFragment::FT_Align: {
     const MCAlignFragment &AF = cast<MCAlignFragment>(F);
@@ -430,6 +474,11 @@ void MCAsmLayout::LayoutFragment(MCFragment *F) {
 
   // Compute fragment offset and size.
   F->Offset = Address - StartAddress;
+  // @LOCALMOD-BEGIN
+  F->BundlePadding = getAssembler().ComputeBundlePadding(*this, F, StartAddress,
+                                                         F->Offset);
+  F->Offset += F->BundlePadding;
+  // @LOCALMOD-END
   F->EffectiveSize = getAssembler().ComputeFragmentSize(*this, *F, StartAddress,
                                                         F->Offset);
   LastValidFragment = F;
@@ -462,25 +511,23 @@ uint64_t MCAssembler::getBundleMask() const {
   return BundleMask;
 }
 
-void MCBundlePaddingFragment::ComputeGroupSize() {
-  bool FirstFrag = true;
-  bool DisallowMore = false;
+static unsigned ComputeGroupSize(MCFragment *F) {
+  if (!F->isBundleGroupStart()) {
+    return 0;
+  }
 
-  GroupSize = 0;
-  MCFragment *Cur = this->getNextNode();
-  while (Cur && Cur->getKind() != MCFragment::FT_BundlePadding) {
-    if (DisallowMore)
-      llvm_unreachable("Bundle lock cannot contain .align, .org, or .fill");
-
+  unsigned GroupSize = 0;
+  MCFragment *Cur = F;
+  while (Cur) {
     switch (Cur->getKind()) {
-    default: llvm_unreachable("Unexpected fragment type!");
+    default: llvm_unreachable("Unexpected fragment type in bundle!");
     case MCFragment::FT_Align:
     case MCFragment::FT_Org:
     case MCFragment::FT_Fill:
-      DisallowMore = true;
-      if (!FirstFrag)
-        llvm_unreachable("Bundle lock cannot contain .align, .org, or .fill");
-      break;
+      if (Cur == F && Cur->isBundleGroupEnd()) {
+        return 0;
+      }
+      llvm_unreachable(".bundle_lock cannot contain .align, .org, or .fill");
     case MCFragment::FT_Inst:
       GroupSize += cast<MCInstFragment>(Cur)->getInstSize();
       break;
@@ -491,17 +538,23 @@ void MCBundlePaddingFragment::ComputeGroupSize() {
       GroupSize += cast<MCTinyFragment>(Cur)->getContents().size();
       break;
     }
+    if (Cur->isBundleGroupEnd())
+      break;
     Cur = Cur->getNextNode();
-    FirstFrag = false;
   }
+  return GroupSize;
 }
 
-uint64_t MCBundlePaddingFragment::ComputeSize(const MCAsmLayout &Layout,
-                                              uint64_t SectionAddress,
-                                              uint64_t FragmentOffset) const {
-  uint64_t BundleSize = Layout.getAssembler().getBundleSize();
-  uint64_t BundleMask = Layout.getAssembler().getBundleMask();
+uint8_t MCAssembler::ComputeBundlePadding(const MCAsmLayout &Layout,
+                                          MCFragment *F,
+                                          uint64_t SectionAddress,
+                                          uint64_t FragmentOffset) const {
+  if (!F->getParent()->isBundlingEnabled())
+    return 0;
 
+  uint64_t BundleSize = getBundleSize();
+  uint64_t BundleMask = getBundleMask();
+  unsigned GroupSize = ComputeGroupSize(F);
   assert(GroupSize <= BundleSize &&
          "Bundle lock contents too large!");
   assert((SectionAddress & BundleMask) == 0 &&
@@ -509,22 +562,17 @@ uint64_t MCBundlePaddingFragment::ComputeSize(const MCAsmLayout &Layout,
 
   uint64_t Padding = 0;
   uint64_t OffsetInBundle = FragmentOffset & BundleMask;
-  DEBUG(dbgs() << "Frag#" << this->getLayoutOrder() << " (" << this << ")\n");
-  DEBUG(dbgs() << "   OffsetInBundle = " << OffsetInBundle << "\n");
-  DEBUG(dbgs() << "   BundleAlign = " << BundleAlign << "\n");
 
   if (OffsetInBundle + GroupSize > BundleSize ||
-      BundleAlign == MCBundlePaddingFragment::BundleAlignStart) {
+      F->getBundleAlign() == MCFragment::BundleAlignStart) {
     // Pad up to start of the next bundle
     Padding += AddressToBundlePadding(OffsetInBundle, BundleMask);
     OffsetInBundle = 0;
   }
-  if (BundleAlign == MCBundlePaddingFragment::BundleAlignEnd) {
+  if (F->getBundleAlign() == MCFragment::BundleAlignEnd) {
     // Push to the end of the bundle
     Padding += AddressToBundlePadding(OffsetInBundle + GroupSize, BundleMask);
   }
-  DEBUG(dbgs() << "   Computed Padding: " << Padding <<
-        " (GroupSize=" << GroupSize << ")\n");
   return Padding;
 }
 // @LOCALMOD-END
@@ -578,6 +626,13 @@ static void WriteBundlePadding(const MCAssembler &Asm,
 /// WriteFragmentData - Write the \arg F data to the output file.
 static void WriteFragmentData(const MCAssembler &Asm, const MCAsmLayout &Layout,
                               const MCFragment &F, MCObjectWriter *OW) {
+
+  // @LOCALMOD-BEGIN
+  uint64_t BundlePadding = Layout.getFragmentPadding(&F);
+  uint64_t PaddingOffset = Layout.getFragmentOffset(&F) - BundlePadding;
+  WriteBundlePadding(Asm, Layout, PaddingOffset, BundlePadding, OW);
+  // @LOCALMOD-END
+
   uint64_t Start = OW->getStream().tell();
   (void) Start;
 
@@ -669,14 +724,6 @@ static void WriteFragmentData(const MCAssembler &Asm, const MCAsmLayout &Layout,
     }
     break;
   }
-  // @LOCALMOD-BEGIN
-  case MCFragment::FT_BundlePadding:
-    WriteBundlePadding(Asm, Layout,
-                       Layout.getFragmentOffset(&F),
-                       Layout.getFragmentEffectiveSize(&F),
-                       OW);
-    break;
-  // @LOCALMOD-END
 
   case MCFragment::FT_Inst:
     llvm_unreachable("unexpected inst fragment after lowering");
@@ -1037,23 +1084,6 @@ bool MCAssembler::RelaxDwarfLineAddr(const MCObjectWriter &Writer,
   return OldSize != DF.getSize();  
 }
 
-// @LOCALMOD-BEGIN ====================================================
-bool MCAssembler::RelaxBPF(const MCObjectWriter &Writer,
-                           MCAsmLayout &Layout,
-                           MCBundlePaddingFragment &BPF) {
-
-  uint64_t OldGroupSize = BPF.getGroupSize();
-
-  BPF.ComputeGroupSize();
-
-  if (BPF.getGroupSize() != OldGroupSize) {
-    return true;
-  }
-  return false;
-}
-// @LOCALMOD-END   ====================================================
-
-
 bool MCAssembler::LayoutOnce(const MCObjectWriter &Writer,
                              MCAsmLayout &Layout) {
   ++stats::RelaxationSteps;
@@ -1087,12 +1117,6 @@ bool MCAssembler::LayoutOnce(const MCObjectWriter &Writer,
       case MCFragment::FT_LEB:
         relaxedFrag = RelaxLEB(Writer, Layout, *cast<MCLEBFragment>(it2));
         break;
-      // @LOCALMOD-BEGIN
-      case MCFragment::FT_BundlePadding:
-        WasRelaxed |= RelaxBPF(Writer, Layout,
-                               *cast<MCBundlePaddingFragment>(it2));
-        break;
-      // @LOCALMOD-END
       }
       // Update the layout, and remember that we relaxed.
       if (relaxedFrag)
@@ -1144,14 +1168,10 @@ void MCAssembler::FinishLayout(MCAsmLayout &Layout) {
         break;
       case MCFragment::FT_Inst: {
         MCInstFragment *IF = cast<MCInstFragment>(it2);
-        // Use the existing data fragment if possible.
-        if (CurDF && CurDF->getAtom() == IF->getAtom()) {
-          Layout.CoalesceFragments(IF, CurDF);
-        } else {
-          // Otherwise, create a new data fragment.
-          CurDF = new MCDataFragment();
-          Layout.ReplaceFragment(IF, CurDF);
-        }
+        // @LOCALMOD-BEGIN
+        CurDF = new MCDataFragment();
+        Layout.ReplaceFragment(IF, CurDF);
+        // @LOCALMOD-END
 
         // Lower the Instruction Fragment
         LowerInstFragment(IF, CurDF);
@@ -1195,7 +1215,6 @@ void MCFragment::dump() {
   case MCFragment::FT_LEB:   OS << "MCLEBFragment"; break;
   // @LOCALMOD-BEGIN
   case MCFragment::FT_Tiny: OS << "MCTinyFragment"; break;
-  case MCFragment::FT_BundlePadding: OS << "MCBundlePaddingFragment"; break;
   // @LOCALMOD-END
   }
 
@@ -1262,12 +1281,6 @@ void MCFragment::dump() {
       OS << hexdigit((Contents[i] >> 4) & 0xF) << hexdigit(Contents[i] & 0xF);
     }
     OS << "] (" << Contents.size() << " bytes)";
-    break;
-  }
-  case MCFragment::FT_BundlePadding:  {
-    const MCBundlePaddingFragment *BPF = cast<MCBundlePaddingFragment>(this);
-    OS << "\n       GroupSize:" << BPF->getGroupSize();
-    OS << "\n       BundleAlign:" << (unsigned)BPF->getBundleAlign();
     break;
   }
   // @LOCALMOD-END

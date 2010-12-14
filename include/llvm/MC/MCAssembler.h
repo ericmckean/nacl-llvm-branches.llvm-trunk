@@ -52,9 +52,16 @@ public:
     FT_Org,
     FT_Dwarf,
     FT_LEB,
-    FT_BundlePadding, // @LOCALMOD
     FT_Tiny           // @LOCALMOD
   };
+
+  // @LOCALMOD-BEGIN
+  enum BundleAlignType {
+    BundleAlignNone  = 0,
+    BundleAlignStart = 1,
+    BundleAlignEnd   = 2
+  };
+  // @LOCALMOD-END
 
 private:
   FragmentType Kind;
@@ -84,6 +91,16 @@ private:
   /// across all fragments in the file, not just within the section.
   unsigned LayoutOrder;
 
+  // @LOCALMOD-BEGIN
+  BundleAlignType BundleAlign : 2;
+  bool BundleGroupStart       : 1;
+  bool BundleGroupEnd         : 1;
+
+  /// BundlePadding - The computed padding for this fragment. This is ~0
+  /// until initialized.
+  uint8_t BundlePadding;
+  // @LOCALMOD-END
+
   /// @}
 
 protected:
@@ -104,6 +121,17 @@ public:
 
   unsigned getLayoutOrder() const { return LayoutOrder; }
   void setLayoutOrder(unsigned Value) { LayoutOrder = Value; }
+
+  // @LOCALMOD-BEGIN
+  bool isBundleGroupStart() const { return BundleGroupStart; }
+  void setBundleGroupStart(bool Value) { BundleGroupStart = Value; }
+
+  bool isBundleGroupEnd() const { return BundleGroupEnd; }
+  void setBundleGroupEnd(bool Value) { BundleGroupEnd = Value; }
+
+  BundleAlignType getBundleAlign() const { return BundleAlign; }
+  void setBundleAlign(BundleAlignType Value) { BundleAlign = Value; }
+  // @LOCALMOD-END
 
   static bool classof(const MCFragment *O) { return true; }
 
@@ -439,66 +467,6 @@ public:
   static bool classof(const MCDwarfLineAddrFragment *) { return true; }
 };
 
-// @LOCALMOD-BEGIN
-// In a code section, bundle padding fragments are automatically inserted
-// between all other fragments (containing instruction data). However, when
-// a group of instructions is bundle locked together, there are no padding
-// fragments inserted in between them.
-//
-// Bundle padding fragments produce NOPs when they detect that the
-// instruction(s) following it will cross a bundle boundary without them.
-// However, bundle padding fragments can also have an alignment type:
-// BundleAlignStart or BundleAlignEnd. If marked BundleAlignStart, then
-// padding is always produced to align to the start of a bundle. If marked
-// BundleAlignEnd, then padding is produced so that the fragment(s) following
-// it end at the end of the bundle.
-class MCBundlePaddingFragment : public MCFragment {
-public:
-  enum BundleAlignType {
-    BundleAlignNone  = 0,
-    BundleAlignStart = 1,
-    BundleAlignEnd   = 2
-  };
-
-private:
-  uint64_t GroupSize;
-  BundleAlignType BundleAlign;
-
-public:
-  MCBundlePaddingFragment(MCSectionData *SD = 0)
-    : MCFragment(FT_BundlePadding, SD),
-      GroupSize(0), BundleAlign(BundleAlignNone) {
-  }
-
-
-  // ComputeSize - Compute the amount of padding this fragment should emit.
-  uint64_t ComputeSize(const MCAsmLayout &Layout,
-                       uint64_t SectionAddress,
-                       uint64_t FragmentOffset) const;
-
-  /// ComputeGroupSize -
-  /// Compute how many bytes of code exist between this bundle
-  /// padding fragment and the next one.
-  void ComputeGroupSize();
-
-  uint64_t getGroupSize() const {
-    return GroupSize;
-  }
-
-  BundleAlignType getBundleAlign() const {
-    return BundleAlign;
-  }
-
-  void setBundleAlign(BundleAlignType Value) {
-    BundleAlign = Value;
-  }
-
-  static bool classof(const MCFragment *F) {
-    return F->getKind() == MCFragment::FT_BundlePadding;
-  }
-  static bool classof(const MCBundlePaddingFragment *) { return true; }
-};
-
 // FIXME: Should this be a separate class, or just merged into MCSection? Since
 // we anticipate the fast path being through an MCAssembler, the only reason to
 // keep it out is for API abstraction.
@@ -547,7 +515,14 @@ private:
   bool BundlingEnabled;
   bool BundleLocked;
 
-  typedef MCBundlePaddingFragment::BundleAlignType BundleAlignType;
+  // Because ".bundle_lock" occurs before the fragment it applies to exists,
+  // we need to keep this flag around so we know to mark the next fragment
+  // as the start of a bundle group. A similar flag is not necessary for the
+  // last fragment, because when a .bundle_unlock occurs, the last fragment
+  // in the group already exists and can be marked directly.
+  bool BundleGroupFirstFrag;
+
+  typedef MCFragment::BundleAlignType BundleAlignType;
   BundleAlignType BundleAlignNext;
   // @LOCALMOD-END
 
@@ -577,6 +552,10 @@ public:
 
   bool isBundleLocked() const { return BundleLocked; }
   void setBundleLocked(bool Value) { BundleLocked = Value; }
+
+  bool isBundleGroupFirstFrag() const { return BundleGroupFirstFrag; }
+  void setBundleGroupFirstFrag(bool Value) { BundleGroupFirstFrag = Value; }
+
 
   BundleAlignType getBundleAlignNext() const { return BundleAlignNext; }
   void setBundleAlignNext(BundleAlignType Value) { BundleAlignNext = Value; }
@@ -822,6 +801,14 @@ private:
                                uint64_t SectionAddress,
                                uint64_t FragmentOffset) const;
 
+  // @LOCALMOD-BEGIN
+  uint8_t ComputeBundlePadding(const MCAsmLayout &Layout,
+                               MCFragment *F,
+                               uint64_t SectionAddress,
+                               uint64_t FragmentOffset) const;
+  // @LOCALMOD-END
+
+
   /// LayoutOnce - Perform one layout iteration and return true if any offsets
   /// were adjusted.
   bool LayoutOnce(const MCObjectWriter &Writer, MCAsmLayout &Layout);
@@ -837,14 +824,6 @@ private:
 
   bool RelaxDwarfLineAddr(const MCObjectWriter &Writer, MCAsmLayout &Layout,
 			  MCDwarfLineAddrFragment &DF);
-
-  // @LOCALMOD-BEGIN
-  // RelaxBPF - Relax a BundlePaddingFragment.
-  // This just recalculuates the amount of padding necessary.
-  bool RelaxBPF(const MCObjectWriter &Writer,
-                MCAsmLayout &Layout,
-                MCBundlePaddingFragment &BPF);
-  /// @LOCALMOD-END
 
   /// FinishLayout - Finalize a layout, including fragment lowering.
   void FinishLayout(MCAsmLayout &Layout);

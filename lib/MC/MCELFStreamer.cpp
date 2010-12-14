@@ -406,10 +406,6 @@ void MCELFStreamer::EmitValue(const MCExpr *Value, unsigned Size,
 void MCELFStreamer::EmitValueToAlignment(unsigned ByteAlignment,
                                            int64_t Value, unsigned ValueSize,
                                            unsigned MaxBytesToEmit) {
-  // @LOCALMOD-BEGIN
-  EmitBundlePadding();
-  // @LOCALMOD-END
-
   // TODO: This is exactly the same as WinCOFFStreamer. Consider merging into
   // MCObjectStreamer.
   if (MaxBytesToEmit == 0)
@@ -424,10 +420,6 @@ void MCELFStreamer::EmitValueToAlignment(unsigned ByteAlignment,
 
 void MCELFStreamer::EmitCodeAlignment(unsigned ByteAlignment,
                                         unsigned MaxBytesToEmit) {
-  // @LOCALMOD-BEGIN
-  EmitBundlePadding();
-  // @LOCALMOD-END
-
   // TODO: This is exactly the same as WinCOFFStreamer. Consider merging into
   // MCObjectStreamer.
   if (MaxBytesToEmit == 0)
@@ -443,10 +435,6 @@ void MCELFStreamer::EmitCodeAlignment(unsigned ByteAlignment,
 
 void MCELFStreamer::EmitValueToOffset(const MCExpr *Offset,
                                         unsigned char Value) {
-  // @LOCALMOD-BEGIN
-  EmitBundlePadding();
-  // @LOCALMOD-END
-
   // TODO: This is exactly the same as MCMachOStreamer. Consider merging into
   // MCObjectStreamer.
   new MCOrgFragment(*Offset, Value, getCurrentSectionData());
@@ -505,10 +493,6 @@ void  MCELFStreamer::fixSymbolsInTLSFixups(const MCExpr *expr) {
 }
 
 void MCELFStreamer::EmitInstToFragment(const MCInst &Inst) {
-  // @LOCALMOD-BEGIN
-  EmitBundlePadding();
-  // @LOCALMOD-END
-
   MCInstFragment *IF = new MCInstFragment(Inst, getCurrentSectionData());
 
   // Add the fixups and data.
@@ -550,7 +534,6 @@ void MCELFStreamer::EmitInstToData(const MCInst &Inst) {
     }
     DF->getContents().append(Code.begin(), Code.end());
   } else {
-    EmitBundlePadding();
     MCTinyFragment *TF = new MCTinyFragment(getCurrentSectionData());
     TF->getContents().append(Code.begin(), Code.end());
   }
