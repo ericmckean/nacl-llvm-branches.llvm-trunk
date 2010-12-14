@@ -102,6 +102,11 @@ public:
   /// \brief Get the offset of the given fragment inside its containing section.
   uint64_t getFragmentOffset(const MCFragment *F) const;
 
+  // @LOCALMOD-BEGIN
+  /// \brief Get the bundle padding of the given fragment.
+  uint8_t getFragmentPadding(const MCFragment *F) const;
+  // @LOCALMOD-END
+
   /// @}
   /// @name Section Layout Data
   /// @{

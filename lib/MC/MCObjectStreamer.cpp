@@ -44,21 +44,12 @@ MCFragment *MCObjectStreamer::getCurrentFragment() const {
   return 0;
 }
 
-void MCObjectStreamer::EmitBundlePadding() const {
-  MCSectionData *SD = getCurrentSectionData();
-
-  if (SD->isBundlingEnabled() && !SD->isBundleLocked()) {
-    MCBundlePaddingFragment *BPF = new MCBundlePaddingFragment(SD);
-    BPF->setBundleAlign(SD->getBundleAlignNext());
-    SD->setBundleAlignNext(MCBundlePaddingFragment::BundleAlignNone);
-  }
-}
-
 MCDataFragment *MCObjectStreamer::getOrCreateDataFragment() const {
   // @LOCALMOD-BEGIN
-  EmitBundlePadding();
+  if (getCurrentSectionData()->isBundlingEnabled()) {
+    return new MCDataFragment(getCurrentSectionData());
+  }
   // @LOCALMOD-END
-
   MCDataFragment *F = dyn_cast_or_null<MCDataFragment>(getCurrentFragment());
   if (!F)
     F = new MCDataFragment(getCurrentSectionData());
@@ -113,7 +104,7 @@ void MCObjectStreamer::EmitBundleAlignStart() {
          ".bundle_align_start called, but bundling disabled!");
   assert(!SD->isBundleLocked() &&
          ".bundle_align_start while bundle locked");
-  SD->setBundleAlignNext(MCBundlePaddingFragment::BundleAlignStart);
+  SD->setBundleAlignNext(MCFragment::BundleAlignStart);
 }
 
 void MCObjectStreamer::EmitBundleAlignEnd() {
@@ -122,7 +113,7 @@ void MCObjectStreamer::EmitBundleAlignEnd() {
          ".bundle_align_end called, but bundling disabled!");
   assert(!SD->isBundleLocked() &&
          ".bundle_align_end while bundle locked");
-  SD->setBundleAlignNext(MCBundlePaddingFragment::BundleAlignEnd);
+  SD->setBundleAlignNext(MCFragment::BundleAlignEnd);
 }
 
 void MCObjectStreamer::EmitBundleLock() {
@@ -131,8 +122,8 @@ void MCObjectStreamer::EmitBundleLock() {
          ".bundle_lock called, but bundling disabled!");
   assert(!SD->isBundleLocked() &&
          ".bundle_lock issued when bundle already locked");
-  EmitBundlePadding();
   SD->setBundleLocked(true);
+  SD->setBundleGroupFirstFrag(true);
 }
 
 void MCObjectStreamer::EmitBundleUnlock() {
@@ -141,7 +132,16 @@ void MCObjectStreamer::EmitBundleUnlock() {
          ".bundle_unlock called, but bundling disabled!");
   assert(SD->isBundleLocked() &&
          ".bundle_unlock called when bundle not locked");
+
+  // If there has been at least one fragment emitted inside
+  // this bundle lock, then we need to mark the last emitted
+  // fragment as the group end.
+  if (!SD->isBundleGroupFirstFrag()) {
+    assert(getCurrentFragment() != NULL);
+    getCurrentFragment()->setBundleGroupEnd(true);
+  }
   SD->setBundleLocked(false);
+  SD->setBundleGroupFirstFrag(false);
 }
 // @LOCALMOD-END ==========================================================
 
