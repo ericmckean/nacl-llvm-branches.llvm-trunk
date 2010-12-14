@@ -1093,8 +1093,9 @@ bool MCAssembler::LayoutOnce(const MCObjectWriter &Writer,
 
   // Scan for fragments that need relaxation.
   bool WasRelaxed = false;
-  for (iterator it = begin(), ie = end(); it != ie; ++it) {
-    MCSectionData &SD = *it;
+  MCFragment *FirstInvalidFragment = NULL;
+  for (unsigned it = 0, ie = Layout.getSectionOrder().size(); it != ie; ++it) {
+    MCSectionData &SD = *Layout.getSectionOrder()[it];
 
     for (MCSectionData::iterator it2 = SD.begin(),
            ie2 = SD.end(); it2 != ie2; ++it2) {
@@ -1119,11 +1120,14 @@ bool MCAssembler::LayoutOnce(const MCObjectWriter &Writer,
         break;
       }
       // Update the layout, and remember that we relaxed.
-      if (relaxedFrag)
-	Layout.Invalidate(it2);
+      if (relaxedFrag && !FirstInvalidFragment)
+        FirstInvalidFragment = it2;
       WasRelaxed |= relaxedFrag;
     }
   }
+
+  if (FirstInvalidFragment)
+    Layout.Invalidate(FirstInvalidFragment);
 
   return WasRelaxed;
 }
