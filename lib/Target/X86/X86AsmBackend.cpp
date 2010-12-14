@@ -269,12 +269,6 @@ bool X86AsmBackend::WriteNopData(uint64_t Count, MCObjectWriter *OW) const {
   // Write an optimal sequence for the first 15 bytes.
   uint64_t OptimalCount = (Count < 16) ? Count : 15;
 
-  // @LOCALMOD-BEGIN
-  // Disable fancy NOPs until we can make the validator happy.
-  // For now, only emit 0x90.
-  OptimalCount = 0;
-  // @LOCALMOD-END
-
   for (uint64_t i = 0, e = OptimalCount; i != e; i++)
     OW->Write8(Nops[OptimalCount - 1][i]);
 
