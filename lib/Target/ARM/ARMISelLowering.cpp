@@ -568,15 +568,16 @@ ARMTargetLowering::ARMTargetLowering(TargetMachine &TM)
   setOperationAction(ISD::EHSELECTION,        MVT::i32,   Expand);
   // @LOCALMOD-START
   setOperationAction(ISD::EXCEPTIONADDR, MVT::i32, Expand);
-  // TODO: the use of ARM:R1 here and ARM:R0 below needs to be revisited
-  // once we get to the point where the c++ personality routine is invoked
-  setExceptionPointerRegister(ARM::R1);
-  
+  // we use the first caller saved regs here
+  // c.f.: llvm-gcc/llvm-gcc-4.2/gcc/unwind-dw2.c::uw_install_context
+  // NOTE: these are related to the _Unwind_PNaClSetResult{0,1} functions
+  setExceptionPointerRegister(ARM::R4);
+  setExceptionSelectorRegister(ARM::R5);
+
   setOperationAction(ISD::FRAME_TO_ARGS_OFFSET, MVT::i32, Custom);
+
+  setOperationAction(ISD::EH_RETURN, MVT::Other, Custom);
   // @LOCALMOD-END
-  // FIXME: Shouldn't need this, since no register is used, but the legalizer
-  // doesn't yet know how to not do that for SjLj.
-  setExceptionSelectorRegister(ARM::R0);
   setOperationAction(ISD::DYNAMIC_STACKALLOC, MVT::i32, Expand);
   // ARMv6 Thumb1 (except for CPUs that support dmb / dsb) and earlier use
   // the default expansion.
@@ -762,7 +763,10 @@ const char *ARMTargetLowering::getTargetNodeName(unsigned Opcode) const {
   default: return 0;
   case ARMISD::Wrapper:       return "ARMISD::Wrapper";
   case ARMISD::WrapperJT:     return "ARMISD::WrapperJT";
-  case ARMISD::WrapperJT2:    return "ARMISD::WrapperJT2"; // @LOCALMOD
+  // @LOCALMOD-START
+  case ARMISD::WrapperJT2:    return "ARMISD::WrapperJT2"; 
+  case ARMISD::EH_RETURN:     return "ARMISD::EH_RETURN"; 
+  // @LOCALMOD-END
   case ARMISD::CALL:          return "ARMISD::CALL";
   case ARMISD::CALL_PRED:     return "ARMISD::CALL_PRED";
   case ARMISD::CALL_NOLINK:   return "ARMISD::CALL_NOLINK";
@@ -4170,6 +4174,26 @@ static SDValue LowerMUL(SDValue Op, SelectionDAG &DAG) {
   return DAG.getNode(NewOpc, DL, VT, Op0, Op1);
 }
 
+// @LOCALMOD-START
+// An EH_RETURN is the result of lowering llvm.eh.return.i32 which in turn is
+// generated from __builtin_eh_return (offset, handler)
+// The effect of this is to adjust the stack pointer by "offset"
+// and then branch to "handler".
+SDValue ARMTargetLowering::LowerEH_RETURN(SDValue Op, SelectionDAG &DAG)
+  const {
+  SDValue Chain     = Op.getOperand(0);
+  SDValue Offset    = Op.getOperand(1);
+  SDValue Handler   = Op.getOperand(2);
+  DebugLoc dl       = Op.getDebugLoc();
+
+  return DAG.getNode(ARMISD::EH_RETURN, dl,
+                     MVT::Other,
+                     Chain,
+                     Offset,
+                     Handler);
+}
+// @LOCALMOD-END
+
 SDValue ARMTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   switch (Op.getOpcode()) {
   default: llvm_unreachable("Don't know how to custom lower this!");
@@ -4202,6 +4226,7 @@ SDValue ARMTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   // but llvm unlike gcc seems to always force one when this node is
   // encountered.
   case ISD::FRAME_TO_ARGS_OFFSET: return DAG.getIntPtrConstant(2*4);
+  case ISD::EH_RETURN:            return LowerEH_RETURN(Op, DAG);
   // @LOCALMOD-END
    
   case ISD::GLOBAL_OFFSET_TABLE: return LowerGLOBAL_OFFSET_TABLE(Op, DAG);

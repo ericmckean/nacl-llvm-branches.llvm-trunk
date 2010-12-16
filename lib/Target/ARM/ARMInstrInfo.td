@@ -1285,6 +1285,39 @@ let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
   }
 }
 
+// @LOCALMOD-START
+// Exception handling related Node and Instructions.
+// The conversion sequence is:
+// ISD::EH_RETURN -> ARMISD::EH_RETURN ->  
+// ARMeh_return -> (stack change + indirect branch)
+// 
+// Note: the ARMeh_return takes the place of regular return instruction
+// but takes two arguments.
+// At one point we saw a problem: where the registers consumed by 
+// the ARMeh_return where invalidated by the epilog code which
+// is injected immediately in front of it.
+// This problem is currently irreproducible but should it ever come back
+// the symptoms are easily recognized: all toolchain eh_* tests will fail.
+// The fix in that case would be to either hardcode result registers
+// (r0, r1) into  ARMISD::EH_RETURN or fix whatever bug may lurk in the epilog
+// code emission.
+def SDT_ARMEHRET : SDTypeProfile<0, 2, [SDTCisInt<0>, SDTCisPtrTy<1>]>;
+
+def ARMehret : SDNode<"ARMISD::EH_RETURN", SDT_ARMEHRET,
+                      [SDNPHasChain, SDNPOptInFlag]>;
+
+
+let isTerminator = 1, isReturn = 1, isBarrier = 1,
+  Defs = [SP],
+  Uses = [SP] in {
+    def ARMeh_return : PseudoInst<(outs), 
+                               (ins GPR:$spadj, GPR:$dst),
+                               IIC_Br,
+                               [(ARMehret GPR:$spadj, GPR:$dst)]>,
+                    Requires<[IsARM]>; 
+}
+// @LOCALMOD-END
+
 // On non-Darwin platforms R9 is callee-saved.
 let isCall = 1,
   Defs = [R0,  R1,  R2,  R3,  R12, LR,
