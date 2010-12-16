@@ -523,8 +523,7 @@ bool X86NaClRewritePass::ApplyRewrites(MachineBasicBlock &MBB,
       .addOperand(MI.getOperand(0))  // Base
       .addOperand(MI.getOperand(1))  // Scale
       .addOperand(MI.getOperand(2))  // Index
-      .addGlobalAddress(MI.getOperand(3).getGlobal(),
-                        MI.getOperand(3).getTargetFlags() | X86II::MO_TLSGD)
+      .addGlobalAddress(MI.getOperand(3).getGlobal(), 0, X86II::MO_TLSGD)
       .addOperand(MI.getOperand(4)); // Segment
     BuildMI(MBB, MBBI, DL, TII->get(X86::CALLpcrel32))
       .addExternalSymbol("___tls_get_addr", X86II::MO_PLT);
