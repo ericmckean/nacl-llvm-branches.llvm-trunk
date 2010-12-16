@@ -510,6 +510,29 @@ bool X86NaClRewritePass::ApplyRewrites(MachineBasicBlock &MBB,
     return true;
   }
 
+  if (Opc == X86::NACL_CG_TLS_addr32) {
+    // Rewrite to:
+    //   .bundle_align_end
+    //   .bundle_lock
+    //   leal\t$sym, %eax;
+    //   call\t___tls_get_addr@PLT
+    //   .bundle_unlock
+    BuildMI(MBB, MBBI, DL, TII->get(TargetOpcode::BUNDLE_ALIGN_END));
+    BuildMI(MBB, MBBI, DL, TII->get(TargetOpcode::BUNDLE_LOCK));
+    BuildMI(MBB, MBBI, DL, TII->get(X86::LEA32r), X86::EAX)
+      .addOperand(MI.getOperand(0))  // Base
+      .addOperand(MI.getOperand(1))  // Scale
+      .addOperand(MI.getOperand(2))  // Index
+      .addGlobalAddress(MI.getOperand(3).getGlobal(),
+                        MI.getOperand(3).getTargetFlags() | X86II::MO_TLSGD)
+      .addOperand(MI.getOperand(4)); // Segment
+    BuildMI(MBB, MBBI, DL, TII->get(X86::CALLpcrel32))
+      .addExternalSymbol("___tls_get_addr", X86II::MO_PLT);
+    BuildMI(MBB, MBBI, DL, TII->get(TargetOpcode::BUNDLE_UNLOCK));
+    MI.eraseFromParent();
+    return true;
+  }
+
   if (Opc == X86::NACL_CG_TLS_addr64) {
     // Rewrite to:
     //   movq $sym, %rdi

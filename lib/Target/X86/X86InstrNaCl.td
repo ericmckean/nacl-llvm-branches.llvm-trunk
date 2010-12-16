@@ -275,6 +275,21 @@ def : Pat<(X86tcret GR32_TC_64:$dst, imm:$off),
           (NACL_CG_TCRETURNri64 GR32_TC_64:$dst, imm:$off)>,
 	  Requires<[IsNaCl64]>;
 
+// ELF TLS Support
+// The linker expects this lea+call sequence to be directly adjacent.
+let Defs = [EAX, ECX, EDX, FP0, FP1, FP2, FP3, FP4, FP5, FP6, ST0,
+            MM0, MM1, MM2, MM3, MM4, MM5, MM6, MM7,
+            XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
+            XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15, EFLAGS],
+    Uses = [ESP] in
+def NACL_CG_TLS_addr32 : I<0, Pseudo, (outs), (ins i32mem:$sym),
+                         ".bundle_align_end"
+                         ".bundle_lock"
+                         "leal\t$sym, %eax; "
+                         "call\t___tls_get_addr@PLT"
+                         ".bundle_unlock",
+                         [(X86tlsaddr tls32addr:$sym)]>,
+                         Requires<[In32BitMode, IsNaCl32]>;
 
 // The NaCl loader cannot set the FS or GS segmentation registers
 // on Windows, so we must use a NaCl syscall.
