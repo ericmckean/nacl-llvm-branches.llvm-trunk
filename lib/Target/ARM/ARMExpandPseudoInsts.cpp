@@ -856,6 +856,27 @@ bool ARMExpandPseudo::ExpandMBB(MachineBasicBlock &MBB) {
     }
 
     // @LOCALMOD-BEGIN
+    case ARM::ARMeh_return: {
+      // This pseudo instruction is generated as part of the lowering of
+      // ISD::EH_RETURN (c.f. ARMISelLowering.cpp)
+      // we convert it to a stack increment by OffsetReg and
+      // indirect jump to TargetReg
+      unsigned PredReg = 0;
+      ARMCC::CondCodes Pred = llvm::getInstrPredicate(&MI, PredReg);
+      unsigned OffsetReg = MI.getOperand(0).getReg();
+      unsigned TargetReg = MI.getOperand(1).getReg();
+      BuildMI(MBB, MBBI, MI.getDebugLoc(), TII->get(ARM::ADDrr), ARM::SP)
+          .addReg(OffsetReg)
+          .addReg(ARM::SP)
+          .addImm(Pred)
+          .addReg(PredReg)
+          .addReg(0);
+
+      BuildMI(MBB, MBBI, MI.getDebugLoc(), TII->get(ARM::BRIND))
+          .addReg(TargetReg);
+      MI.eraseFromParent();
+      break;
+    }
     case ARM::MOVGOTAddr : {
       // Expand the pseudo-inst that requests for the GOT address
       // to be materialized into a register. We use MOVW/MOVT for this.
