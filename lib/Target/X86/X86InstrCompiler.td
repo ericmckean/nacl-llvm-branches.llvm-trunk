@@ -247,7 +247,7 @@ def TLS_addr32 : I<0, Pseudo, (outs), (ins i32mem:$sym),
                   "leal\t$sym, %eax; "
                   "call\t___tls_get_addr@PLT",
                   [(X86tlsaddr tls32addr:$sym)]>,
-                  Requires<[In32BitMode]>;
+                  Requires<[In32BitMode, NotNaCl]>;
 
 // All calls clobber the non-callee saved registers. RSP is marked as
 // a use to prevent stack-pointer assignments that appear immediately
