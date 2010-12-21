@@ -210,7 +210,11 @@ MemoryBuffer *MemoryBuffer::getFile(const char *Filename, std::string *ErrStr,
 MemoryBuffer *MemoryBuffer::getOpenFile(int FD, const char *Filename,
                                         std::string *ErrStr, int64_t FileSize) {
   FileCloser FC(FD); // Close FD on return.
-  
+
+// LLVM uses mmap to read the file contents. This disallows use of the
+// wrapper syscalls defined in tools/llc/nacl_file.c. Thus, when NACL_SRPC
+// is specified, code sequence execising the read syscall below is used.
+#if !defined(NACL_SRPC)
   // If we don't know the file size, use fstat to find out.  fstat on an open
   // file descriptor is cheaper than stat on a random path.
   if (FileSize == -1) {
@@ -222,7 +226,6 @@ MemoryBuffer *MemoryBuffer::getOpenFile(int FD, const char *Filename,
     }
     FileSize = FileInfo.st_size;
   }
-  
   
   // If the file is large, try to use mmap to read it in.  We don't use mmap
   // for small files, because this can severely fragment our address space. Also
@@ -237,6 +240,9 @@ MemoryBuffer *MemoryBuffer::getOpenFile(int FD, const char *Filename,
                                                   Filename);
     }
   }
+#else
+  assert(FileSize != -1 && "invalid file size!");
+#endif
 
   MemoryBuffer *Buf = MemoryBuffer::getNewUninitMemBuffer(FileSize, Filename);
   if (!Buf) {

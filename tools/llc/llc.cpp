@@ -39,6 +39,14 @@
 #include "llvm/Target/TargetRegistry.h"
 #include "llvm/Target/TargetSelect.h"
 #include <memory>
+
+#if defined(__native_client__) && defined(NACL_SRPC)
+#include <fcntl.h>
+#include <sys/nacl_syscalls.h>
+
+extern size_t get_file_size(int dd);
+#endif
+
 using namespace llvm;
 
 // General options for llc.  Other pass-specific options are specified
@@ -191,7 +199,7 @@ static tool_output_file *GetOutputStream(const char *TargetName,
 
 // main - Entry point for the llc compiler.
 //
-int main(int argc, char **argv) {
+int llc_main(int argc, char **argv) {
   sys::PrintStackTraceOnErrorSignal();
   PrettyStackTraceProgram X(argc, argv);
 
@@ -212,7 +220,26 @@ int main(int argc, char **argv) {
   SMDiagnostic Err;
   std::auto_ptr<Module> M;
 
+  // This code opens and passes input file size to the
+  // MemoryBuffer::getOpenFile. This helps prevent llc
+  // from mmap'ing the input bitcode file contents itself.
+#if defined(__native_client__) && defined(NACL_SRPC)
+  std::string ErrMsg;
+  int OpenFlags = O_RDONLY;
+#ifdef O_BINARY
+  OpenFlags |= O_BINARY;  // Open input file in binary mode on win32.
+#endif
+  int FD = ::open(InputFilename.c_str(), OpenFlags);
+  MemoryBuffer *F = MemoryBuffer::getOpenFile(FD, InputFilename.c_str(), &ErrMsg,
+                                                 get_file_size(FD));
+  if (F == 0) {
+    Err = SMDiagnostic(InputFilename.c_str(), "Could not open input file: " + ErrMsg);
+    return 0;
+  }
+  M.reset(ParseIR(F, Err, Context));
+#else
   M.reset(ParseIRFile(InputFilename, Err, Context));
+#endif
   if (M.get() == 0) {
     Err.Print(argv[0], errs());
     return 1;
@@ -331,3 +358,13 @@ int main(int argc, char **argv) {
 
   return 0;
 }
+
+#if !defined(NACL_SRPC)
+int
+main (int argc, char **argv) {
+  return llc_main(argc, argv);
+}
+#else
+// main() is in nacl_file.cpp.
+#endif
+
