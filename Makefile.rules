@@ -570,8 +570,8 @@ endif
 endif
 endif
 
-ifeq ($(SANDBOX_LLVM),1)
-  LIBS += -lnosys
+ifeq ($(NACL_SANDBOX),1)
+  LIBS += -lsrpc -lpthread -lm -lnacl -lnosys
 else
   LIBS +=
 endif

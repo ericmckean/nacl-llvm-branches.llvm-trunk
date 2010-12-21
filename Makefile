@@ -43,7 +43,7 @@ EXTRA_DIST := test unittests llvm.spec include win32 Xcode
 
 include $(LEVEL)/Makefile.config
 
-ifeq ($(SANDBOX_LLVM),1)
+ifeq ($(NACL_SANDBOX),1)
   DIRS := $(filter-out tools/llvm-shlib runtime docs unittests, $(DIRS))
   OPTIONAL_DIRS :=
 endif
@@ -124,7 +124,7 @@ cross-compile-build-tools:
 	(unset SDKROOT; \
 	 $(MAKE) -C BuildTools \
 	  BUILD_DIRS_ONLY=1 \
-	  SANDBOX_LLVM=0 \
+	  NACL_SANDBOX=0 \
 	  UNIVERSAL= \
 	  ENABLE_OPTIMIZED=$(ENABLE_OPTIMIZED) \
 	  ENABLE_PROFILING=$(ENABLE_PROFILING) \
