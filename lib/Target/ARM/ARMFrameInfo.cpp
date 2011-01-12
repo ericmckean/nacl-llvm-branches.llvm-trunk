@@ -149,14 +149,10 @@ void ARMFrameInfo::emitPrologue(MachineFunction &MF) const {
 
   // @LOCALMOD-START
   MachineModuleInfo &MMI = MF.getMMI();
-  // This condition was gleaned from x86
+  // This condition was gleaned from x86 / PowerPC / XCore
   bool needsFrameMoves = MMI.hasDebugInfo() ||
                          !MF.getFunction()->doesNotThrow() ||
                          UnwindTablesMandatory;
-  // TODO: figure out what the right condition is, for now always emit
-  // unwind info
-  // c.f. http://code.google.com/p/nativeclient/issues/detail?id=1241
-  needsFrameMoves = true;
   // @LOCALMOD-END
   
   // Allocate the vararg register save area. This is not counted in NumBytes.
