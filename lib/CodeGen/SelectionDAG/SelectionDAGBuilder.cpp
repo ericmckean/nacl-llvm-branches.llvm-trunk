@@ -44,9 +44,8 @@
 #include "llvm/CodeGen/PseudoSourceValue.h"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/Analysis/DebugInfo.h"
-#include "llvm/Target/TargetRegisterInfo.h"
 #include "llvm/Target/TargetData.h"
-#include "llvm/Target/TargetFrameInfo.h"
+#include "llvm/Target/TargetFrameLowering.h"
 #include "llvm/Target/TargetInstrInfo.h"
 #include "llvm/Target/TargetIntrinsicInfo.h"
 #include "llvm/Target/TargetLowering.h"
@@ -637,48 +636,49 @@ SDValue RegsForValue::getCopyFromRegs(SelectionDAG &DAG,
       }
 
       Chain = P.getValue(1);
+      Parts[i] = P;
 
       // If the source register was virtual and if we know something about it,
       // add an assert node.
-      if (TargetRegisterInfo::isVirtualRegister(Regs[Part+i]) &&
-          RegisterVT.isInteger() && !RegisterVT.isVector()) {
-        unsigned SlotNo = Regs[Part+i]-TargetRegisterInfo::FirstVirtualRegister;
-        if (FuncInfo.LiveOutRegInfo.size() > SlotNo) {
-          const FunctionLoweringInfo::LiveOutInfo &LOI =
-            FuncInfo.LiveOutRegInfo[SlotNo];
+      if (!TargetRegisterInfo::isVirtualRegister(Regs[Part+i]) ||
+          !RegisterVT.isInteger() || RegisterVT.isVector() ||
+          !FuncInfo.LiveOutRegInfo.inBounds(Regs[Part+i]))
+        continue;
+      
+      const FunctionLoweringInfo::LiveOutInfo &LOI =
+        FuncInfo.LiveOutRegInfo[Regs[Part+i]];
 
-          unsigned RegSize = RegisterVT.getSizeInBits();
-          unsigned NumSignBits = LOI.NumSignBits;
-          unsigned NumZeroBits = LOI.KnownZero.countLeadingOnes();
+      unsigned RegSize = RegisterVT.getSizeInBits();
+      unsigned NumSignBits = LOI.NumSignBits;
+      unsigned NumZeroBits = LOI.KnownZero.countLeadingOnes();
 
-          // FIXME: We capture more information than the dag can represent.  For
-          // now, just use the tightest assertzext/assertsext possible.
-          bool isSExt = true;
-          EVT FromVT(MVT::Other);
-          if (NumSignBits == RegSize)
-            isSExt = true, FromVT = MVT::i1;   // ASSERT SEXT 1
-          else if (NumZeroBits >= RegSize-1)
-            isSExt = false, FromVT = MVT::i1;  // ASSERT ZEXT 1
-          else if (NumSignBits > RegSize-8)
-            isSExt = true, FromVT = MVT::i8;   // ASSERT SEXT 8
-          else if (NumZeroBits >= RegSize-8)
-            isSExt = false, FromVT = MVT::i8;  // ASSERT ZEXT 8
-          else if (NumSignBits > RegSize-16)
-            isSExt = true, FromVT = MVT::i16;  // ASSERT SEXT 16
-          else if (NumZeroBits >= RegSize-16)
-            isSExt = false, FromVT = MVT::i16; // ASSERT ZEXT 16
-          else if (NumSignBits > RegSize-32)
-            isSExt = true, FromVT = MVT::i32;  // ASSERT SEXT 32
-          else if (NumZeroBits >= RegSize-32)
-            isSExt = false, FromVT = MVT::i32; // ASSERT ZEXT 32
+      // FIXME: We capture more information than the dag can represent.  For
+      // now, just use the tightest assertzext/assertsext possible.
+      bool isSExt = true;
+      EVT FromVT(MVT::Other);
+      if (NumSignBits == RegSize)
+        isSExt = true, FromVT = MVT::i1;   // ASSERT SEXT 1
+      else if (NumZeroBits >= RegSize-1)
+        isSExt = false, FromVT = MVT::i1;  // ASSERT ZEXT 1
+      else if (NumSignBits > RegSize-8)
+        isSExt = true, FromVT = MVT::i8;   // ASSERT SEXT 8
+      else if (NumZeroBits >= RegSize-8)
+        isSExt = false, FromVT = MVT::i8;  // ASSERT ZEXT 8
+      else if (NumSignBits > RegSize-16)
+        isSExt = true, FromVT = MVT::i16;  // ASSERT SEXT 16
+      else if (NumZeroBits >= RegSize-16)
+        isSExt = false, FromVT = MVT::i16; // ASSERT ZEXT 16
+      else if (NumSignBits > RegSize-32)
+        isSExt = true, FromVT = MVT::i32;  // ASSERT SEXT 32
+      else if (NumZeroBits >= RegSize-32)
+        isSExt = false, FromVT = MVT::i32; // ASSERT ZEXT 32
+      else
+        continue;
 
-          if (FromVT != MVT::Other)
-            P = DAG.getNode(isSExt ? ISD::AssertSext : ISD::AssertZext, dl,
-                            RegisterVT, P, DAG.getValueType(FromVT));
-        }
-      }
-
-      Parts[i] = P;
+      // Add an assertion node.
+      assert(FromVT != MVT::Other);
+      Parts[i] = DAG.getNode(isSExt ? ISD::AssertSext : ISD::AssertZext, dl,
+                             RegisterVT, P, DAG.getValueType(FromVT));
     }
 
     Values[Value] = getCopyFromParts(DAG, dl, Parts.begin(),
@@ -908,11 +908,8 @@ void SelectionDAGBuilder::resolveDanglingDebugInfo(const Value *V,
                               Val.getResNo(), Offset, dl, DbgSDNodeOrder);
         DAG.AddDbgValue(SDV, Val.getNode(), false);
       }
-    } else {
-      SDV = DAG.getDbgValue(Variable, UndefValue::get(V->getType()),
-                            Offset, dl, SDNodeOrder);
-      DAG.AddDbgValue(SDV, 0, false);
-    }
+    } else 
+      DEBUG(dbgs() << "Dropping debug info for " << DI);
     DanglingDebugInfoMap[V] = DanglingDebugInfo();
   }
 }
@@ -1403,6 +1400,7 @@ void SelectionDAGBuilder::visitBr(const BranchInst &I) {
 
   // If this is a series of conditions that are or'd or and'd together, emit
   // this as a sequence of branches instead of setcc's with and/or operations.
+  // As long as jumps are not expensive, this should improve performance.
   // For example, instead of something like:
   //     cmp A, B
   //     C = seteq
@@ -1417,7 +1415,8 @@ void SelectionDAGBuilder::visitBr(const BranchInst &I) {
   //     jle foo
   //
   if (const BinaryOperator *BOp = dyn_cast<BinaryOperator>(CondVal)) {
-    if (BOp->hasOneUse() &&
+    if (!TLI.isJumpExpensive() && 
+        BOp->hasOneUse() &&
         (BOp->getOpcode() == Instruction::And ||
          BOp->getOpcode() == Instruction::Or)) {
       FindMergedConditions(BOp, Succ0MBB, Succ1MBB, BrMBB, BrMBB,
@@ -1613,12 +1612,28 @@ void SelectionDAGBuilder::visitBitTestHeader(BitTestBlock &B,
                                   Sub, DAG.getConstant(B.Range, VT),
                                   ISD::SETUGT);
 
-  SDValue ShiftOp = DAG.getZExtOrTrunc(Sub, getCurDebugLoc(),
-                                       TLI.getPointerTy());
+  // Determine the type of the test operands.
+  bool UsePtrType = false;
+  if (!TLI.isTypeLegal(VT))
+    UsePtrType = true;
+  else {
+    for (unsigned i = 0, e = B.Cases.size(); i != e; ++i)
+      if ((uint64_t)((int64_t)B.Cases[i].Mask >> VT.getSizeInBits()) + 1 >= 2) {
+        // Switch table case range are encoded into series of masks.
+        // Just use pointer type, it's guaranteed to fit.
+        UsePtrType = true;
+        break;
+      }
+  }
+  if (UsePtrType) {
+    VT = TLI.getPointerTy();
+    Sub = DAG.getZExtOrTrunc(Sub, getCurDebugLoc(), VT);
+  }
 
-  B.Reg = FuncInfo.CreateReg(TLI.getPointerTy());
+  B.RegVT = VT;
+  B.Reg = FuncInfo.CreateReg(VT);
   SDValue CopyTo = DAG.getCopyToReg(getControlRoot(), getCurDebugLoc(),
-                                    B.Reg, ShiftOp);
+                                    B.Reg, Sub);
 
   // Set NextBlock to be the MBB immediately after the current one, if any.
   // This is used to avoid emitting unnecessary branches to the next block.
@@ -1644,36 +1659,34 @@ void SelectionDAGBuilder::visitBitTestHeader(BitTestBlock &B,
 }
 
 /// visitBitTestCase - this function produces one "bit test"
-void SelectionDAGBuilder::visitBitTestCase(MachineBasicBlock* NextMBB,
+void SelectionDAGBuilder::visitBitTestCase(BitTestBlock &BB,
+                                           MachineBasicBlock* NextMBB,
                                            unsigned Reg,
                                            BitTestCase &B,
                                            MachineBasicBlock *SwitchBB) {
-  SDValue ShiftOp = DAG.getCopyFromReg(getControlRoot(), getCurDebugLoc(), Reg,
-                                       TLI.getPointerTy());
+  EVT VT = BB.RegVT;
+  SDValue ShiftOp = DAG.getCopyFromReg(getControlRoot(), getCurDebugLoc(),
+                                       Reg, VT);
   SDValue Cmp;
   if (CountPopulation_64(B.Mask) == 1) {
     // Testing for a single bit; just compare the shift count with what it
     // would need to be to shift a 1 bit in that position.
     Cmp = DAG.getSetCC(getCurDebugLoc(),
-                       TLI.getSetCCResultType(ShiftOp.getValueType()),
+                       TLI.getSetCCResultType(VT),
                        ShiftOp,
-                       DAG.getConstant(CountTrailingZeros_64(B.Mask),
-                                       TLI.getPointerTy()),
+                       DAG.getConstant(CountTrailingZeros_64(B.Mask), VT),
                        ISD::SETEQ);
   } else {
     // Make desired shift
-    SDValue SwitchVal = DAG.getNode(ISD::SHL, getCurDebugLoc(),
-                                    TLI.getPointerTy(),
-                                    DAG.getConstant(1, TLI.getPointerTy()),
-                                    ShiftOp);
+    SDValue SwitchVal = DAG.getNode(ISD::SHL, getCurDebugLoc(), VT,
+                                    DAG.getConstant(1, VT), ShiftOp);
 
     // Emit bit tests and jumps
     SDValue AndOp = DAG.getNode(ISD::AND, getCurDebugLoc(),
-                                TLI.getPointerTy(), SwitchVal,
-                                DAG.getConstant(B.Mask, TLI.getPointerTy()));
+                                VT, SwitchVal, DAG.getConstant(B.Mask, VT));
     Cmp = DAG.getSetCC(getCurDebugLoc(),
-                       TLI.getSetCCResultType(AndOp.getValueType()),
-                       AndOp, DAG.getConstant(0, TLI.getPointerTy()),
+                       TLI.getSetCCResultType(VT),
+                       AndOp, DAG.getConstant(0, VT),
                        ISD::SETNE);
   }
 
@@ -1867,9 +1880,8 @@ static inline bool areJTsAllowed(const TargetLowering &TLI) {
 }
 
 static APInt ComputeRange(const APInt &First, const APInt &Last) {
-  APInt LastExt(Last), FirstExt(First);
   uint32_t BitWidth = std::max(Last.getBitWidth(), First.getBitWidth()) + 1;
-  LastExt.sext(BitWidth); FirstExt.sext(BitWidth);
+  APInt LastExt = Last.sext(BitWidth), FirstExt = First.sext(BitWidth);
   return (LastExt - FirstExt + 1ULL);
 }
 
@@ -2218,7 +2230,7 @@ bool SelectionDAGBuilder::handleBitTestsSwitchCase(CaseRec& CR,
   }
 
   BitTestBlock BTB(lowBound, cmpRange, SV,
-                   -1U, (CR.CaseBB == SwitchBB),
+                   -1U, MVT::Other, (CR.CaseBB == SwitchBB),
                    CR.CaseBB, Default, BTC);
 
   if (CR.CaseBB == SwitchBB)
@@ -2730,7 +2742,7 @@ void SelectionDAGBuilder::visitShuffleVector(const User &I) {
         } else {
           StartIdx[Input] = (MinRange[Input]/MaskNumElts)*MaskNumElts;
           if (MaxRange[Input] - StartIdx[Input] < (int)MaskNumElts &&
-              StartIdx[Input] + MaskNumElts < SrcNumElts)
+              StartIdx[Input] + MaskNumElts <= SrcNumElts)
             RangeUse[Input] = 1; // Extract from a multiple of the mask length.
         }
       }
@@ -2962,7 +2974,7 @@ void SelectionDAGBuilder::visitAlloca(const AllocaInst &I) {
   // Handle alignment.  If the requested alignment is less than or equal to
   // the stack alignment, ignore it.  If the size is greater than or equal to
   // the stack alignment, we note this in the DYNAMIC_STACKALLOC node.
-  unsigned StackAlign = TM.getFrameInfo()->getStackAlignment();
+  unsigned StackAlign = TM.getFrameLowering()->getStackAlignment();
   if (Align <= StackAlign)
     Align = 0;
 
@@ -4058,7 +4070,7 @@ SelectionDAGBuilder::EmitFuncArgumentDbgValue(const Value *V, MDNode *Variable,
 
   if (N.getNode() && N.getOpcode() == ISD::CopyFromReg) {
     Reg = cast<RegisterSDNode>(N.getOperand(1))->getReg();
-    if (Reg && TargetRegisterInfo::isVirtualRegister(Reg)) {
+    if (TargetRegisterInfo::isVirtualRegister(Reg)) {
       MachineRegisterInfo &RegInfo = MF.getRegInfo();
       unsigned PR = RegInfo.getLiveInPhysReg(Reg);
       if (PR)
@@ -4196,10 +4208,7 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
     // Check if address has undef value.
     if (isa<UndefValue>(Address) ||
         (Address->use_empty() && !isa<Argument>(Address))) {
-      SDDbgValue*SDV =
-        DAG.getDbgValue(Variable, UndefValue::get(Address->getType()),
-                        0, dl, SDNodeOrder);
-      DAG.AddDbgValue(SDV, 0, false);
+      DEBUG(dbgs() << "Dropping debug info for " << DI);
       return 0;
     }
 
@@ -4222,16 +4231,20 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
           // Byval parameter.  We have a frame index at this point.
           SDV = DAG.getDbgValue(Variable, FINode->getIndex(),
                                 0, dl, SDNodeOrder);
-        else
+        else {
           // Can't do anything with other non-AI cases yet.  This might be a
           // parameter of a callee function that got inlined, for example.
+          DEBUG(dbgs() << "Dropping debug info for " << DI);
           return 0;
+        }
       } else if (AI)
         SDV = DAG.getDbgValue(Variable, N.getNode(), N.getResNo(),
                               0, dl, SDNodeOrder);
-      else
+      else {
         // Can't do anything with other non-AI cases yet.
+        DEBUG(dbgs() << "Dropping debug info for " << DI);
         return 0;
+      }
       DAG.AddDbgValue(SDV, N.getNode(), isParameter);
     } else {
       // If Address is an argument then try to emit its dbg value using
@@ -4251,10 +4264,7 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
             }
           }
         }
-        // Otherwise add undef to help track missing debug info.
-        SDV = DAG.getDbgValue(Variable, UndefValue::get(Address->getType()),
-                              0, dl, SDNodeOrder);
-        DAG.AddDbgValue(SDV, 0, false);
+        DEBUG(dbgs() << "Dropping debug info for " << DI);
       }
     }
     return 0;
@@ -4299,10 +4309,8 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
         DanglingDebugInfoMap[V] = DDI;
       } else {
         // We may expand this to cover more cases.  One case where we have no
-        // data available is an unreferenced parameter; we need this fallback.
-        SDV = DAG.getDbgValue(Variable, UndefValue::get(V->getType()),
-                              Offset, dl, SDNodeOrder);
-        DAG.AddDbgValue(SDV, 0, false);
+        // data available is an unreferenced parameter.
+        DEBUG(dbgs() << "Dropping debug info for " << DI);
       }
     }
 
@@ -5727,9 +5735,14 @@ void SelectionDAGBuilder::visitInlineAsm(ImmutableCallSite CS) {
   const MDNode *SrcLoc = CS.getInstruction()->getMetadata("srcloc");
   AsmNodeOperands.push_back(DAG.getMDNode(SrcLoc));
 
-  // Remember the AlignStack bit as operand 3.
-  AsmNodeOperands.push_back(DAG.getTargetConstant(IA->isAlignStack() ? 1 : 0,
-                                            MVT::i1));
+  // Remember the HasSideEffect and AlignStack bits as operand 3.
+  unsigned ExtraInfo = 0;
+  if (IA->hasSideEffects())
+    ExtraInfo |= InlineAsm::Extra_HasSideEffects;
+  if (IA->isAlignStack())
+    ExtraInfo |= InlineAsm::Extra_IsAlignStack;
+  AsmNodeOperands.push_back(DAG.getTargetConstant(ExtraInfo,
+                                                  TLI.getPointerTy()));
 
   // Loop over all of the inputs, copying the operand values into the
   // appropriate registers and processing the output regs.
@@ -5925,7 +5938,7 @@ void SelectionDAGBuilder::visitInlineAsm(ImmutableCallSite CS) {
   if (Flag.getNode()) AsmNodeOperands.push_back(Flag);
 
   Chain = DAG.getNode(ISD::INLINEASM, getCurDebugLoc(),
-                      DAG.getVTList(MVT::Other, MVT::Flag),
+                      DAG.getVTList(MVT::Other, MVT::Glue),
                       &AsmNodeOperands[0], AsmNodeOperands.size());
   Flag = Chain.getValue(1);
 

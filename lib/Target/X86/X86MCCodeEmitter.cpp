@@ -38,29 +38,6 @@ public:
 
   ~X86MCCodeEmitter() {}
 
-  unsigned getNumFixupKinds() const {
-    return 7;
-  }
-
-  const MCFixupKindInfo &getFixupKindInfo(MCFixupKind Kind) const {
-    const static MCFixupKindInfo Infos[] = {
-      { "reloc_pcrel_4byte", 0, 4 * 8, MCFixupKindInfo::FKF_IsPCRel },
-      { "reloc_pcrel_1byte", 0, 1 * 8, MCFixupKindInfo::FKF_IsPCRel },
-      { "reloc_pcrel_2byte", 0, 2 * 8, MCFixupKindInfo::FKF_IsPCRel },
-      { "reloc_riprel_4byte", 0, 4 * 8, MCFixupKindInfo::FKF_IsPCRel },
-      { "reloc_riprel_4byte_movq_load", 0, 4 * 8, MCFixupKindInfo::FKF_IsPCRel },
-      { "reloc_signed_4byte", 0, 4 * 8, 0},
-      { "reloc_global_offset_table", 0, 4 * 8, 0}
-    };
-
-    if (Kind < FirstTargetFixupKind)
-      return MCCodeEmitter::getFixupKindInfo(Kind);
-
-    assert(unsigned(Kind - FirstTargetFixupKind) < getNumFixupKinds() &&
-           "Invalid kind!");
-    return Infos[Kind - FirstTargetFixupKind];
-  }
-
   static unsigned GetX86RegNum(const MCOperand &MO) {
     return X86RegisterInfo::getX86RegNum(MO.getReg());
   }
@@ -173,13 +150,7 @@ static MCFixupKind getImmFixupKind(uint64_t TSFlags) {
   unsigned Size = X86II::getSizeOfImm(TSFlags);
   bool isPCRel = X86II::isImmPCRel(TSFlags);
 
-  switch (Size) {
-  default: assert(0 && "Unknown immediate size");
-  case 1: return isPCRel ? MCFixupKind(X86::reloc_pcrel_1byte) : FK_Data_1;
-  case 2: return isPCRel ? MCFixupKind(X86::reloc_pcrel_2byte) : FK_Data_2;
-  case 4: return isPCRel ? MCFixupKind(X86::reloc_pcrel_4byte) : FK_Data_4;
-  case 8: assert(!isPCRel); return FK_Data_8;
-  }
+  return MCFixup::getKindForSize(Size, isPCRel);
 }
 
 /// Is32BitMemOperand - Return true if the specified instruction with a memory
@@ -222,9 +193,9 @@ EmitImmediate(const MCOperand &DispOp, unsigned Size, MCFixupKind FixupKind,
   if (DispOp.isImm()) {
     // If this is a simple integer displacement that doesn't require a relocation,
     // emit it now.
-    if (FixupKind != MCFixupKind(X86::reloc_pcrel_1byte) &&
-	FixupKind != MCFixupKind(X86::reloc_pcrel_2byte) &&
-	FixupKind != MCFixupKind(X86::reloc_pcrel_4byte)) {
+    if (FixupKind != FK_PCRel_1 &&
+	FixupKind != FK_PCRel_2 &&
+	FixupKind != FK_PCRel_4) {
       EmitConstant(DispOp.getImm()+ImmOffset, Size, CurByte, OS);
       return;
     }
@@ -243,13 +214,13 @@ EmitImmediate(const MCOperand &DispOp, unsigned Size, MCFixupKind FixupKind,
 
   // If the fixup is pc-relative, we need to bias the value to be relative to
   // the start of the field, not the end of the field.
-  if (FixupKind == MCFixupKind(X86::reloc_pcrel_4byte) ||
+  if (FixupKind == FK_PCRel_4 ||
       FixupKind == MCFixupKind(X86::reloc_riprel_4byte) ||
       FixupKind == MCFixupKind(X86::reloc_riprel_4byte_movq_load))
     ImmOffset -= 4;
-  if (FixupKind == MCFixupKind(X86::reloc_pcrel_2byte))
+  if (FixupKind == FK_PCRel_2)
     ImmOffset -= 2;
-  if (FixupKind == MCFixupKind(X86::reloc_pcrel_1byte))
+  if (FixupKind == FK_PCRel_1)
     ImmOffset -= 1;
 
   if (ImmOffset)
@@ -1025,7 +996,10 @@ EncodeInstruction(const MCInst &MI, raw_ostream &OS,
                     Fixups);
     } else {
       unsigned FixupKind;
-      if (MI.getOpcode() == X86::MOV64ri32 || MI.getOpcode() == X86::MOV64mi32)
+      // FIXME: Is there a better way to know that we need a signed relocation?
+      if (MI.getOpcode() == X86::MOV64ri32 ||
+          MI.getOpcode() == X86::MOV64mi32 ||
+          MI.getOpcode() == X86::PUSH64i32)
         FixupKind = X86::reloc_signed_4byte;
       else
         FixupKind = getImmFixupKind(TSFlags);

@@ -202,7 +202,7 @@ static Constant *ExtractConstantBytes(Constant *C, unsigned ByteStart,
     APInt V = CI->getValue();
     if (ByteStart)
       V = V.lshr(ByteStart*8);
-    V.trunc(ByteSize*8);
+    V = V.trunc(ByteSize*8);
     return ConstantInt::get(CI->getContext(), V);
   }
   
@@ -511,9 +511,13 @@ Constant *llvm::ConstantFoldCastInstruction(unsigned opc, Constant *V,
       return Constant::getNullValue(DestTy);
     return UndefValue::get(DestTy);
   }
+
   // No compile-time operations on this type yet.
   if (V->getType()->isPPC_FP128Ty() || DestTy->isPPC_FP128Ty())
     return 0;
+
+  if (V->isNullValue() && !DestTy->isX86_MMXTy())
+    return Constant::getNullValue(DestTy);
 
   // If the cast operand is a constant expression, there's a few things we can
   // do to try to simplify it.
@@ -637,9 +641,7 @@ Constant *llvm::ConstantFoldCastInstruction(unsigned opc, Constant *V,
   case Instruction::SIToFP:
     if (ConstantInt *CI = dyn_cast<ConstantInt>(V)) {
       APInt api = CI->getValue();
-      const uint64_t zero[] = {0, 0};
-      APFloat apf = APFloat(APInt(DestTy->getPrimitiveSizeInBits(),
-                                  2, zero));
+      APFloat apf(APInt::getNullValue(DestTy->getPrimitiveSizeInBits()), true);
       (void)apf.convertFromAPInt(api, 
                                  opc==Instruction::SIToFP,
                                  APFloat::rmNearestTiesToEven);
@@ -649,25 +651,22 @@ Constant *llvm::ConstantFoldCastInstruction(unsigned opc, Constant *V,
   case Instruction::ZExt:
     if (ConstantInt *CI = dyn_cast<ConstantInt>(V)) {
       uint32_t BitWidth = cast<IntegerType>(DestTy)->getBitWidth();
-      APInt Result(CI->getValue());
-      Result.zext(BitWidth);
-      return ConstantInt::get(V->getContext(), Result);
+      return ConstantInt::get(V->getContext(),
+                              CI->getValue().zext(BitWidth));
     }
     return 0;
   case Instruction::SExt:
     if (ConstantInt *CI = dyn_cast<ConstantInt>(V)) {
       uint32_t BitWidth = cast<IntegerType>(DestTy)->getBitWidth();
-      APInt Result(CI->getValue());
-      Result.sext(BitWidth);
-      return ConstantInt::get(V->getContext(), Result);
+      return ConstantInt::get(V->getContext(),
+                              CI->getValue().sext(BitWidth));
     }
     return 0;
   case Instruction::Trunc: {
     uint32_t DestBitWidth = cast<IntegerType>(DestTy)->getBitWidth();
     if (ConstantInt *CI = dyn_cast<ConstantInt>(V)) {
-      APInt Result(CI->getValue());
-      Result.trunc(DestBitWidth);
-      return ConstantInt::get(V->getContext(), Result);
+      return ConstantInt::get(V->getContext(),
+                              CI->getValue().trunc(DestBitWidth));
     }
     
     // The input must be a constantexpr.  See if we can simplify this based on
@@ -982,8 +981,8 @@ Constant *llvm::ConstantFoldBinaryInstruction(unsigned Opcode,
       return Constant::getNullValue(C1->getType()); // X lshr undef -> 0
                                                     // undef lshr X -> 0
     case Instruction::AShr:
-      if (!isa<UndefValue>(C2))
-        return C1;                                  // undef ashr X --> undef
+      if (!isa<UndefValue>(C2))                     // undef ashr X --> all ones
+        return Constant::getAllOnesValue(C1->getType());
       else if (isa<UndefValue>(C1)) 
         return C1;                                  // undef ashr undef -> undef
       else
@@ -1343,8 +1342,7 @@ Constant *llvm::ConstantFoldBinaryInstruction(unsigned Opcode,
 
     // Given ((a + b) + c), if (b + c) folds to something interesting, return
     // (a + (b + c)).
-    if (Instruction::isAssociative(Opcode, C1->getType()) &&
-        CE1->getOpcode() == Opcode) {
+    if (Instruction::isAssociative(Opcode) && CE1->getOpcode() == Opcode) {
       Constant *T = ConstantExpr::get(Opcode, CE1->getOperand(1), C2);
       if (!isa<ConstantExpr>(T) || cast<ConstantExpr>(T)->getOpcode() != Opcode)
         return ConstantExpr::get(Opcode, CE1->getOperand(0), T);
@@ -2073,53 +2071,52 @@ Constant *llvm::ConstantFoldCompareInstruction(unsigned short pred,
 
 /// isInBoundsIndices - Test whether the given sequence of *normalized* indices
 /// is "inbounds".
-static bool isInBoundsIndices(Constant *const *Idxs, size_t NumIdx) {
+template<typename IndexTy>
+static bool isInBoundsIndices(IndexTy const *Idxs, size_t NumIdx) {
   // No indices means nothing that could be out of bounds.
   if (NumIdx == 0) return true;
 
   // If the first index is zero, it's in bounds.
-  if (Idxs[0]->isNullValue()) return true;
+  if (cast<Constant>(Idxs[0])->isNullValue()) return true;
 
   // If the first index is one and all the rest are zero, it's in bounds,
   // by the one-past-the-end rule.
   if (!cast<ConstantInt>(Idxs[0])->isOne())
     return false;
   for (unsigned i = 1, e = NumIdx; i != e; ++i)
-    if (!Idxs[i]->isNullValue())
+    if (!cast<Constant>(Idxs[i])->isNullValue())
       return false;
   return true;
 }
 
-Constant *llvm::ConstantFoldGetElementPtr(Constant *C,
-                                          bool inBounds,
-                                          Constant* const *Idxs,
-                                          unsigned NumIdx) {
+template<typename IndexTy>
+static Constant *ConstantFoldGetElementPtrImpl(Constant *C,
+                                               bool inBounds,
+                                               IndexTy const *Idxs,
+                                               unsigned NumIdx) {
+  Constant *Idx0 = cast<Constant>(Idxs[0]);
   if (NumIdx == 0 ||
-      (NumIdx == 1 && Idxs[0]->isNullValue()))
+      (NumIdx == 1 && Idx0->isNullValue()))
     return C;
 
   if (isa<UndefValue>(C)) {
     const PointerType *Ptr = cast<PointerType>(C->getType());
-    const Type *Ty = GetElementPtrInst::getIndexedType(Ptr,
-                                                       (Value **)Idxs,
-                                                       (Value **)Idxs+NumIdx);
+    const Type *Ty = GetElementPtrInst::getIndexedType(Ptr, Idxs, Idxs+NumIdx);
     assert(Ty != 0 && "Invalid indices for GEP!");
     return UndefValue::get(PointerType::get(Ty, Ptr->getAddressSpace()));
   }
 
-  Constant *Idx0 = Idxs[0];
   if (C->isNullValue()) {
     bool isNull = true;
     for (unsigned i = 0, e = NumIdx; i != e; ++i)
-      if (!Idxs[i]->isNullValue()) {
+      if (!cast<Constant>(Idxs[i])->isNullValue()) {
         isNull = false;
         break;
       }
     if (isNull) {
       const PointerType *Ptr = cast<PointerType>(C->getType());
-      const Type *Ty = GetElementPtrInst::getIndexedType(Ptr,
-                                                         (Value**)Idxs,
-                                                         (Value**)Idxs+NumIdx);
+      const Type *Ty = GetElementPtrInst::getIndexedType(Ptr, Idxs,
+                                                         Idxs+NumIdx);
       assert(Ty != 0 && "Invalid indices for GEP!");
       return  ConstantPointerNull::get(
                             PointerType::get(Ty,Ptr->getAddressSpace()));
@@ -2214,7 +2211,7 @@ Constant *llvm::ConstantFoldGetElementPtr(Constant *C,
                                                    ATy->getNumElements());
             NewIdxs[i] = ConstantExpr::getSRem(CI, Factor);
 
-            Constant *PrevIdx = Idxs[i-1];
+            Constant *PrevIdx = cast<Constant>(Idxs[i-1]);
             Constant *Div = ConstantExpr::getSDiv(CI, Factor);
 
             // Before adding, extend both operands to i64 to avoid
@@ -2242,7 +2239,7 @@ Constant *llvm::ConstantFoldGetElementPtr(Constant *C,
   // If we did any factoring, start over with the adjusted indices.
   if (!NewIdxs.empty()) {
     for (unsigned i = 0; i != NumIdx; ++i)
-      if (!NewIdxs[i]) NewIdxs[i] = Idxs[i];
+      if (!NewIdxs[i]) NewIdxs[i] = cast<Constant>(Idxs[i]);
     return inBounds ?
       ConstantExpr::getInBoundsGetElementPtr(C, NewIdxs.data(),
                                              NewIdxs.size()) :
@@ -2256,4 +2253,18 @@ Constant *llvm::ConstantFoldGetElementPtr(Constant *C,
     return ConstantExpr::getInBoundsGetElementPtr(C, Idxs, NumIdx);
 
   return 0;
+}
+
+Constant *llvm::ConstantFoldGetElementPtr(Constant *C,
+                                          bool inBounds,
+                                          Constant* const *Idxs,
+                                          unsigned NumIdx) {
+  return ConstantFoldGetElementPtrImpl(C, inBounds, Idxs, NumIdx);
+}
+
+Constant *llvm::ConstantFoldGetElementPtr(Constant *C,
+                                          bool inBounds,
+                                          Value* const *Idxs,
+                                          unsigned NumIdx) {
+  return ConstantFoldGetElementPtrImpl(C, inBounds, Idxs, NumIdx);
 }

@@ -125,7 +125,7 @@ static void printHex32(unsigned int Value, raw_ostream &O) {
 // Create a bitmask with all callee saved registers for CPU or Floating Point
 // registers. For CPU registers consider RA, GP and FP for saving if necessary.
 void MBlazeAsmPrinter::printSavedRegsBitmask() {
-  const TargetFrameInfo *TFI = TM.getFrameInfo();
+  const TargetFrameLowering *TFI = TM.getFrameLowering();
   const TargetRegisterInfo &RI = *TM.getRegisterInfo();
 
   // CPU Saved Registers Bitmasks
@@ -163,7 +163,6 @@ void MBlazeAsmPrinter::emitFrameDirective() {
   unsigned stkReg = RI.getFrameRegister(*MF);
   unsigned retReg = RI.getRARegister();
   unsigned stkSze = MF->getFrameInfo()->getStackSize();
-  if (stkSze < 28 && MF->getFrameInfo()->adjustsStack()) stkSze = 28;
 
   OutStreamer.EmitRawText("\t.frame\t" +
                           Twine(MBlazeInstPrinter::getRegisterName(stkReg)) +
@@ -183,11 +182,6 @@ void MBlazeAsmPrinter::EmitFunctionBodyStart() {
 
   emitFrameDirective();
   printSavedRegsBitmask();
-
-  // SmallString<128> Str;
-  // raw_svector_ostream OS(Str);
-  // printSavedRegsBitmask(OS);
-  // OutStreamer.EmitRawText(OS.str());
 }
 
 void MBlazeAsmPrinter::EmitFunctionBodyEnd() {

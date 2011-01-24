@@ -18,9 +18,9 @@
 #include "llvm-c/lto.h"
 
 #include "llvm/Support/ToolOutputFile.h"
-#include "llvm/System/Errno.h"
-#include "llvm/System/Path.h"
-#include "llvm/System/Program.h"
+#include "llvm/Support/Errno.h"
+#include "llvm/Support/Path.h"
+#include "llvm/Support/Program.h"
 
 #include <cerrno>
 #include <cstdlib>
@@ -28,6 +28,13 @@
 #include <fstream>
 #include <list>
 #include <vector>
+
+// Support Windows/MinGW crazyness.
+#ifdef _WIN32
+# include <io.h>
+# define lseek _lseek
+# define read _read
+#endif
 
 using namespace llvm;
 

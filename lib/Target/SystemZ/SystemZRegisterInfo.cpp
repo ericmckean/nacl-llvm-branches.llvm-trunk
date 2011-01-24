@@ -20,7 +20,7 @@
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
-#include "llvm/Target/TargetFrameInfo.h"
+#include "llvm/Target/TargetFrameLowering.h"
 #include "llvm/Target/TargetInstrInfo.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
@@ -49,7 +49,7 @@ SystemZRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
 
 BitVector SystemZRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   BitVector Reserved(getNumRegs());
-  const TargetFrameInfo *TFI = MF.getTarget().getFrameInfo();
+  const TargetFrameLowering *TFI = MF.getTarget().getFrameLowering();
 
   if (TFI->hasFP(MF))
     Reserved.set(SystemZ::R11D);
@@ -72,7 +72,7 @@ SystemZRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   unsigned i = 0;
   MachineInstr &MI = *II;
   MachineFunction &MF = *MI.getParent()->getParent();
-  const TargetFrameInfo *TFI = MF.getTarget().getFrameInfo();
+  const TargetFrameLowering *TFI = MF.getTarget().getFrameLowering();
 
   while (!MI.getOperand(i).isFI()) {
     ++i;
@@ -97,41 +97,6 @@ SystemZRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   MI.setDesc(TII.getMemoryInstr(MI.getOpcode(), Offset));
 
   MI.getOperand(i+1).ChangeToImmediate(Offset);
-}
-
-void
-SystemZRegisterInfo::processFunctionBeforeCalleeSavedScan(MachineFunction &MF,
-                                                       RegScavenger *RS) const {
-  // Determine whether R15/R14 will ever be clobbered inside the function. And
-  // if yes - mark it as 'callee' saved.
-  MachineFrameInfo *FFI = MF.getFrameInfo();
-  MachineRegisterInfo &MRI = MF.getRegInfo();
-
-  // Check whether high FPRs are ever used, if yes - we need to save R15 as
-  // well.
-  static const unsigned HighFPRs[] = {
-    SystemZ::F8L,  SystemZ::F9L,  SystemZ::F10L, SystemZ::F11L,
-    SystemZ::F12L, SystemZ::F13L, SystemZ::F14L, SystemZ::F15L,
-    SystemZ::F8S,  SystemZ::F9S,  SystemZ::F10S, SystemZ::F11S,
-    SystemZ::F12S, SystemZ::F13S, SystemZ::F14S, SystemZ::F15S,
-  };
-
-  bool HighFPRsUsed = false;
-  for (unsigned i = 0, e = array_lengthof(HighFPRs); i != e; ++i)
-    HighFPRsUsed |= MRI.isPhysRegUsed(HighFPRs[i]);
-
-  if (FFI->hasCalls())
-    /* FIXME: function is varargs */
-    /* FIXME: function grabs RA */
-    /* FIXME: function calls eh_return */
-    MRI.setPhysRegUsed(SystemZ::R14D);
-
-  if (HighFPRsUsed ||
-      FFI->hasCalls() ||
-      FFI->getObjectIndexEnd() != 0 || // Contains automatic variables
-      FFI->hasVarSizedObjects() // Function calls dynamic alloca's
-      /* FIXME: function is varargs */)
-    MRI.setPhysRegUsed(SystemZ::R15D);
 }
 
 unsigned SystemZRegisterInfo::getRARegister() const {

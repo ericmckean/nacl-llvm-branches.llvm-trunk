@@ -28,6 +28,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
+#include <cctype>
 using namespace llvm;
 
 namespace llvm {
@@ -566,12 +567,15 @@ TargetLowering::TargetLowering(const TargetMachine &tm,
   memset(RegClassForVT, 0,MVT::LAST_VALUETYPE*sizeof(TargetRegisterClass*));
   memset(TargetDAGCombineArray, 0, array_lengthof(TargetDAGCombineArray));
   maxStoresPerMemset = maxStoresPerMemcpy = maxStoresPerMemmove = 8;
+  maxStoresPerMemsetOptSize = maxStoresPerMemcpyOptSize
+    = maxStoresPerMemmoveOptSize = 4;
   benefitFromCodePlacementOpt = false;
   UseUnderscoreSetJmp = false;
   UseUnderscoreLongJmp = false;
   SelectIsExpensive = false;
   IntDivIsCheap = false;
   Pow2DivIsCheap = false;
+  JumpIsExpensive = false;
   StackPointerRegisterToSaveRestore = 0;
   ExceptionPointerRegister = 0;
   ExceptionSelectorRegister = 0;
@@ -1172,8 +1176,9 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
     // the RHS.
     if (ConstantSDNode *RHSC = dyn_cast<ConstantSDNode>(Op.getOperand(1))) {
       APInt LHSZero, LHSOne;
+      // Do not increment Depth here; that can cause an infinite loop.
       TLO.DAG.ComputeMaskedBits(Op.getOperand(0), NewMask,
-                                LHSZero, LHSOne, Depth+1);
+                                LHSZero, LHSOne, Depth);
       // If the LHS already has zeros where RHSC does, this and is dead.
       if ((LHSZero & NewMask) == (~RHSC->getAPIntValue() & NewMask))
         return TLO.CombineTo(Op, Op.getOperand(0));
@@ -1519,8 +1524,8 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
     if ((NewBits & NewMask) == 0)
       return TLO.CombineTo(Op, Op.getOperand(0));
 
-    APInt InSignBit = APInt::getSignBit(EVT.getScalarType().getSizeInBits());
-    InSignBit.zext(BitWidth);
+    APInt InSignBit =
+      APInt::getSignBit(EVT.getScalarType().getSizeInBits()).zext(BitWidth);
     APInt InputDemandedBits =
       APInt::getLowBitsSet(BitWidth,
                            EVT.getScalarType().getSizeInBits()) &
@@ -1555,8 +1560,7 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
   case ISD::ZERO_EXTEND: {
     unsigned OperandBitWidth =
       Op.getOperand(0).getValueType().getScalarType().getSizeInBits();
-    APInt InMask = NewMask;
-    InMask.trunc(OperandBitWidth);
+    APInt InMask = NewMask.trunc(OperandBitWidth);
 
     // If none of the top bits are demanded, convert this into an any_extend.
     APInt NewBits =
@@ -1570,8 +1574,8 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
                              KnownZero, KnownOne, TLO, Depth+1))
       return true;
     assert((KnownZero & KnownOne) == 0 && "Bits known to be one AND zero?");
-    KnownZero.zext(BitWidth);
-    KnownOne.zext(BitWidth);
+    KnownZero = KnownZero.zext(BitWidth);
+    KnownOne = KnownOne.zext(BitWidth);
     KnownZero |= NewBits;
     break;
   }
@@ -1592,13 +1596,13 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
     // bit is demanded.
     APInt InDemandedBits = InMask & NewMask;
     InDemandedBits |= InSignBit;
-    InDemandedBits.trunc(InBits);
+    InDemandedBits = InDemandedBits.trunc(InBits);
 
     if (SimplifyDemandedBits(Op.getOperand(0), InDemandedBits, KnownZero,
                              KnownOne, TLO, Depth+1))
       return true;
-    KnownZero.zext(BitWidth);
-    KnownOne.zext(BitWidth);
+    KnownZero = KnownZero.zext(BitWidth);
+    KnownOne = KnownOne.zext(BitWidth);
 
     // If the sign bit is known zero, convert this to a zero extend.
     if (KnownZero.intersects(InSignBit))
@@ -1619,14 +1623,13 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
   case ISD::ANY_EXTEND: {
     unsigned OperandBitWidth =
       Op.getOperand(0).getValueType().getScalarType().getSizeInBits();
-    APInt InMask = NewMask;
-    InMask.trunc(OperandBitWidth);
+    APInt InMask = NewMask.trunc(OperandBitWidth);
     if (SimplifyDemandedBits(Op.getOperand(0), InMask,
                              KnownZero, KnownOne, TLO, Depth+1))
       return true;
     assert((KnownZero & KnownOne) == 0 && "Bits known to be one AND zero?");
-    KnownZero.zext(BitWidth);
-    KnownOne.zext(BitWidth);
+    KnownZero = KnownZero.zext(BitWidth);
+    KnownOne = KnownOne.zext(BitWidth);
     break;
   }
   case ISD::TRUNCATE: {
@@ -1634,13 +1637,12 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
     // zero/one bits live out.
     unsigned OperandBitWidth =
       Op.getOperand(0).getValueType().getScalarType().getSizeInBits();
-    APInt TruncMask = NewMask;
-    TruncMask.zext(OperandBitWidth);
+    APInt TruncMask = NewMask.zext(OperandBitWidth);
     if (SimplifyDemandedBits(Op.getOperand(0), TruncMask,
                              KnownZero, KnownOne, TLO, Depth+1))
       return true;
-    KnownZero.trunc(BitWidth);
-    KnownOne.trunc(BitWidth);
+    KnownZero = KnownZero.trunc(BitWidth);
+    KnownOne = KnownOne.trunc(BitWidth);
 
     // If the input is only used by this truncate, see if we can shrink it based
     // on the known demanded bits.
@@ -1661,8 +1663,7 @@ bool TargetLowering::SimplifyDemandedBits(SDValue Op,
           break;
         APInt HighBits = APInt::getHighBitsSet(OperandBitWidth,
                                                OperandBitWidth - BitWidth);
-        HighBits = HighBits.lshr(ShAmt->getZExtValue());
-        HighBits.trunc(BitWidth);
+        HighBits = HighBits.lshr(ShAmt->getZExtValue()).trunc(BitWidth);
 
         if (ShAmt->getZExtValue() < BitWidth && !(HighBits & NewMask)) {
           // None of the shifted in bits are needed.  Add a truncate of the
@@ -1869,6 +1870,30 @@ TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
       }
     }
 
+    SDValue CTPOP = N0;
+    // Look through truncs that don't change the value of a ctpop.
+    if (N0.hasOneUse() && N0.getOpcode() == ISD::TRUNCATE)
+      CTPOP = N0.getOperand(0);
+
+    if (CTPOP.hasOneUse() && CTPOP.getOpcode() == ISD::CTPOP &&
+        (N0 == CTPOP || N0.getValueType().getSizeInBits() >
+                        Log2_32_Ceil(CTPOP.getValueType().getSizeInBits()))) {
+      EVT CTVT = CTPOP.getValueType();
+      SDValue CTOp = CTPOP.getOperand(0);
+
+      // (ctpop x) u< 2 -> (x & x-1) == 0
+      // (ctpop x) u> 1 -> (x & x-1) != 0
+      if ((Cond == ISD::SETULT && C1 == 2) || (Cond == ISD::SETUGT && C1 == 1)){
+        SDValue Sub = DAG.getNode(ISD::SUB, dl, CTVT, CTOp,
+                                  DAG.getConstant(1, CTVT));
+        SDValue And = DAG.getNode(ISD::AND, dl, CTVT, CTOp, Sub);
+        ISD::CondCode CC = Cond == ISD::SETULT ? ISD::SETEQ : ISD::SETNE;
+        return DAG.getSetCC(dl, VT, And, DAG.getConstant(0, CTVT), CC);
+      }
+
+      // TODO: (ctpop x) == 1 -> x && (x & x-1) == 0 iff ctpop is illegal.
+    }
+
     // If the LHS is '(and load, const)', the RHS is 0,
     // the test is for equality or unsigned, and all 1 bits of the const are
     // in the same partial word, see if we can shorten the load.
@@ -1968,7 +1993,7 @@ TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
             (isOperationLegal(ISD::SETCC, newVT) &&
               getCondCodeAction(Cond, newVT)==Legal))
           return DAG.getSetCC(dl, VT, N0.getOperand(0),
-                              DAG.getConstant(APInt(C1).trunc(InSize), newVT),
+                              DAG.getConstant(C1.trunc(InSize), newVT),
                               Cond);
         break;
       }

@@ -403,6 +403,20 @@ CodeGenInstAlias::CodeGenInstAlias(Record *R, CodeGenTarget &T) : TheDef(R) {
   // NameClass - If argument names are repeated, we need to verify they have
   // the same class.
   StringMap<Record*> NameClass;
+  for (unsigned i = 0, e = Result->getNumArgs(); i != e; ++i) {
+    DefInit *ADI = dynamic_cast<DefInit*>(Result->getArg(i));
+    if (!ADI || Result->getArgName(i).empty())
+      continue;
+    // Verify we don't have something like: (someinst GR16:$foo, GR32:$foo)
+    // $foo can exist multiple times in the result list, but it must have the
+    // same type.
+    Record *&Entry = NameClass[Result->getArgName(i)];
+    if (Entry && Entry != ADI->getDef())
+      throw TGError(R->getLoc(), "result value $" + Result->getArgName(i) +
+                    " is both " + Entry->getName() + " and " +
+                    ADI->getDef()->getName() + "!");
+    Entry = ADI->getDef();
+  }
     
   // Decode and validate the arguments of the result.
   unsigned AliasOpNo = 0;
@@ -439,6 +453,23 @@ CodeGenInstAlias::CodeGenInstAlias(Record *R, CodeGenTarget &T) : TheDef(R) {
                                                                               
         // Now that it is validated, add it.
         ResultOperands.push_back(ResultOperand(ADI->getDef()));
+        ResultInstOperandIndex.push_back(i);
+        ++AliasOpNo;
+        continue;
+      }
+      if (ADI->getDef()->getName() == "zero_reg") {
+        if (!Result->getArgName(AliasOpNo).empty())
+          throw TGError(R->getLoc(), "result fixed register argument must "
+                        "not have a name!");
+
+        // Check if this is an optional def.
+        if (!ResultOpRec->isSubClassOf("OptionalDefOperand"))
+          throw TGError(R->getLoc(), "reg0 used for result that is not an "
+                        "OptionalDefOperand!");
+
+        // Now that it is validated, add it.
+        ResultOperands.push_back(ResultOperand(static_cast<Record*>(0)));
+        ResultInstOperandIndex.push_back(i);
         ++AliasOpNo;
         continue;
       }
@@ -457,19 +488,10 @@ CodeGenInstAlias::CodeGenInstAlias(Record *R, CodeGenTarget &T) : TheDef(R) {
                       ", instruction operand is class " + 
                       ResultOpRec->getName());
       
-      // Verify we don't have something like: (someinst GR16:$foo, GR32:$foo)
-      // $foo can exist multiple times in the result list, but it must have the
-      // same type.
-      Record *&Entry = NameClass[Result->getArgName(AliasOpNo)];
-      if (Entry && Entry != ADI->getDef())
-        throw TGError(R->getLoc(), "result value $" +
-                      Result->getArgName(AliasOpNo) +
-                      " is both " + Entry->getName() + " and " +
-                      ADI->getDef()->getName() + "!");
-      
       // Now that it is validated, add it.
       ResultOperands.push_back(ResultOperand(Result->getArgName(AliasOpNo),
                                              ADI->getDef()));
+      ResultInstOperandIndex.push_back(i);
       ++AliasOpNo;
       continue;
     }
@@ -485,6 +507,7 @@ CodeGenInstAlias::CodeGenInstAlias(Record *R, CodeGenTarget &T) : TheDef(R) {
                       ResultOpRec->getName() +
                       " for integer result operand!");
       ResultOperands.push_back(ResultOperand(II->getValue()));
+      ResultInstOperandIndex.push_back(i);
       ++AliasOpNo;
       continue;
     }
@@ -497,22 +520,4 @@ CodeGenInstAlias::CodeGenInstAlias(Record *R, CodeGenTarget &T) : TheDef(R) {
                   " arguments, but " + ResultInst->TheDef->getName() +
                   " instruction expects " + utostr(ResultInst->Operands.size())+
                   " operands!");
-}
-
-/// getResultInstOperandIndexForResultOperandIndex - Given an index into the
-/// ResultOperands array, translate it to a valid index in ResultInst's
-/// operand list.
-unsigned CodeGenInstAlias::
-getResultInstOperandIndexForResultOperandIndex(unsigned OpNo) const {
-  unsigned OpIdx = 0;
-  
-  for (unsigned i = 0;; ++i) {
-    assert(i != ResultInst->Operands.size() && "Didn't find entry");
-    if (ResultInst->Operands[i].getTiedRegister() != -1)
-      continue;
-
-    if (OpIdx == OpNo) return i;
-
-    ++OpIdx;
-  }
 }

@@ -13,8 +13,9 @@
 
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Format.h"
-#include "llvm/System/Program.h"
-#include "llvm/System/Process.h"
+#include "llvm/Support/Program.h"
+#include "llvm/Support/Process.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Config/config.h"
 #include "llvm/Support/Compiler.h"
@@ -167,7 +168,8 @@ raw_ostream &raw_ostream::write_hex(unsigned long long N) {
   return write(CurPtr, EndPtr-CurPtr);
 }
 
-raw_ostream &raw_ostream::write_escaped(StringRef Str) {
+raw_ostream &raw_ostream::write_escaped(StringRef Str,
+                                        bool UseHexEscapes) {
   for (unsigned i = 0, e = Str.size(); i != e; ++i) {
     unsigned char c = Str[i];
 
@@ -190,11 +192,18 @@ raw_ostream &raw_ostream::write_escaped(StringRef Str) {
         break;
       }
 
-      // Always expand to a 3-character octal escape.
-      *this << '\\';
-      *this << char('0' + ((c >> 6) & 7));
-      *this << char('0' + ((c >> 3) & 7));
-      *this << char('0' + ((c >> 0) & 7));
+      // Write out the escaped representation.
+      if (UseHexEscapes) {
+        *this << '\\' << 'x';
+        *this << hexdigit((c >> 4 & 0xF));
+        *this << hexdigit((c >> 0) & 0xF);
+      } else {
+        // Always use a full 3-character octal escape.
+        *this << '\\';
+        *this << char('0' + ((c >> 6) & 7));
+        *this << char('0' + ((c >> 3) & 7));
+        *this << char('0' + ((c >> 0) & 7));
+      }
     }
   }
 
@@ -424,6 +433,13 @@ raw_fd_ostream::raw_fd_ostream(int fd, bool shouldClose, bool unbuffered)
   if (fd == STDOUT_FILENO || fd == STDERR_FILENO)
     setmode(fd, O_BINARY);
 #endif
+
+  // Get the starting position.
+  off_t loc = ::lseek(FD, 0, SEEK_CUR);
+  if (loc == (off_t)-1)
+    pos = 0;
+  else
+    pos = static_cast<uint64_t>(loc);
 }
 
 raw_fd_ostream::~raw_fd_ostream() {

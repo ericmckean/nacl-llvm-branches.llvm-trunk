@@ -292,7 +292,7 @@ SDValue DAGTypeLegalizer::PromoteIntRes_CTTZ(SDNode *N) {
   // value was zero.  This can be handled by setting the bit just off
   // the top of the original type.
   APInt TopBit(NVT.getSizeInBits(), 0);
-  TopBit.set(OVT.getSizeInBits());
+  TopBit.setBit(OVT.getSizeInBits());
   Op = DAG.getNode(ISD::OR, dl, NVT, Op, DAG.getConstant(TopBit, NVT));
   return DAG.getNode(ISD::CTTZ, dl, NVT, Op);
 }
@@ -548,6 +548,54 @@ SDValue DAGTypeLegalizer::PromoteIntRes_UADDSUBO(SDNode *N, unsigned ResNo) {
   return Res;
 }
 
+
+SDValue DAGTypeLegalizer::PromoteIntRes_XMULO(SDNode *N, unsigned ResNo) {
+  // Promote the overflow bit trivially.
+  if (ResNo == 1)
+    return PromoteIntRes_Overflow(N);
+  
+  SDValue LHS = N->getOperand(0), RHS = N->getOperand(1);
+  DebugLoc DL = N->getDebugLoc();
+  unsigned SmallSize = LHS.getValueType().getSizeInBits();
+  
+  // To determine if the result overflowed in a larger type, we extend the input
+  // to the larger type, do the multiply, then check the high bits of the result
+  // to see if the overflow happened.
+  if (N->getOpcode() == ISD::SMULO) {
+    LHS = SExtPromotedInteger(LHS);
+    RHS = SExtPromotedInteger(RHS);
+  } else {
+    LHS = ZExtPromotedInteger(LHS);
+    RHS = ZExtPromotedInteger(RHS);
+  }
+  
+  SDValue Mul = DAG.getNode(ISD::MUL, DL, LHS.getValueType(), LHS, RHS);
+  
+  
+  // For an unsigned overflow, we check to see if the high part is != 0;
+  SDValue Overflow;
+  if (N->getOpcode() == ISD::UMULO) {
+    SDValue Hi = DAG.getNode(ISD::SRL, DL, Mul.getValueType(), Mul,
+                             DAG.getIntPtrConstant(SmallSize));
+    // Overflowed if and only if this is not equal to Res.
+    Overflow = DAG.getSetCC(DL, N->getValueType(1), Hi,
+                            DAG.getConstant(0, Hi.getValueType()), ISD::SETNE);
+  } else {
+    // Signed multiply overflowed if the high part is not 0 and not -1.
+    SDValue Hi = DAG.getNode(ISD::SRA, DL, Mul.getValueType(), Mul,
+                             DAG.getIntPtrConstant(SmallSize));
+    Hi = DAG.getNode(ISD::ADD, DL, Hi.getValueType(), Hi,
+                     DAG.getConstant(1, Hi.getValueType()));
+    Overflow = DAG.getSetCC(DL, N->getValueType(1), Hi,
+                            DAG.getConstant(1, Hi.getValueType()), ISD::SETUGT);
+  }
+
+  // Use the calculated overflow everywhere.
+  ReplaceValueWith(SDValue(N, 1), Overflow);
+  return Mul;
+}
+
+
 SDValue DAGTypeLegalizer::PromoteIntRes_UDIV(SDNode *N) {
   // Zero extend the input.
   SDValue LHS = ZExtPromotedInteger(N->getOperand(0));
@@ -599,11 +647,6 @@ SDValue DAGTypeLegalizer::PromoteIntRes_VAARG(SDNode *N) {
   ReplaceValueWith(SDValue(N, 1), Chain);
 
   return Res;
-}
-
-SDValue DAGTypeLegalizer::PromoteIntRes_XMULO(SDNode *N, unsigned ResNo) {
-  assert(ResNo == 1 && "Only boolean result promotion currently supported!");
-  return PromoteIntRes_Overflow(N);
 }
 
 //===----------------------------------------------------------------------===//
@@ -976,6 +1019,23 @@ void DAGTypeLegalizer::ExpandIntegerResult(SDNode *N, unsigned ResNo) {
   case ISD::UREM:        ExpandIntRes_UREM(N, Lo, Hi); break;
   case ISD::ZERO_EXTEND: ExpandIntRes_ZERO_EXTEND(N, Lo, Hi); break;
 
+  case ISD::ATOMIC_LOAD_ADD:
+  case ISD::ATOMIC_LOAD_SUB:
+  case ISD::ATOMIC_LOAD_AND:
+  case ISD::ATOMIC_LOAD_OR:
+  case ISD::ATOMIC_LOAD_XOR:
+  case ISD::ATOMIC_LOAD_NAND:
+  case ISD::ATOMIC_LOAD_MIN:
+  case ISD::ATOMIC_LOAD_MAX:
+  case ISD::ATOMIC_LOAD_UMIN:
+  case ISD::ATOMIC_LOAD_UMAX:
+  case ISD::ATOMIC_SWAP: {
+    std::pair<SDValue, SDValue> Tmp = ExpandAtomic(N);
+    SplitInteger(Tmp.first, Lo, Hi);
+    ReplaceValueWith(SDValue(N, 1), Tmp.second);
+    break;
+  }
+
   case ISD::AND:
   case ISD::OR:
   case ISD::XOR: ExpandIntRes_Logical(N, Lo, Hi); break;
@@ -997,11 +1057,100 @@ void DAGTypeLegalizer::ExpandIntegerResult(SDNode *N, unsigned ResNo) {
   case ISD::SSUBO: ExpandIntRes_SADDSUBO(N, Lo, Hi); break;
   case ISD::UADDO:
   case ISD::USUBO: ExpandIntRes_UADDSUBO(N, Lo, Hi); break;
+  case ISD::UMULO:
+  case ISD::SMULO: ExpandIntRes_UMULSMULO(N, Lo, Hi); break;
   }
 
   // If Lo/Hi is null, the sub-method took care of registering results etc.
   if (Lo.getNode())
     SetExpandedInteger(SDValue(N, ResNo), Lo, Hi);
+}
+
+/// Lower an atomic node to the appropriate builtin call.
+std::pair <SDValue, SDValue> DAGTypeLegalizer::ExpandAtomic(SDNode *Node) {
+  unsigned Opc = Node->getOpcode();
+  MVT VT = cast<AtomicSDNode>(Node)->getMemoryVT().getSimpleVT();
+  RTLIB::Libcall LC;
+
+  switch (Opc) {
+  default:
+    llvm_unreachable("Unhandled atomic intrinsic Expand!");
+    break;
+  case ISD::ATOMIC_SWAP:
+    switch (VT.SimpleTy) {
+    default: llvm_unreachable("Unexpected value type for atomic!");
+    case MVT::i8:  LC = RTLIB::SYNC_LOCK_TEST_AND_SET_1; break;
+    case MVT::i16: LC = RTLIB::SYNC_LOCK_TEST_AND_SET_2; break;
+    case MVT::i32: LC = RTLIB::SYNC_LOCK_TEST_AND_SET_4; break;
+    case MVT::i64: LC = RTLIB::SYNC_LOCK_TEST_AND_SET_8; break;
+    }
+    break;
+  case ISD::ATOMIC_CMP_SWAP:
+    switch (VT.SimpleTy) {
+    default: llvm_unreachable("Unexpected value type for atomic!");
+    case MVT::i8:  LC = RTLIB::SYNC_VAL_COMPARE_AND_SWAP_1; break;
+    case MVT::i16: LC = RTLIB::SYNC_VAL_COMPARE_AND_SWAP_2; break;
+    case MVT::i32: LC = RTLIB::SYNC_VAL_COMPARE_AND_SWAP_4; break;
+    case MVT::i64: LC = RTLIB::SYNC_VAL_COMPARE_AND_SWAP_8; break;
+    }
+    break;
+  case ISD::ATOMIC_LOAD_ADD:
+    switch (VT.SimpleTy) {
+    default: llvm_unreachable("Unexpected value type for atomic!");
+    case MVT::i8:  LC = RTLIB::SYNC_FETCH_AND_ADD_1; break;
+    case MVT::i16: LC = RTLIB::SYNC_FETCH_AND_ADD_2; break;
+    case MVT::i32: LC = RTLIB::SYNC_FETCH_AND_ADD_4; break;
+    case MVT::i64: LC = RTLIB::SYNC_FETCH_AND_ADD_8; break;
+    }
+    break;
+  case ISD::ATOMIC_LOAD_SUB:
+    switch (VT.SimpleTy) {
+    default: llvm_unreachable("Unexpected value type for atomic!");
+    case MVT::i8:  LC = RTLIB::SYNC_FETCH_AND_SUB_1; break;
+    case MVT::i16: LC = RTLIB::SYNC_FETCH_AND_SUB_2; break;
+    case MVT::i32: LC = RTLIB::SYNC_FETCH_AND_SUB_4; break;
+    case MVT::i64: LC = RTLIB::SYNC_FETCH_AND_SUB_8; break;
+    }
+    break;
+  case ISD::ATOMIC_LOAD_AND:
+    switch (VT.SimpleTy) {
+    default: llvm_unreachable("Unexpected value type for atomic!");
+    case MVT::i8:  LC = RTLIB::SYNC_FETCH_AND_AND_1; break;
+    case MVT::i16: LC = RTLIB::SYNC_FETCH_AND_AND_2; break;
+    case MVT::i32: LC = RTLIB::SYNC_FETCH_AND_AND_4; break;
+    case MVT::i64: LC = RTLIB::SYNC_FETCH_AND_AND_8; break;
+    }
+    break;
+  case ISD::ATOMIC_LOAD_OR:
+    switch (VT.SimpleTy) {
+    default: llvm_unreachable("Unexpected value type for atomic!");
+    case MVT::i8:  LC = RTLIB::SYNC_FETCH_AND_OR_1; break;
+    case MVT::i16: LC = RTLIB::SYNC_FETCH_AND_OR_2; break;
+    case MVT::i32: LC = RTLIB::SYNC_FETCH_AND_OR_4; break;
+    case MVT::i64: LC = RTLIB::SYNC_FETCH_AND_OR_8; break;
+    }
+    break;
+  case ISD::ATOMIC_LOAD_XOR:
+    switch (VT.SimpleTy) {
+    default: llvm_unreachable("Unexpected value type for atomic!");
+    case MVT::i8:  LC = RTLIB::SYNC_FETCH_AND_XOR_1; break;
+    case MVT::i16: LC = RTLIB::SYNC_FETCH_AND_XOR_2; break;
+    case MVT::i32: LC = RTLIB::SYNC_FETCH_AND_XOR_4; break;
+    case MVT::i64: LC = RTLIB::SYNC_FETCH_AND_XOR_8; break;
+    }
+    break;
+  case ISD::ATOMIC_LOAD_NAND:
+    switch (VT.SimpleTy) {
+    default: llvm_unreachable("Unexpected value type for atomic!");
+    case MVT::i8:  LC = RTLIB::SYNC_FETCH_AND_NAND_1; break;
+    case MVT::i16: LC = RTLIB::SYNC_FETCH_AND_NAND_2; break;
+    case MVT::i32: LC = RTLIB::SYNC_FETCH_AND_NAND_4; break;
+    case MVT::i64: LC = RTLIB::SYNC_FETCH_AND_NAND_8; break;
+    }
+    break;
+  }
+
+  return ExpandChainLibCall(LC, Node, false);
 }
 
 /// ExpandShiftByConstant - N is a shift by a value that needs to be expanded,
@@ -1032,7 +1181,7 @@ void DAGTypeLegalizer::ExpandShiftByConstant(SDNode *N, unsigned Amt,
                TLI.isOperationLegalOrCustom(ISD::ADDC,
                               TLI.getTypeToExpandTo(*DAG.getContext(), NVT))) {
       // Emit this X << 1 as X+X.
-      SDVTList VTList = DAG.getVTList(NVT, MVT::Flag);
+      SDVTList VTList = DAG.getVTList(NVT, MVT::Glue);
       SDValue LoOps[2] = { InL, InL };
       Lo = DAG.getNode(ISD::ADDC, dl, VTList, LoOps, 2);
       SDValue HiOps[3] = { InH, InH, Lo.getValue(1) };
@@ -1267,7 +1416,7 @@ void DAGTypeLegalizer::ExpandIntRes_ADDSUB(SDNode *N,
   // Do not generate ADDC/ADDE or SUBC/SUBE if the target does not support
   // them.  TODO: Teach operation legalization how to expand unsupported
   // ADDC/ADDE/SUBC/SUBE.  The problem is that these operations generate
-  // a carry of type MVT::Flag, but there doesn't seem to be any way to
+  // a carry of type MVT::Glue, but there doesn't seem to be any way to
   // generate a value of this type in the expanded code sequence.
   bool hasCarry =
     TLI.isOperationLegalOrCustom(N->getOpcode() == ISD::ADD ?
@@ -1275,7 +1424,7 @@ void DAGTypeLegalizer::ExpandIntRes_ADDSUB(SDNode *N,
                                  TLI.getTypeToExpandTo(*DAG.getContext(), NVT));
 
   if (hasCarry) {
-    SDVTList VTList = DAG.getVTList(NVT, MVT::Flag);
+    SDVTList VTList = DAG.getVTList(NVT, MVT::Glue);
     if (N->getOpcode() == ISD::ADD) {
       Lo = DAG.getNode(ISD::ADDC, dl, VTList, LoOps, 2);
       HiOps[2] = Lo.getValue(1);
@@ -1285,31 +1434,32 @@ void DAGTypeLegalizer::ExpandIntRes_ADDSUB(SDNode *N,
       HiOps[2] = Lo.getValue(1);
       Hi = DAG.getNode(ISD::SUBE, dl, VTList, HiOps, 3);
     }
+    return;    
+  }
+  
+  if (N->getOpcode() == ISD::ADD) {
+    Lo = DAG.getNode(ISD::ADD, dl, NVT, LoOps, 2);
+    Hi = DAG.getNode(ISD::ADD, dl, NVT, HiOps, 2);
+    SDValue Cmp1 = DAG.getSetCC(dl, TLI.getSetCCResultType(NVT), Lo, LoOps[0],
+                                ISD::SETULT);
+    SDValue Carry1 = DAG.getNode(ISD::SELECT, dl, NVT, Cmp1,
+                                 DAG.getConstant(1, NVT),
+                                 DAG.getConstant(0, NVT));
+    SDValue Cmp2 = DAG.getSetCC(dl, TLI.getSetCCResultType(NVT), Lo, LoOps[1],
+                                ISD::SETULT);
+    SDValue Carry2 = DAG.getNode(ISD::SELECT, dl, NVT, Cmp2,
+                                 DAG.getConstant(1, NVT), Carry1);
+    Hi = DAG.getNode(ISD::ADD, dl, NVT, Hi, Carry2);
   } else {
-    if (N->getOpcode() == ISD::ADD) {
-      Lo = DAG.getNode(ISD::ADD, dl, NVT, LoOps, 2);
-      Hi = DAG.getNode(ISD::ADD, dl, NVT, HiOps, 2);
-      SDValue Cmp1 = DAG.getSetCC(dl, TLI.getSetCCResultType(NVT), Lo, LoOps[0],
-                                  ISD::SETULT);
-      SDValue Carry1 = DAG.getNode(ISD::SELECT, dl, NVT, Cmp1,
-                                   DAG.getConstant(1, NVT),
-                                   DAG.getConstant(0, NVT));
-      SDValue Cmp2 = DAG.getSetCC(dl, TLI.getSetCCResultType(NVT), Lo, LoOps[1],
-                                  ISD::SETULT);
-      SDValue Carry2 = DAG.getNode(ISD::SELECT, dl, NVT, Cmp2,
-                                   DAG.getConstant(1, NVT), Carry1);
-      Hi = DAG.getNode(ISD::ADD, dl, NVT, Hi, Carry2);
-    } else {
-      Lo = DAG.getNode(ISD::SUB, dl, NVT, LoOps, 2);
-      Hi = DAG.getNode(ISD::SUB, dl, NVT, HiOps, 2);
-      SDValue Cmp =
-        DAG.getSetCC(dl, TLI.getSetCCResultType(LoOps[0].getValueType()),
-                     LoOps[0], LoOps[1], ISD::SETULT);
-      SDValue Borrow = DAG.getNode(ISD::SELECT, dl, NVT, Cmp,
-                                   DAG.getConstant(1, NVT),
-                                   DAG.getConstant(0, NVT));
-      Hi = DAG.getNode(ISD::SUB, dl, NVT, Hi, Borrow);
-    }
+    Lo = DAG.getNode(ISD::SUB, dl, NVT, LoOps, 2);
+    Hi = DAG.getNode(ISD::SUB, dl, NVT, HiOps, 2);
+    SDValue Cmp =
+      DAG.getSetCC(dl, TLI.getSetCCResultType(LoOps[0].getValueType()),
+                   LoOps[0], LoOps[1], ISD::SETULT);
+    SDValue Borrow = DAG.getNode(ISD::SELECT, dl, NVT, Cmp,
+                                 DAG.getConstant(1, NVT),
+                                 DAG.getConstant(0, NVT));
+    Hi = DAG.getNode(ISD::SUB, dl, NVT, Hi, Borrow);
   }
 }
 
@@ -1320,7 +1470,7 @@ void DAGTypeLegalizer::ExpandIntRes_ADDSUBC(SDNode *N,
   DebugLoc dl = N->getDebugLoc();
   GetExpandedInteger(N->getOperand(0), LHSL, LHSH);
   GetExpandedInteger(N->getOperand(1), RHSL, RHSH);
-  SDVTList VTList = DAG.getVTList(LHSL.getValueType(), MVT::Flag);
+  SDVTList VTList = DAG.getVTList(LHSL.getValueType(), MVT::Glue);
   SDValue LoOps[2] = { LHSL, RHSL };
   SDValue HiOps[3] = { LHSH, RHSH };
 
@@ -1346,7 +1496,7 @@ void DAGTypeLegalizer::ExpandIntRes_ADDSUBE(SDNode *N,
   DebugLoc dl = N->getDebugLoc();
   GetExpandedInteger(N->getOperand(0), LHSL, LHSH);
   GetExpandedInteger(N->getOperand(1), RHSL, RHSH);
-  SDVTList VTList = DAG.getVTList(LHSL.getValueType(), MVT::Flag);
+  SDVTList VTList = DAG.getVTList(LHSL.getValueType(), MVT::Glue);
   SDValue LoOps[3] = { LHSL, RHSL, N->getOperand(2) };
   SDValue HiOps[3] = { LHSH, RHSH };
 
@@ -1435,7 +1585,7 @@ void DAGTypeLegalizer::ExpandIntRes_Constant(SDNode *N,
   EVT NVT = TLI.getTypeToTransformTo(*DAG.getContext(), N->getValueType(0));
   unsigned NBitWidth = NVT.getSizeInBits();
   const APInt &Cst = cast<ConstantSDNode>(N)->getAPIntValue();
-  Lo = DAG.getConstant(APInt(Cst).trunc(NBitWidth), NVT);
+  Lo = DAG.getConstant(Cst.trunc(NBitWidth), NVT);
   Hi = DAG.getConstant(Cst.lshr(NBitWidth).trunc(NBitWidth), NVT);
 }
 
@@ -1981,6 +2131,31 @@ void DAGTypeLegalizer::ExpandIntRes_UADDSUBO(SDNode *N,
                              ISD::SETULT : ISD::SETUGT);
 
   // Use the calculated overflow everywhere.
+  ReplaceValueWith(SDValue(N, 1), Ofl);
+}
+
+void DAGTypeLegalizer::ExpandIntRes_UMULSMULO(SDNode *N,
+                                              SDValue &Lo, SDValue &Hi) {
+  SDValue LHS = N->getOperand(0);
+  SDValue RHS = N->getOperand(1);
+  DebugLoc dl = N->getDebugLoc();
+  EVT VT = N->getValueType(0);
+  EVT HalfVT = EVT::getIntegerVT(*DAG.getContext(), VT.getSizeInBits() / 2);
+  // Expand the result by simply replacing it with the equivalent
+  // non-overflow-checking operation.
+  SDValue Ret = DAG.getNode(ISD::MUL, dl, LHS.getValueType(), LHS, RHS);
+  SplitInteger(Ret, Lo, Hi);
+  
+  // Now calculate overflow.
+  SDValue Ofl;
+  if (N->getOpcode() == ISD::UMULO)
+    Ofl = DAG.getSetCC(dl, N->getValueType(1), Hi,
+                       DAG.getConstant(0, VT), ISD::SETNE);
+  else {
+    SDValue Tmp = DAG.getConstant(VT.getSizeInBits() - 1, HalfVT);
+    Tmp = DAG.getNode(ISD::SRA, dl, HalfVT, Lo, Tmp);
+    Ofl = DAG.getSetCC(dl, N->getValueType(1), Hi, Tmp, ISD::SETNE);
+  }
   ReplaceValueWith(SDValue(N, 1), Ofl);
 }
 
