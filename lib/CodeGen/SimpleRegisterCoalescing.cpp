@@ -15,6 +15,7 @@
 #define DEBUG_TYPE "regcoalescing"
 #include "SimpleRegisterCoalescing.h"
 #include "VirtRegMap.h"
+#include "LiveDebugVariables.h"
 #include "llvm/CodeGen/LiveIntervalAnalysis.h"
 #include "llvm/Value.h"
 #include "llvm/Analysis/AliasAnalysis.h"
@@ -64,10 +65,16 @@ DisablePhysicalJoin("disable-physical-join",
                cl::desc("Avoid coalescing physical register copies"),
                cl::init(false), cl::Hidden);
 
+static cl::opt<bool>
+VerifyCoalescing("verify-coalescing",
+         cl::desc("Verify machine instrs before and after register coalescing"),
+         cl::Hidden);
+
 INITIALIZE_AG_PASS_BEGIN(SimpleRegisterCoalescing, RegisterCoalescer,
                 "simple-register-coalescing", "Simple Register Coalescing", 
                 false, false, true)
 INITIALIZE_PASS_DEPENDENCY(LiveIntervals)
+INITIALIZE_PASS_DEPENDENCY(LiveDebugVariables)
 INITIALIZE_PASS_DEPENDENCY(SlotIndexes)
 INITIALIZE_PASS_DEPENDENCY(MachineLoopInfo)
 INITIALIZE_PASS_DEPENDENCY(StrongPHIElimination)
@@ -85,14 +92,14 @@ void SimpleRegisterCoalescing::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<AliasAnalysis>();
   AU.addRequired<LiveIntervals>();
   AU.addPreserved<LiveIntervals>();
+  AU.addRequired<LiveDebugVariables>();
+  AU.addPreserved<LiveDebugVariables>();
   AU.addPreserved<SlotIndexes>();
   AU.addRequired<MachineLoopInfo>();
   AU.addPreserved<MachineLoopInfo>();
   AU.addPreservedID(MachineDominatorsID);
-  if (StrongPHIElim)
-    AU.addPreservedID(StrongPHIEliminationID);
-  else
-    AU.addPreservedID(PHIEliminationID);
+  AU.addPreservedID(StrongPHIEliminationID);
+  AU.addPreservedID(PHIEliminationID);
   AU.addPreservedID(TwoAddressInstructionPassID);
   MachineFunctionPass::getAnalysisUsage(AU);
 }
@@ -617,8 +624,8 @@ bool SimpleRegisterCoalescing::ReMaterializeTrivialDef(LiveInterval &SrcInt,
       return false;
   }
 
-  // If destination register has a sub-register index on it, make sure it mtches
-  // the instruction register class.
+  // If destination register has a sub-register index on it, make sure it
+  // matches the instruction register class.
   if (DstSubIdx) {
     const TargetInstrDesc &TID = DefMI->getDesc();
     if (TID.getNumDefs() != 1)
@@ -691,6 +698,9 @@ SimpleRegisterCoalescing::UpdateRegDefsUses(const CoalescerPair &CP) {
   unsigned SrcReg = CP.getSrcReg();
   unsigned DstReg = CP.getDstReg();
   unsigned SubIdx = CP.getSubIdx();
+
+  // Update LiveDebugVariables.
+  ldv_->renameRegister(SrcReg, DstReg, SubIdx);
 
   for (MachineRegisterInfo::reg_iterator I = mri_->reg_begin(SrcReg);
        MachineInstr *UseMI = I.skipInstruction();) {
@@ -980,23 +990,19 @@ bool SimpleRegisterCoalescing::JoinCopy(CopyRec &TheCopy, bool &Again) {
     return false;
   }
 
-  DEBUG(dbgs() << "\tConsidering merging %reg" << CP.getSrcReg());
+  DEBUG(dbgs() << "\tConsidering merging " << PrintReg(CP.getSrcReg(), tri_));
 
   // Enforce policies.
   if (CP.isPhys()) {
-    DEBUG(dbgs() <<" with physreg %" << tri_->getName(CP.getDstReg()) << "\n");
+    DEBUG(dbgs() <<" with physreg " << PrintReg(CP.getDstReg(), tri_) << "\n");
     // Only coalesce to allocatable physreg.
     if (!li_->isAllocatable(CP.getDstReg())) {
       DEBUG(dbgs() << "\tRegister is an unallocatable physreg.\n");
       return false;  // Not coalescable.
     }
   } else {
-    DEBUG({
-      dbgs() << " with reg%" << CP.getDstReg();
-      if (CP.getSubIdx())
-        dbgs() << ":" << tri_->getSubRegIndexName(CP.getSubIdx());
-      dbgs() << " to " << CP.getNewRC()->getName() << "\n";
-    });
+    DEBUG(dbgs() << " with " << PrintReg(CP.getDstReg(), tri_, CP.getSubIdx())
+                 << " to " << CP.getNewRC()->getName() << "\n");
 
     // Avoid constraining virtual register regclass too much.
     if (CP.isCrossClass()) {
@@ -1626,12 +1632,16 @@ bool SimpleRegisterCoalescing::runOnMachineFunction(MachineFunction &fn) {
   tri_ = tm_->getRegisterInfo();
   tii_ = tm_->getInstrInfo();
   li_ = &getAnalysis<LiveIntervals>();
+  ldv_ = &getAnalysis<LiveDebugVariables>();
   AA = &getAnalysis<AliasAnalysis>();
   loopInfo = &getAnalysis<MachineLoopInfo>();
 
   DEBUG(dbgs() << "********** SIMPLE REGISTER COALESCING **********\n"
                << "********** Function: "
                << ((Value*)mf_->getFunction())->getName() << '\n');
+
+  if (VerifyCoalescing)
+    mf_->verify(this, "Before register coalescing");
 
   for (TargetRegisterInfo::regclass_iterator I = tri_->regclass_begin(),
          E = tri_->regclass_end(); I != E; ++I)
@@ -1675,9 +1685,11 @@ bool SimpleRegisterCoalescing::runOnMachineFunction(MachineFunction &fn) {
           DoDelete = false;
         
         if (MI->allDefsAreDead()) {
-          LiveInterval &li = li_->getInterval(SrcReg);
-          if (!ShortenDeadCopySrcLiveRange(li, MI))
-            ShortenDeadCopyLiveRange(li, MI);
+          if (li_->hasInterval(SrcReg)) {
+            LiveInterval &li = li_->getInterval(SrcReg);
+            if (!ShortenDeadCopySrcLiveRange(li, MI))
+              ShortenDeadCopyLiveRange(li, MI);
+          }
           DoDelete = true;
         }
         if (!DoDelete) {
@@ -1774,6 +1786,9 @@ bool SimpleRegisterCoalescing::runOnMachineFunction(MachineFunction &fn) {
   }
 
   DEBUG(dump());
+  DEBUG(ldv_->dump());
+  if (VerifyCoalescing)
+    mf_->verify(this, "After register coalescing");
   return true;
 }
 

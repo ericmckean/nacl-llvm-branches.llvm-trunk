@@ -13,6 +13,7 @@
 
 #define DEBUG_TYPE "arm-isel"
 #include "ARM.h"
+#include "ARMBaseInstrInfo.h"
 #include "ARMAddressingModes.h"
 #include "ARMTargetMachine.h"
 #include "llvm/CallingConv.h"
@@ -41,6 +42,11 @@ DisableShifterOp("disable-shifter-op", cl::Hidden,
   cl::desc("Disable isel of shifter-op"),
   cl::init(false));
 
+static cl::opt<bool>
+CheckVMLxHazard("check-vmlx-hazard", cl::Hidden,
+  cl::desc("Check fp vmla / vmls hazard at isel time"),
+  cl::init(false));
+
 //===--------------------------------------------------------------------===//
 /// ARMDAGToDAGISel - ARM specific code to select ARM machine
 /// instructions for SelectionDAG operations.
@@ -54,6 +60,7 @@ enum AddrMode2Type {
 
 class ARMDAGToDAGISel : public SelectionDAGISel {
   ARMBaseTargetMachine &TM;
+  const ARMBaseInstrInfo *TII;
 
   /// Subtarget - Keep a pointer to the ARMSubtarget around so that we can
   /// make the right decision when generating code for different targets.
@@ -63,7 +70,8 @@ public:
   explicit ARMDAGToDAGISel(ARMBaseTargetMachine &tm,
                            CodeGenOpt::Level OptLevel)
     : SelectionDAGISel(tm, OptLevel), TM(tm),
-    Subtarget(&TM.getSubtarget<ARMSubtarget>()) {
+      TII(static_cast<const ARMBaseInstrInfo*>(TM.getInstrInfo())),
+      Subtarget(&TM.getSubtarget<ARMSubtarget>()) {
   }
 
   virtual const char *getPassName() const {
@@ -78,6 +86,8 @@ public:
 
   SDNode *Select(SDNode *N);
 
+
+  bool hasNoVMLxHazardUse(SDNode *N) const;
   bool isShifterOpProfitable(const SDValue &Shift,
                              ARM_AM::ShiftOpc ShOpcVal, unsigned ShAmt);
   bool SelectShifterOperandReg(SDValue N, SDValue &A,
@@ -117,21 +127,26 @@ public:
                        SDValue &Offset);
   bool SelectAddrMode6(SDNode *Parent, SDValue N, SDValue &Addr,SDValue &Align);
 
-  bool SelectAddrModePC(SDValue N, SDValue &Offset,
-                        SDValue &Label);
+  bool SelectAddrModePC(SDValue N, SDValue &Offset, SDValue &Label);
 
+  // Thumb Addressing Modes:
   bool SelectThumbAddrModeRR(SDValue N, SDValue &Base, SDValue &Offset);
-  bool SelectThumbAddrModeRI5(SDValue N, unsigned Scale,
-                              SDValue &Base, SDValue &OffImm,
-                              SDValue &Offset);
-  bool SelectThumbAddrModeS1(SDValue N, SDValue &Base,
-                             SDValue &OffImm, SDValue &Offset);
-  bool SelectThumbAddrModeS2(SDValue N, SDValue &Base,
-                             SDValue &OffImm, SDValue &Offset);
-  bool SelectThumbAddrModeS4(SDValue N, SDValue &Base,
-                             SDValue &OffImm, SDValue &Offset);
+  bool SelectThumbAddrModeRI(SDValue N, SDValue &Base, SDValue &Offset,
+                             unsigned Scale);
+  bool SelectThumbAddrModeRI5S1(SDValue N, SDValue &Base, SDValue &Offset);
+  bool SelectThumbAddrModeRI5S2(SDValue N, SDValue &Base, SDValue &Offset);
+  bool SelectThumbAddrModeRI5S4(SDValue N, SDValue &Base, SDValue &Offset);
+  bool SelectThumbAddrModeImm5S(SDValue N, unsigned Scale, SDValue &Base,
+                                SDValue &OffImm);
+  bool SelectThumbAddrModeImm5S1(SDValue N, SDValue &Base,
+                                 SDValue &OffImm);
+  bool SelectThumbAddrModeImm5S2(SDValue N, SDValue &Base,
+                                 SDValue &OffImm);
+  bool SelectThumbAddrModeImm5S4(SDValue N, SDValue &Base,
+                                 SDValue &OffImm);
   bool SelectThumbAddrModeSP(SDValue N, SDValue &Base, SDValue &OffImm);
 
+  // Thumb 2 Addressing Modes:
   bool SelectT2ShifterOperandReg(SDValue N,
                                  SDValue &BaseReg, SDValue &Opc);
   bool SelectT2AddrModeImm12(SDValue N, SDValue &Base, SDValue &OffImm);
@@ -196,6 +211,11 @@ private:
   /// load/store of D registers and Q registers.
   SDNode *SelectVLDSTLane(SDNode *N, bool IsLoad, unsigned NumVecs,
                           unsigned *DOpcodes, unsigned *QOpcodes);
+
+  /// SelectVLDDup - Select NEON load-duplicate intrinsics.  NumVecs
+  /// should be 2, 3 or 4.  The opcode array specifies the instructions used
+  /// for loading D registers.  (Q registers are not supported.)
+  SDNode *SelectVLDDup(SDNode *N, unsigned NumVecs, unsigned *Opcodes);
 
   /// SelectVTBL - Select NEON VTBL and VTBX intrinsics.  NumVecs should be 2,
   /// 3 or 4.  These are custom-selected so that a REG_SEQUENCE can be
@@ -267,6 +287,72 @@ static bool isOpcWithIntImmediate(SDNode *N, unsigned Opc, unsigned& Imm) {
          isInt32Immediate(N->getOperand(1).getNode(), Imm);
 }
 
+/// \brief Check whether a particular node is a constant value representable as
+/// (N * Scale) where (N in [\arg RangeMin, \arg RangeMax).
+///
+/// \param ScaledConstant [out] - On success, the pre-scaled constant value.
+static bool isScaledConstantInRange(SDValue Node, unsigned Scale,
+                                    int RangeMin, int RangeMax,
+                                    int &ScaledConstant) {
+  assert(Scale && "Invalid scale!");
+
+  // Check that this is a constant.
+  const ConstantSDNode *C = dyn_cast<ConstantSDNode>(Node);
+  if (!C)
+    return false;
+
+  ScaledConstant = (int) C->getZExtValue();
+  if ((ScaledConstant % Scale) != 0)
+    return false;
+
+  ScaledConstant /= Scale;
+  return ScaledConstant >= RangeMin && ScaledConstant < RangeMax;
+}
+
+/// hasNoVMLxHazardUse - Return true if it's desirable to select a FP MLA / MLS
+/// node. VFP / NEON fp VMLA / VMLS instructions have special RAW hazards (at
+/// least on current ARM implementations) which should be avoidded.
+bool ARMDAGToDAGISel::hasNoVMLxHazardUse(SDNode *N) const {
+  if (OptLevel == CodeGenOpt::None)
+    return true;
+
+  if (!CheckVMLxHazard)
+    return true;
+
+  if (!Subtarget->isCortexA8() && !Subtarget->isCortexA9())
+    return true;
+
+  if (!N->hasOneUse())
+    return false;
+
+  SDNode *Use = *N->use_begin();
+  if (Use->getOpcode() == ISD::CopyToReg)
+    return true;
+  if (Use->isMachineOpcode()) {
+    const TargetInstrDesc &TID = TII->get(Use->getMachineOpcode());
+    if (TID.mayStore())
+      return true;
+    unsigned Opcode = TID.getOpcode();
+    if (Opcode == ARM::VMOVRS || Opcode == ARM::VMOVRRD)
+      return true;
+    // vmlx feeding into another vmlx. We actually want to unfold
+    // the use later in the MLxExpansion pass. e.g.
+    // vmla
+    // vmla (stall 8 cycles)
+    //
+    // vmul (5 cycles)
+    // vadd (5 cycles)
+    // vmla
+    // This adds up to about 18 - 19 cycles.
+    //
+    // vmla
+    // vmul (stall 4 cycles)
+    // vadd adds up to about 14 cycles.
+    return TII->isFpMLxInstruction(Opcode);
+  }
+
+  return false;
+}
 
 bool ARMDAGToDAGISel::isShifterOpProfitable(const SDValue &Shift,
                                             ARM_AM::ShiftOpc ShOpcVal,
@@ -409,12 +495,10 @@ bool ARMDAGToDAGISel::SelectLdStSOReg(SDValue N, SDValue &Base, SDValue &Offset,
 
   // Leave simple R +/- imm12 operands for LDRi12
   if (N.getOpcode() == ISD::ADD) {
-    if (ConstantSDNode *RHS = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
-      int RHSC = (int)RHS->getZExtValue();
-      if ((RHSC >= 0 && RHSC < 0x1000) ||
-          (RHSC < 0 && RHSC > -0x1000)) // 12 bits.
-        return false;
-    }
+    int RHSC;
+    if (isScaledConstantInRange(N.getOperand(1), /*Scale=*/1,
+                                -0x1000+1, 0x1000, RHSC)) // 12 bits.
+      return false;
   }
 
   if (Subtarget->isCortexA9() && !N.hasOneUse())
@@ -528,27 +612,25 @@ AddrMode2Type ARMDAGToDAGISel::SelectAddrMode2Worker(SDValue N,
 
   // Match simple R +/- imm12 operands.
   if (N.getOpcode() == ISD::ADD) {
-    if (ConstantSDNode *RHS = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
-      int RHSC = (int)RHS->getZExtValue();
-      if ((RHSC >= 0 && RHSC < 0x1000) ||
-          (RHSC < 0 && RHSC > -0x1000)) { // 12 bits.
-        Base = N.getOperand(0);
-        if (Base.getOpcode() == ISD::FrameIndex) {
-          int FI = cast<FrameIndexSDNode>(Base)->getIndex();
-          Base = CurDAG->getTargetFrameIndex(FI, TLI.getPointerTy());
-        }
-        Offset = CurDAG->getRegister(0, MVT::i32);
-
-        ARM_AM::AddrOpc AddSub = ARM_AM::add;
-        if (RHSC < 0) {
-          AddSub = ARM_AM::sub;
-          RHSC = - RHSC;
-        }
-        Opc = CurDAG->getTargetConstant(ARM_AM::getAM2Opc(AddSub, RHSC,
-                                                          ARM_AM::no_shift),
-                                        MVT::i32);
-        return AM2_BASE;
+    int RHSC;
+    if (isScaledConstantInRange(N.getOperand(1), /*Scale=*/1,
+                                -0x1000+1, 0x1000, RHSC)) { // 12 bits.
+      Base = N.getOperand(0);
+      if (Base.getOpcode() == ISD::FrameIndex) {
+        int FI = cast<FrameIndexSDNode>(Base)->getIndex();
+        Base = CurDAG->getTargetFrameIndex(FI, TLI.getPointerTy());
       }
+      Offset = CurDAG->getRegister(0, MVT::i32);
+
+      ARM_AM::AddrOpc AddSub = ARM_AM::add;
+      if (RHSC < 0) {
+        AddSub = ARM_AM::sub;
+        RHSC = - RHSC;
+      }
+      Opc = CurDAG->getTargetConstant(ARM_AM::getAM2Opc(AddSub, RHSC,
+                                                        ARM_AM::no_shift),
+                                      MVT::i32);
+      return AM2_BASE;
     }
   }
 
@@ -625,15 +707,13 @@ bool ARMDAGToDAGISel::SelectAddrMode2Offset(SDNode *Op, SDValue N,
     : cast<StoreSDNode>(Op)->getAddressingMode();
   ARM_AM::AddrOpc AddSub = (AM == ISD::PRE_INC || AM == ISD::POST_INC)
     ? ARM_AM::add : ARM_AM::sub;
-  if (ConstantSDNode *C = dyn_cast<ConstantSDNode>(N)) {
-    int Val = (int)C->getZExtValue();
-    if (Val >= 0 && Val < 0x1000) { // 12 bits.
-      Offset = CurDAG->getRegister(0, MVT::i32);
-      Opc = CurDAG->getTargetConstant(ARM_AM::getAM2Opc(AddSub, Val,
-                                                        ARM_AM::no_shift),
-                                      MVT::i32);
-      return true;
-    }
+  int Val;
+  if (isScaledConstantInRange(N, /*Scale=*/1, 0, 0x1000, Val)) { // 12 bits.
+    Offset = CurDAG->getRegister(0, MVT::i32);
+    Opc = CurDAG->getTargetConstant(ARM_AM::getAM2Opc(AddSub, Val,
+                                                      ARM_AM::no_shift),
+                                    MVT::i32);
+    return true;
   }
 
   Offset = N;
@@ -684,25 +764,23 @@ bool ARMDAGToDAGISel::SelectAddrMode3(SDValue N,
   }
 
   // If the RHS is +/- imm8, fold into addr mode.
-  if (ConstantSDNode *RHS = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
-    int RHSC = (int)RHS->getZExtValue();
-    if ((RHSC >= 0 && RHSC < 256) ||
-        (RHSC < 0 && RHSC > -256)) { // note -256 itself isn't allowed.
-      Base = N.getOperand(0);
-      if (Base.getOpcode() == ISD::FrameIndex) {
-        int FI = cast<FrameIndexSDNode>(Base)->getIndex();
-        Base = CurDAG->getTargetFrameIndex(FI, TLI.getPointerTy());
-      }
-      Offset = CurDAG->getRegister(0, MVT::i32);
-
-      ARM_AM::AddrOpc AddSub = ARM_AM::add;
-      if (RHSC < 0) {
-        AddSub = ARM_AM::sub;
-        RHSC = - RHSC;
-      }
-      Opc = CurDAG->getTargetConstant(ARM_AM::getAM3Opc(AddSub, RHSC),MVT::i32);
-      return true;
+  int RHSC;
+  if (isScaledConstantInRange(N.getOperand(1), /*Scale=*/1,
+                              -256 + 1, 256, RHSC)) { // 8 bits.
+    Base = N.getOperand(0);
+    if (Base.getOpcode() == ISD::FrameIndex) {
+      int FI = cast<FrameIndexSDNode>(Base)->getIndex();
+      Base = CurDAG->getTargetFrameIndex(FI, TLI.getPointerTy());
     }
+    Offset = CurDAG->getRegister(0, MVT::i32);
+
+    ARM_AM::AddrOpc AddSub = ARM_AM::add;
+    if (RHSC < 0) {
+      AddSub = ARM_AM::sub;
+      RHSC = - RHSC;
+    }
+    Opc = CurDAG->getTargetConstant(ARM_AM::getAM3Opc(AddSub, RHSC),MVT::i32);
+    return true;
   }
 
   Base = N.getOperand(0);
@@ -719,13 +797,11 @@ bool ARMDAGToDAGISel::SelectAddrMode3Offset(SDNode *Op, SDValue N,
     : cast<StoreSDNode>(Op)->getAddressingMode();
   ARM_AM::AddrOpc AddSub = (AM == ISD::PRE_INC || AM == ISD::POST_INC)
     ? ARM_AM::add : ARM_AM::sub;
-  if (ConstantSDNode *C = dyn_cast<ConstantSDNode>(N)) {
-    int Val = (int)C->getZExtValue();
-    if (Val >= 0 && Val < 256) {
-      Offset = CurDAG->getRegister(0, MVT::i32);
-      Opc = CurDAG->getTargetConstant(ARM_AM::getAM3Opc(AddSub, Val), MVT::i32);
-      return true;
-    }
+  int Val;
+  if (isScaledConstantInRange(N, /*Scale=*/1, 0, 256, Val)) { // 12 bits.
+    Offset = CurDAG->getRegister(0, MVT::i32);
+    Opc = CurDAG->getTargetConstant(ARM_AM::getAM3Opc(AddSub, Val), MVT::i32);
+    return true;
   }
 
   Offset = N;
@@ -751,28 +827,23 @@ bool ARMDAGToDAGISel::SelectAddrMode5(SDValue N,
   }
 
   // If the RHS is +/- imm8, fold into addr mode.
-  if (ConstantSDNode *RHS = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
-    int RHSC = (int)RHS->getZExtValue();
-    if ((RHSC & 3) == 0) {  // The constant is implicitly multiplied by 4.
-      RHSC >>= 2;
-      if ((RHSC >= 0 && RHSC < 256) ||
-          (RHSC < 0 && RHSC > -256)) { // note -256 itself isn't allowed.
-        Base = N.getOperand(0);
-        if (Base.getOpcode() == ISD::FrameIndex) {
-          int FI = cast<FrameIndexSDNode>(Base)->getIndex();
-          Base = CurDAG->getTargetFrameIndex(FI, TLI.getPointerTy());
-        }
-
-        ARM_AM::AddrOpc AddSub = ARM_AM::add;
-        if (RHSC < 0) {
-          AddSub = ARM_AM::sub;
-          RHSC = - RHSC;
-        }
-        Offset = CurDAG->getTargetConstant(ARM_AM::getAM5Opc(AddSub, RHSC),
-                                           MVT::i32);
-        return true;
-      }
+  int RHSC;
+  if (isScaledConstantInRange(N.getOperand(1), /*Scale=*/4,
+                              -256 + 1, 256, RHSC)) {
+    Base = N.getOperand(0);
+    if (Base.getOpcode() == ISD::FrameIndex) {
+      int FI = cast<FrameIndexSDNode>(Base)->getIndex();
+      Base = CurDAG->getTargetFrameIndex(FI, TLI.getPointerTy());
     }
+
+    ARM_AM::AddrOpc AddSub = ARM_AM::add;
+    if (RHSC < 0) {
+      AddSub = ARM_AM::sub;
+      RHSC = - RHSC;
+    }
+    Offset = CurDAG->getTargetConstant(ARM_AM::getAM5Opc(AddSub, RHSC),
+                                       MVT::i32);
+    return true;
   }
 
   Base = N;
@@ -809,12 +880,18 @@ bool ARMDAGToDAGISel::SelectAddrModePC(SDValue N,
   if (N.getOpcode() == ARMISD::PIC_ADD && N.hasOneUse()) {
     Offset = N.getOperand(0);
     SDValue N1 = N.getOperand(1);
-    Label  = CurDAG->getTargetConstant(cast<ConstantSDNode>(N1)->getZExtValue(),
-                                       MVT::i32);
+    Label = CurDAG->getTargetConstant(cast<ConstantSDNode>(N1)->getZExtValue(),
+                                      MVT::i32);
     return true;
   }
+
   return false;
 }
+
+
+//===----------------------------------------------------------------------===//
+//                         Thumb Addressing Modes
+//===----------------------------------------------------------------------===//
 
 bool ARMDAGToDAGISel::SelectThumbAddrModeRR(SDValue N,
                                             SDValue &Base, SDValue &Offset){
@@ -834,13 +911,69 @@ bool ARMDAGToDAGISel::SelectThumbAddrModeRR(SDValue N,
 }
 
 bool
-ARMDAGToDAGISel::SelectThumbAddrModeRI5(SDValue N,
-                                        unsigned Scale, SDValue &Base,
-                                        SDValue &OffImm, SDValue &Offset) {
+ARMDAGToDAGISel::SelectThumbAddrModeRI(SDValue N, SDValue &Base,
+                                       SDValue &Offset, unsigned Scale) {
   if (Scale == 4) {
     SDValue TmpBase, TmpOffImm;
     if (SelectThumbAddrModeSP(N, TmpBase, TmpOffImm))
       return false;  // We want to select tLDRspi / tSTRspi instead.
+
+    if (N.getOpcode() == ARMISD::Wrapper &&
+        N.getOperand(0).getOpcode() == ISD::TargetConstantPool)
+      return false;  // We want to select tLDRpci instead.
+  }
+
+  if (N.getOpcode() != ISD::ADD)
+    return false;
+
+  // Thumb does not have [sp, r] address mode.
+  RegisterSDNode *LHSR = dyn_cast<RegisterSDNode>(N.getOperand(0));
+  RegisterSDNode *RHSR = dyn_cast<RegisterSDNode>(N.getOperand(1));
+  if ((LHSR && LHSR->getReg() == ARM::SP) ||
+      (RHSR && RHSR->getReg() == ARM::SP))
+    return false;
+
+  // FIXME: Why do we explicitly check for a match here and then return false?
+  // Presumably to allow something else to match, but shouldn't this be
+  // documented?
+  int RHSC;
+  if (isScaledConstantInRange(N.getOperand(1), Scale, 0, 32, RHSC))
+    return false;
+
+  Base = N.getOperand(0);
+  Offset = N.getOperand(1);
+  return true;
+}
+
+bool
+ARMDAGToDAGISel::SelectThumbAddrModeRI5S1(SDValue N,
+                                          SDValue &Base,
+                                          SDValue &Offset) {
+  return SelectThumbAddrModeRI(N, Base, Offset, 1);
+}
+
+bool
+ARMDAGToDAGISel::SelectThumbAddrModeRI5S2(SDValue N,
+                                          SDValue &Base,
+                                          SDValue &Offset) {
+  return SelectThumbAddrModeRI(N, Base, Offset, 2);
+}
+
+bool
+ARMDAGToDAGISel::SelectThumbAddrModeRI5S4(SDValue N,
+                                          SDValue &Base,
+                                          SDValue &Offset) {
+  return SelectThumbAddrModeRI(N, Base, Offset, 4);
+}
+
+bool
+ARMDAGToDAGISel::SelectThumbAddrModeImm5S(SDValue N, unsigned Scale,
+                                          SDValue &Base, SDValue &OffImm) {
+  if (Scale == 4) {
+    SDValue TmpBase, TmpOffImm;
+    if (SelectThumbAddrModeSP(N, TmpBase, TmpOffImm))
+      return false;  // We want to select tLDRspi / tSTRspi instead.
+
     if (N.getOpcode() == ARMISD::Wrapper &&
         N.getOperand(0).getOpcode() == ISD::TargetConstantPool)
       return false;  // We want to select tLDRpci instead.
@@ -851,61 +984,60 @@ ARMDAGToDAGISel::SelectThumbAddrModeRI5(SDValue N,
         !(Subtarget->useMovt() &&
           N.getOperand(0).getOpcode() == ISD::TargetGlobalAddress)) {
       Base = N.getOperand(0);
-    } else
+    } else {
       Base = N;
+    }
 
-    Offset = CurDAG->getRegister(0, MVT::i32);
     OffImm = CurDAG->getTargetConstant(0, MVT::i32);
     return true;
   }
 
-  // Thumb does not have [sp, r] address mode.
   RegisterSDNode *LHSR = dyn_cast<RegisterSDNode>(N.getOperand(0));
   RegisterSDNode *RHSR = dyn_cast<RegisterSDNode>(N.getOperand(1));
   if ((LHSR && LHSR->getReg() == ARM::SP) ||
       (RHSR && RHSR->getReg() == ARM::SP)) {
+    ConstantSDNode *LHS = dyn_cast<ConstantSDNode>(N.getOperand(0));
+    ConstantSDNode *RHS = dyn_cast<ConstantSDNode>(N.getOperand(1));
+    unsigned LHSC = LHS ? LHS->getZExtValue() : 0;
+    unsigned RHSC = RHS ? RHS->getZExtValue() : 0;
+
+    // Thumb does not have [sp, #imm5] address mode for non-zero imm5.
+    if (LHSC != 0 || RHSC != 0) return false;
+
     Base = N;
-    Offset = CurDAG->getRegister(0, MVT::i32);
     OffImm = CurDAG->getTargetConstant(0, MVT::i32);
     return true;
   }
 
   // If the RHS is + imm5 * scale, fold into addr mode.
-  if (ConstantSDNode *RHS = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
-    int RHSC = (int)RHS->getZExtValue();
-    if ((RHSC & (Scale-1)) == 0) {  // The constant is implicitly multiplied.
-      RHSC /= Scale;
-      if (RHSC >= 0 && RHSC < 32) {
-        Base = N.getOperand(0);
-        Offset = CurDAG->getRegister(0, MVT::i32);
-        OffImm = CurDAG->getTargetConstant(RHSC, MVT::i32);
-        return true;
-      }
-    }
+  int RHSC;
+  if (isScaledConstantInRange(N.getOperand(1), Scale, 0, 32, RHSC)) {
+    Base = N.getOperand(0);
+    OffImm = CurDAG->getTargetConstant(RHSC, MVT::i32);
+    return true;
   }
 
   Base = N.getOperand(0);
-  Offset = N.getOperand(1);
   OffImm = CurDAG->getTargetConstant(0, MVT::i32);
   return true;
 }
 
-bool ARMDAGToDAGISel::SelectThumbAddrModeS1(SDValue N,
-                                            SDValue &Base, SDValue &OffImm,
-                                            SDValue &Offset) {
-  return SelectThumbAddrModeRI5(N, 1, Base, OffImm, Offset);
+bool
+ARMDAGToDAGISel::SelectThumbAddrModeImm5S4(SDValue N, SDValue &Base,
+                                           SDValue &OffImm) {
+  return SelectThumbAddrModeImm5S(N, 4, Base, OffImm);
 }
 
-bool ARMDAGToDAGISel::SelectThumbAddrModeS2(SDValue N,
-                                            SDValue &Base, SDValue &OffImm,
-                                            SDValue &Offset) {
-  return SelectThumbAddrModeRI5(N, 2, Base, OffImm, Offset);
+bool
+ARMDAGToDAGISel::SelectThumbAddrModeImm5S2(SDValue N, SDValue &Base,
+                                           SDValue &OffImm) {
+  return SelectThumbAddrModeImm5S(N, 2, Base, OffImm);
 }
 
-bool ARMDAGToDAGISel::SelectThumbAddrModeS4(SDValue N,
-                                            SDValue &Base, SDValue &OffImm,
-                                            SDValue &Offset) {
-  return SelectThumbAddrModeRI5(N, 4, Base, OffImm, Offset);
+bool
+ARMDAGToDAGISel::SelectThumbAddrModeImm5S1(SDValue N, SDValue &Base,
+                                           SDValue &OffImm) {
+  return SelectThumbAddrModeImm5S(N, 1, Base, OffImm);
 }
 
 bool ARMDAGToDAGISel::SelectThumbAddrModeSP(SDValue N,
@@ -924,25 +1056,26 @@ bool ARMDAGToDAGISel::SelectThumbAddrModeSP(SDValue N,
   if (N.getOperand(0).getOpcode() == ISD::FrameIndex ||
       (LHSR && LHSR->getReg() == ARM::SP)) {
     // If the RHS is + imm8 * scale, fold into addr mode.
-    if (ConstantSDNode *RHS = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
-      int RHSC = (int)RHS->getZExtValue();
-      if ((RHSC & 3) == 0) {  // The constant is implicitly multiplied.
-        RHSC >>= 2;
-        if (RHSC >= 0 && RHSC < 256) {
-          Base = N.getOperand(0);
-          if (Base.getOpcode() == ISD::FrameIndex) {
-            int FI = cast<FrameIndexSDNode>(Base)->getIndex();
-            Base = CurDAG->getTargetFrameIndex(FI, TLI.getPointerTy());
-          }
-          OffImm = CurDAG->getTargetConstant(RHSC, MVT::i32);
-          return true;
-        }
+    int RHSC;
+    if (isScaledConstantInRange(N.getOperand(1), /*Scale=*/4, 0, 256, RHSC)) {
+      Base = N.getOperand(0);
+      if (Base.getOpcode() == ISD::FrameIndex) {
+        int FI = cast<FrameIndexSDNode>(Base)->getIndex();
+        Base = CurDAG->getTargetFrameIndex(FI, TLI.getPointerTy());
       }
+      OffImm = CurDAG->getTargetConstant(RHSC, MVT::i32);
+      return true;
     }
   }
 
   return false;
 }
+
+
+//===----------------------------------------------------------------------===//
+//                        Thumb 2 Addressing Modes
+//===----------------------------------------------------------------------===//
+
 
 bool ARMDAGToDAGISel::SelectT2ShifterOperandReg(SDValue N, SDValue &BaseReg,
                                                 SDValue &Opc) {
@@ -1046,14 +1179,12 @@ bool ARMDAGToDAGISel::SelectT2AddrModeImm8Offset(SDNode *Op, SDValue N,
   ISD::MemIndexedMode AM = (Opcode == ISD::LOAD)
     ? cast<LoadSDNode>(Op)->getAddressingMode()
     : cast<StoreSDNode>(Op)->getAddressingMode();
-  if (ConstantSDNode *RHS = dyn_cast<ConstantSDNode>(N)) {
-    int RHSC = (int)RHS->getZExtValue();
-    if (RHSC >= 0 && RHSC < 0x100) { // 8 bits.
-      OffImm = ((AM == ISD::PRE_INC) || (AM == ISD::POST_INC))
-        ? CurDAG->getTargetConstant(RHSC, MVT::i32)
-        : CurDAG->getTargetConstant(-RHSC, MVT::i32);
-      return true;
-    }
+  int RHSC;
+  if (isScaledConstantInRange(N, /*Scale=*/1, 0, 0x100, RHSC)) { // 8 bits.
+    OffImm = ((AM == ISD::PRE_INC) || (AM == ISD::POST_INC))
+      ? CurDAG->getTargetConstant(RHSC, MVT::i32)
+      : CurDAG->getTargetConstant(-RHSC, MVT::i32);
+    return true;
   }
 
   return false;
@@ -1563,6 +1694,8 @@ SDNode *ARMDAGToDAGISel::SelectVLDSTLane(SDNode *N, bool IsLoad,
     unsigned NumBytes = NumVecs * VT.getVectorElementType().getSizeInBits()/8;
     if (Alignment > NumBytes)
       Alignment = NumBytes;
+    if (Alignment < 8 && Alignment < NumBytes)
+      Alignment = 0;
     // Alignment must be a power of two; make sure of that.
     Alignment = (Alignment & -Alignment);
     if (Alignment == 1)
@@ -1636,6 +1769,64 @@ SDNode *ARMDAGToDAGISel::SelectVLDSTLane(SDNode *N, bool IsLoad,
   assert(ARM::dsub_7 == ARM::dsub_0+7 && "Unexpected subreg numbering");
   assert(ARM::qsub_3 == ARM::qsub_0+3 && "Unexpected subreg numbering");
   unsigned SubIdx = is64BitVector ? ARM::dsub_0 : ARM::qsub_0;
+  for (unsigned Vec = 0; Vec < NumVecs; ++Vec)
+    ReplaceUses(SDValue(N, Vec),
+                CurDAG->getTargetExtractSubreg(SubIdx+Vec, dl, VT, SuperReg));
+  ReplaceUses(SDValue(N, NumVecs), Chain);
+  return NULL;
+}
+
+SDNode *ARMDAGToDAGISel::SelectVLDDup(SDNode *N, unsigned NumVecs,
+                                      unsigned *Opcodes) {
+  assert(NumVecs >=2 && NumVecs <= 4 && "VLDDup NumVecs out-of-range");
+  DebugLoc dl = N->getDebugLoc();
+
+  SDValue MemAddr, Align;
+  if (!SelectAddrMode6(N, N->getOperand(1), MemAddr, Align))
+    return NULL;
+
+  SDValue Chain = N->getOperand(0);
+  EVT VT = N->getValueType(0);
+
+  unsigned Alignment = 0;
+  if (NumVecs != 3) {
+    Alignment = cast<ConstantSDNode>(Align)->getZExtValue();
+    unsigned NumBytes = NumVecs * VT.getVectorElementType().getSizeInBits()/8;
+    if (Alignment > NumBytes)
+      Alignment = NumBytes;
+    if (Alignment < 8 && Alignment < NumBytes)
+      Alignment = 0;
+    // Alignment must be a power of two; make sure of that.
+    Alignment = (Alignment & -Alignment);
+    if (Alignment == 1)
+      Alignment = 0;
+  }
+  Align = CurDAG->getTargetConstant(Alignment, MVT::i32);
+
+  unsigned OpcodeIndex;
+  switch (VT.getSimpleVT().SimpleTy) {
+  default: llvm_unreachable("unhandled vld-dup type");
+  case MVT::v8i8:  OpcodeIndex = 0; break;
+  case MVT::v4i16: OpcodeIndex = 1; break;
+  case MVT::v2f32:
+  case MVT::v2i32: OpcodeIndex = 2; break;
+  }
+
+  SDValue Pred = getAL(CurDAG);
+  SDValue Reg0 = CurDAG->getRegister(0, MVT::i32);
+  SDValue SuperReg;
+  unsigned Opc = Opcodes[OpcodeIndex];
+  const SDValue Ops[] = { MemAddr, Align, Pred, Reg0, Chain };
+
+  unsigned ResTyElts = (NumVecs == 3) ? 4 : NumVecs;
+  EVT ResTy = EVT::getVectorVT(*CurDAG->getContext(), MVT::i64, ResTyElts);
+  SDNode *VLdDup = CurDAG->getMachineNode(Opc, dl, ResTy, MVT::Other, Ops, 5);
+  SuperReg = SDValue(VLdDup, 0);
+  Chain = SDValue(VLdDup, 1);
+
+  // Extract the subregisters.
+  assert(ARM::dsub_7 == ARM::dsub_0+7 && "Unexpected subreg numbering");
+  unsigned SubIdx = ARM::dsub_0;
   for (unsigned Vec = 0; Vec < NumVecs; ++Vec)
     ReplaceUses(SDValue(N, Vec),
                 CurDAG->getTargetExtractSubreg(SubIdx+Vec, dl, VT, SuperReg));
@@ -1835,7 +2026,7 @@ SelectARMCMOVImmOp(SDNode *N, SDValue FalseVal, SDValue TrueVal,
     SDValue Ops[] = { FalseVal, True, CC, CCR, InFlag };
     return CurDAG->SelectNodeTo(N, Opc, MVT::i32, Ops, 5);
   }
-  
+
   return 0;
 }
 
@@ -1937,13 +2128,7 @@ SDNode *ARMDAGToDAGISel::SelectConcatVector(SDNode *N) {
   EVT VT = N->getValueType(0);
   if (!VT.is128BitVector() || N->getNumOperands() != 2)
     llvm_unreachable("unexpected CONCAT_VECTORS");
-  DebugLoc dl = N->getDebugLoc();
-  SDValue V0 = N->getOperand(0);
-  SDValue V1 = N->getOperand(1);
-  SDValue SubReg0 = CurDAG->getTargetConstant(ARM::dsub_0, MVT::i32);
-  SDValue SubReg1 = CurDAG->getTargetConstant(ARM::dsub_1, MVT::i32);
-  const SDValue Ops[] = { V0, SubReg0, V1, SubReg1 };
-  return CurDAG->getMachineNode(TargetOpcode::REG_SEQUENCE, dl, VT, Ops, 4);
+  return PairDRegs(VT, N->getOperand(0), N->getOperand(1));
 }
 
 SDNode *ARMDAGToDAGISel::Select(SDNode *N) {
@@ -1983,7 +2168,7 @@ SDNode *ARMDAGToDAGISel::Select(SDNode *N) {
         SDValue Pred = getAL(CurDAG);
         SDValue PredReg = CurDAG->getRegister(0, MVT::i32);
         SDValue Ops[] = { CPIdx, Pred, PredReg, CurDAG->getEntryNode() };
-        ResNode = CurDAG->getMachineNode(ARM::tLDRcp, dl, MVT::i32, MVT::Other,
+        ResNode = CurDAG->getMachineNode(ARM::tLDRpci, dl, MVT::i32, MVT::Other,
                                          Ops, 4);
       } else {
         SDValue Ops[] = {
@@ -2124,7 +2309,9 @@ SDNode *ARMDAGToDAGISel::Select(SDNode *N) {
       SDValue Ops[] = { N->getOperand(0), N->getOperand(1),
                         getAL(CurDAG), CurDAG->getRegister(0, MVT::i32),
                         CurDAG->getRegister(0, MVT::i32) };
-      return CurDAG->getMachineNode(ARM::UMULL, dl, MVT::i32, MVT::i32, Ops, 5);
+      return CurDAG->getMachineNode(Subtarget->hasV6Ops() ?
+                                    ARM::UMULL : ARM::UMULLv5,
+                                    dl, MVT::i32, MVT::i32, Ops, 5);
     }
   }
   case ISD::SMUL_LOHI: {
@@ -2138,7 +2325,9 @@ SDNode *ARMDAGToDAGISel::Select(SDNode *N) {
       SDValue Ops[] = { N->getOperand(0), N->getOperand(1),
                         getAL(CurDAG), CurDAG->getRegister(0, MVT::i32),
                         CurDAG->getRegister(0, MVT::i32) };
-      return CurDAG->getMachineNode(ARM::SMULL, dl, MVT::i32, MVT::i32, Ops, 5);
+      return CurDAG->getMachineNode(Subtarget->hasV6Ops() ?
+                                    ARM::SMULL : ARM::SMULLv5,
+                                    dl, MVT::i32, MVT::i32, Ops, 5);
     }
   }
   case ISD::LOAD: {
@@ -2181,7 +2370,7 @@ SDNode *ARMDAGToDAGISel::Select(SDNode *N) {
                                MVT::i32);
     SDValue Ops[] = { N1, Tmp2, N3, Chain, InFlag };
     SDNode *ResNode = CurDAG->getMachineNode(Opc, dl, MVT::Other,
-                                             MVT::Flag, Ops, 5);
+                                             MVT::Glue, Ops, 5);
     Chain = SDValue(ResNode, 0);
     if (N->getNumValues() == 2) {
       InFlag = SDValue(ResNode, 1);
@@ -2292,6 +2481,24 @@ SDNode *ARMDAGToDAGISel::Select(SDNode *N) {
     assert(NumElts == 4 && "unexpected type for BUILD_VECTOR");
     return QuadSRegs(VecVT, N->getOperand(0), N->getOperand(1),
                      N->getOperand(2), N->getOperand(3));
+  }
+
+  case ARMISD::VLD2DUP: {
+    unsigned Opcodes[] = { ARM::VLD2DUPd8Pseudo, ARM::VLD2DUPd16Pseudo,
+                           ARM::VLD2DUPd32Pseudo };
+    return SelectVLDDup(N, 2, Opcodes);
+  }
+
+  case ARMISD::VLD3DUP: {
+    unsigned Opcodes[] = { ARM::VLD3DUPd8Pseudo, ARM::VLD3DUPd16Pseudo,
+                           ARM::VLD3DUPd32Pseudo };
+    return SelectVLDDup(N, 3, Opcodes);
+  }
+
+  case ARMISD::VLD4DUP: {
+    unsigned Opcodes[] = { ARM::VLD4DUPd8Pseudo, ARM::VLD4DUPd16Pseudo,
+                           ARM::VLD4DUPd32Pseudo };
+    return SelectVLDDup(N, 4, Opcodes);
   }
 
   case ISD::INTRINSIC_VOID:

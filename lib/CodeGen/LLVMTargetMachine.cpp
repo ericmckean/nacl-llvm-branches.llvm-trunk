@@ -24,6 +24,7 @@
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCStreamer.h"
+#include "llvm/Target/TargetAsmInfo.h"
 #include "llvm/Target/TargetData.h"
 #include "llvm/Target/TargetRegistry.h"
 #include "llvm/Transforms/Scalar.h"
@@ -142,30 +143,18 @@ bool LLVMTargetMachine::addPassesToEmitFile(PassManagerBase &PM,
 
     // Create a code emitter if asked to show the encoding.
     MCCodeEmitter *MCE = 0;
-    if (ShowMCEncoding)
+    TargetAsmBackend *TAB = 0;
+    if (ShowMCEncoding) {
       MCE = getTarget().createCodeEmitter(*this, *Context);
+      TAB = getTarget().createAsmBackend(TargetTriple);
+    }
 
-    const TargetLoweringObjectFile &TLOF =
-      getTargetLowering()->getObjFileLowering();
-    int PointerSize = getTargetData()->getPointerSize();
-
-    MCStreamer *S;
-    if (hasMCUseLoc())
-      S = getTarget().createAsmStreamer(*Context, Out,
-                                        getTargetData()->isLittleEndian(),
-                                        getVerboseAsm(),
-                                        InstPrinter,
-                                        MCE,
-                                        ShowMCInst);
-    else
-      S = createAsmStreamerNoLoc(*Context, Out,
-                                 getTargetData()->isLittleEndian(),
-                                 getVerboseAsm(),
-                                 &TLOF,
-                                 PointerSize,
-                                 InstPrinter,
-                                 MCE,
-                                 ShowMCInst);
+    MCStreamer *S = getTarget().createAsmStreamer(*Context, Out,
+                                                  getVerboseAsm(),
+                                                  hasMCUseLoc(),
+                                                  InstPrinter,
+                                                  MCE, TAB,
+                                                  ShowMCInst);
     AsmStreamer.reset(S);
     break;
   }
@@ -179,7 +168,8 @@ bool LLVMTargetMachine::addPassesToEmitFile(PassManagerBase &PM,
 
     AsmStreamer.reset(getTarget().createObjectStreamer(TargetTriple, *Context,
                                                        *TAB, Out, MCE,
-                                                       hasMCRelaxAll()));
+                                                       hasMCRelaxAll(),
+                                                       hasMCNoExecStack()));
     AsmStreamer.get()->InitSections();
     break;
   }
@@ -262,7 +252,7 @@ static void printAndVerify(PassManagerBase &PM,
     PM.add(createMachineFunctionPrinterPass(dbgs(), Banner));
 
   if (VerifyMachineCode)
-    PM.add(createMachineVerifierPass());
+    PM.add(createMachineVerifierPass(Banner));
 }
 
 /// addCommonCodeGenPasses - Add standard LLVM codegen passes used for both
@@ -312,7 +302,8 @@ bool LLVMTargetMachine::addCommonCodeGenPasses(PassManagerBase &PM,
     // edge from elsewhere.
     PM.add(createSjLjEHPass(getTargetLowering()));
     // FALLTHROUGH
-  case ExceptionHandling::Dwarf:
+  case ExceptionHandling::DwarfCFI:
+  case ExceptionHandling::DwarfTable:
     PM.add(createDwarfEHPass(this));
     break;
   case ExceptionHandling::None:
@@ -344,7 +335,8 @@ bool LLVMTargetMachine::addCommonCodeGenPasses(PassManagerBase &PM,
 
   // Install a MachineModuleInfo class, which is an immutable pass that holds
   // all the per-module stuff we're generating, including MCContext.
-  MachineModuleInfo *MMI = new MachineModuleInfo(*getMCAsmInfo());
+  TargetAsmInfo *TAI = new TargetAsmInfo(*this);
+  MachineModuleInfo *MMI = new MachineModuleInfo(*getMCAsmInfo(), TAI);
   PM.add(MMI);
   OutContext = &MMI->getContext(); // Return the MCContext specifically by-ref.
 

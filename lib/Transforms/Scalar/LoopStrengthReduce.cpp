@@ -63,6 +63,7 @@
 #include "llvm/Analysis/Dominators.h"
 #include "llvm/Analysis/LoopPass.h"
 #include "llvm/Analysis/ScalarEvolutionExpander.h"
+#include "llvm/Assembly/Writer.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/ADT/SmallBitVector.h"
@@ -3813,7 +3814,6 @@ void LoopStrengthReduce::getAnalysisUsage(AnalysisUsage &AU) const {
   // We split critical edges, so we change the CFG.  However, we do update
   // many analyses if they are around.
   AU.addPreservedID(LoopSimplifyID);
-  AU.addPreserved("domfrontier");
 
   AU.addRequired<LoopInfo>();
   AU.addPreserved<LoopInfo>();

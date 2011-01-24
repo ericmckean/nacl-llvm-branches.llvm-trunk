@@ -16,9 +16,10 @@
 #define LLVM_ADT_SMALLPTRSET_H
 
 #include <cassert>
+#include <cstddef>
 #include <cstring>
 #include <iterator>
-#include "llvm/System/DataTypes.h"
+#include "llvm/Support/DataTypes.h"
 #include "llvm/Support/PointerLikeTypeTraits.h"
 
 namespace llvm {

@@ -846,6 +846,13 @@ define i32 @main() {   <i>; i32()* </i>&nbsp;
    region of memory, and all memory objects in LLVM are accessed through
    pointers.</p>
 
+<p>Global variables can be marked with <tt>unnamed_addr</tt> which indicates
+  that the address is not significant, only the content. Constants marked
+  like this can be merged with other constants if they have the same
+  initializer. Note that a constant with significant address <em>can</em>
+  be merged with a <tt>unnamed_addr</tt> constant, the result being a
+  constant whose address is significant.</p>
+
 <p>A global variable may be declared to reside in a target-specific numbered
    address space. For targets that support them, address spaces may affect how
    optimizations are performed and/or what target instructions are used to
@@ -885,7 +892,8 @@ define i32 @main() {   <i>; i32()* </i>&nbsp;
 <p>LLVM function definitions consist of the "<tt>define</tt>" keyword, an
    optional <a href="#linkage">linkage type</a>, an optional
    <a href="#visibility">visibility style</a>, an optional
-   <a href="#callingconv">calling convention</a>, a return type, an optional
+   <a href="#callingconv">calling convention</a>,
+   an optional <tt>unnamed_addr</tt> attribute, a return type, an optional
    <a href="#paramattrs">parameter attribute</a> for the return type, a function
    name, a (possibly empty) argument list (each with optional
    <a href="#paramattrs">parameter attributes</a>), optional
@@ -896,7 +904,8 @@ define i32 @main() {   <i>; i32()* </i>&nbsp;
 <p>LLVM function declarations consist of the "<tt>declare</tt>" keyword, an
    optional <a href="#linkage">linkage type</a>, an optional
    <a href="#visibility">visibility style</a>, an optional
-   <a href="#callingconv">calling convention</a>, a return type, an optional
+   <a href="#callingconv">calling convention</a>,
+   an optional <tt>unnamed_addr</tt> attribute, a return type, an optional
    <a href="#paramattrs">parameter attribute</a> for the return type, a function
    name, a possibly empty list of arguments, an optional alignment, and an
    optional <a href="#gc">garbage collector name</a>.</p>
@@ -921,6 +930,9 @@ define i32 @main() {   <i>; i32()* </i>&nbsp;
    target to whatever it feels convenient.  If an explicit alignment is
    specified, the function is forced to have at least that much alignment.  All
    alignments must be a power of 2.</p>
+
+<p>If the <tt>unnamed_addr</tt> attribute is given, the address is know to not
+  be significant and two identical functions can be merged</p>.
 
 <h5>Syntax:</h5>
 <pre class="doc_code">
@@ -1496,6 +1508,7 @@ Classifications</a> </div>
       <td><a href="#t_primitive">primitive</a></td>
       <td><a href="#t_label">label</a>,
           <a href="#t_void">void</a>,
+          <a href="#t_integer">integer</a>,
           <a href="#t_floating">floating point</a>,
           <a href="#t_x86mmx">x86mmx</a>,
           <a href="#t_metadata">metadata</a>.</td>
@@ -4131,6 +4144,14 @@ Instruction</a> </div>
    <a href="#t_array">array</a> type.  The operands are constant indices to
    specify which value to extract in a similar manner as indices in a
    '<tt><a href="#i_getelementptr">getelementptr</a></tt>' instruction.</p>
+   <p>The major differences to <tt>getelementptr</tt> indexing are:</p>
+     <ul>
+       <li>Since the value being indexed is not a pointer, the first index is
+           omitted and assumed to be zero.</li>
+       <li>At least one index must be specified.</li>
+       <li>Not only struct indices but also array indices must be in
+           bounds.</li>
+     </ul>
 
 <h5>Semantics:</h5>
 <p>The result is the value at the position in the aggregate specified by the
@@ -4165,7 +4186,7 @@ Instruction</a> </div>
    <a href="#t_array">array</a> type.  The second operand is a first-class
    value to insert.  The following operands are constant indices indicating
    the position at which to insert the value in a similar manner as indices in a
-   '<tt><a href="#i_getelementptr">getelementptr</a></tt>' instruction.  The
+   '<tt><a href="#i_extractvalue">extractvalue</a></tt>' instruction.  The
    value to insert must have the same type as the value identified by the
    indices.</p>
 
@@ -7506,7 +7527,7 @@ LLVM</a>.</p>
 
 <h5>Syntax:</h5>
 <pre>
-  declare {}* @llvm.invariant.start(i64 &lt;size&gt;, i8* nocapture &lt;ptr&gt;) readonly
+  declare {}* @llvm.invariant.start(i64 &lt;size&gt;, i8* nocapture &lt;ptr&gt;)
 </pre>
 
 <h5>Overview:</h5>
@@ -7732,7 +7753,7 @@ LLVM</a>.</p>
 
   <a href="mailto:sabre@nondot.org">Chris Lattner</a><br>
   <a href="http://llvm.org">The LLVM Compiler Infrastructure</a><br>
-  Last modified: $Date: 2010-11-20 15:49:06 -0800 (Sat, 20 Nov 2010) $
+  Last modified: $Date: 2011-01-15 00:20:57 -0800 (Sat, 15 Jan 2011) $
 </address>
 
 </body>

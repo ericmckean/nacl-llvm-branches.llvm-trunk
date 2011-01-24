@@ -146,17 +146,18 @@ void CodeMetrics::analyzeBasicBlock(const BasicBlock *BB) {
 // performance boost we can expect if the specified value is constant.
 unsigned CodeMetrics::CountBonusForConstant(Value *V) {
   unsigned Bonus = 0;
+  bool indirectCallBonus = false;
   for (Value::use_iterator UI = V->use_begin(), E = V->use_end(); UI != E;++UI){
     User *U = *UI;
     if (CallInst *CI = dyn_cast<CallInst>(U)) {
       // Turning an indirect call into a direct call is a BIG win
       if (CI->getCalledValue() == V)
-        Bonus += InlineConstants::IndirectCallBonus;
+        indirectCallBonus = true;
     }
     else if (InvokeInst *II = dyn_cast<InvokeInst>(U)) {
       // Turning an indirect call into a direct call is a BIG win
       if (II->getCalledValue() == V)
-        Bonus += InlineConstants::IndirectCallBonus;
+        indirectCallBonus = true;
     }
     // FIXME: Eliminating conditional branches and switches should
     // also yield a per-call performance boost.
@@ -187,6 +188,14 @@ unsigned CodeMetrics::CountBonusForConstant(Value *V) {
         Bonus += CountBonusForConstant(&Inst);
     }
   }
+  
+  // FIXME: The only reason we're applying the bonus once is while it's great
+  // to devirtualize calls the magnitude of the bonus x number of call sites
+  // can lead to a huge code explosion when we prefer to inline 1000 instruction
+  // functions that have 10 call sites. This should be made a function of the
+  // estimated inline penalty/benefit + the indirect call bonus.
+  if (indirectCallBonus) Bonus += InlineConstants::IndirectCallBonus;
+  
   return Bonus;
 }
 

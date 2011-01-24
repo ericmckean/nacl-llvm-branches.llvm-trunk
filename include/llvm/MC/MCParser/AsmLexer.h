@@ -17,7 +17,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/MC/MCParser/MCAsmLexer.h"
 #include "llvm/MC/MCAsmInfo.h"
-#include "llvm/System/DataTypes.h"
+#include "llvm/Support/DataTypes.h"
 #include <string>
 #include <cassert>
 
@@ -60,6 +60,7 @@ private:
   AsmToken LexSlash();
   AsmToken LexLineComment();
   AsmToken LexDigit();
+  AsmToken LexSingleQuote();
   AsmToken LexQuote();
   AsmToken LexFloatLiteral();
 };

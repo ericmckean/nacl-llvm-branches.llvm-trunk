@@ -34,6 +34,10 @@ namespace llvm {
 
       Wrapper,      // Wrapper - A wrapper node for TargetConstantPool,
                     // TargetExternalSymbol, and TargetGlobalAddress.
+      WrapperDYN,   // WrapperDYN - A wrapper node for TargetGlobalAddress in
+                    // DYN mode.
+      WrapperPIC,   // WrapperPIC - A wrapper node for TargetGlobalAddress in
+                    // PIC mode.
       WrapperJT,    // WrapperJT - A wrapper node for TargetJumpTable
 
       CALL,         // Function call.
@@ -172,7 +176,12 @@ namespace llvm {
       // Vector OR with immediate
       VORRIMM,
       // Vector AND with NOT of immediate
-      VBICIMM
+      VBICIMM,
+
+      // Vector load N-element structure to all lanes:
+      VLD2DUP = ISD::FIRST_TARGET_MEMORY_OPCODE,
+      VLD3DUP,
+      VLD4DUP
     };
   }
 
@@ -251,6 +260,8 @@ namespace llvm {
                                                 const SelectionDAG &DAG,
                                                 unsigned Depth) const;
 
+
+    virtual bool ExpandInlineAsm(CallInst *CI) const;
 
     ConstraintType getConstraintType(const std::string &Constraint) const;
 
@@ -373,6 +384,10 @@ namespace llvm {
     SDValue LowerShiftRightParts(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerShiftLeftParts(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerFLT_ROUNDS_(SDValue Op, SelectionDAG &DAG) const;
+    SDValue LowerBUILD_VECTOR(SDValue Op, SelectionDAG &DAG, 
+                              const ARMSubtarget *ST) const;
+
+    SDValue ReconstructShuffle(SDValue Op, SelectionDAG &DAG) const;
 
     SDValue LowerCallResult(SDValue Chain, SDValue InFlag,
                             CallingConv::ID CallConv, bool isVarArg,
@@ -415,6 +430,8 @@ namespace llvm {
                   const SmallVectorImpl<ISD::OutputArg> &Outs,
                   const SmallVectorImpl<SDValue> &OutVals,
                   DebugLoc dl, SelectionDAG &DAG) const;
+
+    virtual bool isUsedByReturnOnly(SDNode *N) const;
 
     SDValue getARMCmp(SDValue LHS, SDValue RHS, ISD::CondCode CC,
                       SDValue &ARMcc, SelectionDAG &DAG, DebugLoc dl) const;

@@ -73,7 +73,8 @@ FunctionPass *createAggressiveDCEPass();
 // ScalarReplAggregates - Break up alloca's of aggregates into multiple allocas
 // if possible.
 //
-FunctionPass *createScalarReplAggregatesPass(signed Threshold = -1);
+FunctionPass *createScalarReplAggregatesPass(signed Threshold = -1,
+                                             bool UseDomTree = true);
 
 //===----------------------------------------------------------------------===//
 //
@@ -119,6 +120,12 @@ Pass *createLoopUnswitchPass(bool OptimizeForSize = false);
 
 //===----------------------------------------------------------------------===//
 //
+// LoopInstSimplify - This pass simplifies instructions in a loop's body.
+//
+Pass *createLoopInstSimplifyPass();
+
+//===----------------------------------------------------------------------===//
+//
 // LoopUnroll - This pass is a simple loop unrolling pass.
 //
 Pass *createLoopUnrollPass();
@@ -129,6 +136,12 @@ Pass *createLoopUnrollPass();
 //
 Pass *createLoopRotatePass();
 
+//===----------------------------------------------------------------------===//
+//
+// LoopIdiom - This pass recognizes and replaces idioms in loops.
+//
+Pass *createLoopIdiomPass();
+  
 //===----------------------------------------------------------------------===//
 //
 // PromoteMemoryToRegister - This pass is used to promote memory references to
@@ -254,6 +267,13 @@ extern char &LCSSAID;
 
 //===----------------------------------------------------------------------===//
 //
+// EarlyCSE - This pass performs a simple and fast CSE pass over the dominator
+// tree.
+//
+FunctionPass *createEarlyCSEPass();
+  
+//===----------------------------------------------------------------------===//
+//
 // GVN - This pass performs global value numbering and redundant load 
 // elimination cotemporaneously.
 //
@@ -321,6 +341,13 @@ Pass *createLowerAtomicPass();
 // ValuePropagation - Propagate CFG-derived value information
 //
 Pass *createCorrelatedValuePropagationPass();
+
+//===----------------------------------------------------------------------===//
+//
+// InstructionSimplifier - Remove redundant instructions.
+//
+FunctionPass *createInstructionSimplifierPass();
+extern char &InstructionSimplifierID;
 
 } // End llvm namespace
 

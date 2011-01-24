@@ -13,10 +13,10 @@
 
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetRegisterInfo.h"
-#include "llvm/Target/TargetFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/ADT/BitVector.h"
+#include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
 
@@ -30,7 +30,7 @@ TargetRegisterInfo::TargetRegisterInfo(const TargetRegisterDesc *D, unsigned NR,
     AliasesHash(aliases), AliasesHashSize(aliasessize),
     Desc(D), SubRegIndexNames(subregindexnames), NumRegs(NR),
     RegClassBegin(RCB), RegClassEnd(RCE) {
-  assert(NumRegs < FirstVirtualRegister &&
+  assert(isPhysicalRegister(NumRegs) &&
          "Target has too many physical registers!");
 
   CallFrameSetupOpcode   = CFSO;
@@ -38,6 +38,25 @@ TargetRegisterInfo::TargetRegisterInfo(const TargetRegisterDesc *D, unsigned NR,
 }
 
 TargetRegisterInfo::~TargetRegisterInfo() {}
+
+void PrintReg::print(raw_ostream &OS) const {
+  if (!Reg)
+    OS << "%noreg";
+  else if (TargetRegisterInfo::isStackSlot(Reg))
+    OS << "SS#" << TargetRegisterInfo::stackSlot2Index(Reg);
+  else if (TargetRegisterInfo::isVirtualRegister(Reg))
+    OS << "%vreg" << TargetRegisterInfo::virtReg2Index(Reg);
+  else if (TRI && Reg < TRI->getNumRegs())
+    OS << '%' << TRI->getName(Reg);
+  else
+    OS << "%physreg" << Reg;
+  if (SubIdx) {
+    if (TRI)
+      OS << ':' << TRI->getSubRegIndexName(SubIdx);
+    else
+      OS << ":sub(" << SubIdx << ')';
+  }
+}
 
 /// getMinimalPhysRegClass - Returns the Register Class of a physical
 /// register of the given type, picking the most sub register class of

@@ -125,7 +125,7 @@ namespace {
 // Create a bitmask with all callee saved registers for CPU or Floating Point 
 // registers. For CPU registers consider RA, GP and FP for saving if necessary.
 void MipsAsmPrinter::printSavedRegsBitmask(raw_ostream &O) {
-  const TargetFrameInfo *TFI = TM.getFrameInfo();
+  const TargetFrameLowering *TFI = TM.getFrameLowering();
   const TargetRegisterInfo *RI = TM.getRegisterInfo();
   const MipsFunctionInfo *MipsFI = MF->getInfo<MipsFunctionInfo>();
 
@@ -146,6 +146,8 @@ void MipsAsmPrinter::printSavedRegsBitmask(raw_ostream &O) {
   }
 
   // Return Address and Frame registers must also be set in CPUBitmask.
+  // FIXME: Do we really need hasFP() call here? When no FP is present SP is
+  // just returned -- will it be ok?
   if (TFI->hasFP(*MF))
     CPUBitmask |= (1 << MipsRegisterInfo::
                 getRegisterNumbering(RI->getFrameRegister(*MF)));
@@ -271,12 +273,16 @@ void MipsAsmPrinter::printOperand(const MachineInstr *MI, int opNum,
   switch(MO.getTargetFlags()) {
   case MipsII::MO_GPREL:    O << "%gp_rel("; break;
   case MipsII::MO_GOT_CALL: O << "%call16("; break;
-  case MipsII::MO_GOT:
-    if (MI->getOpcode() == Mips::LW)
+  case MipsII::MO_GOT: {
+    const MachineOperand &LastMO = MI->getOperand(opNum-1);
+    bool LastMOIsGP = LastMO.getType() == MachineOperand::MO_Register
+                      && LastMO.getReg() == Mips::GP;
+    if (MI->getOpcode() == Mips::LW || LastMOIsGP)
       O << "%got(";
     else
       O << "%lo(";
     break;
+  }
   case MipsII::MO_ABS_HILO:
     if (MI->getOpcode() == Mips::LUi)
       O << "%hi(";

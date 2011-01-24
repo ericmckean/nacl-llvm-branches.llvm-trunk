@@ -148,10 +148,7 @@ namespace {
       AU.addPreserved<LiveVariables>();
       AU.addPreservedID(MachineLoopInfoID);
       AU.addPreservedID(MachineDominatorsID);
-      if (StrongPHIElim)
-        AU.addPreservedID(StrongPHIEliminationID);
-      else
-        AU.addPreservedID(PHIEliminationID);
+      AU.addPreservedID(PHIEliminationID);
       MachineFunctionPass::getAnalysisUsage(AU);
     }
 
@@ -554,7 +551,8 @@ TwoAddressInstructionPass::isProfitableToCommute(unsigned regB, unsigned regC,
   unsigned ToRegB = getMappedReg(regB, DstRegMap);
   unsigned ToRegC = getMappedReg(regC, DstRegMap);
   if (!regsAreCompatible(FromRegB, ToRegB, TRI) &&
-      (regsAreCompatible(FromRegB, ToRegC, TRI) ||
+      ((!FromRegC && !ToRegC) ||
+       regsAreCompatible(FromRegB, ToRegC, TRI) ||
        regsAreCompatible(FromRegC, ToRegB, TRI)))
     return true;
 
@@ -745,7 +743,7 @@ static bool isSafeToDelete(MachineInstr *MI,
   const TargetInstrDesc &TID = MI->getDesc();
   if (TID.mayStore() || TID.isCall())
     return false;
-  if (TID.isTerminator() || TID.hasUnmodeledSideEffects())
+  if (TID.isTerminator() || MI->hasUnmodeledSideEffects())
     return false;
 
   for (unsigned i = 0, e = MI->getNumOperands(); i != e; ++i) {
@@ -956,7 +954,7 @@ TryInstructionTransform(MachineBasicBlock::iterator &mi,
           if (LV) {
             for (unsigned i = 0, e = mi->getNumOperands(); i != e; ++i) {
               MachineOperand &MO = mi->getOperand(i);
-              if (MO.isReg() && MO.getReg() != 0 &&
+              if (MO.isReg() && 
                   TargetRegisterInfo::isVirtualRegister(MO.getReg())) {
                 if (MO.isUse()) {
                   if (MO.isKill()) {
@@ -1018,8 +1016,7 @@ bool TwoAddressInstructionPass::runOnMachineFunction(MachineFunction &MF) {
         << MF.getFunction()->getName() << '\n');
 
   // ReMatRegs - Keep track of the registers whose def's are remat'ed.
-  BitVector ReMatRegs;
-  ReMatRegs.resize(MRI->getLastVirtReg()+1);
+  BitVector ReMatRegs(MRI->getNumVirtRegs());
 
   typedef DenseMap<unsigned, SmallVector<std::pair<unsigned, unsigned>, 4> >
     TiedOperandMap;
@@ -1148,7 +1145,7 @@ bool TwoAddressInstructionPass::runOnMachineFunction(MachineFunction &MF) {
             DEBUG(dbgs() << "2addr: REMATTING : " << *DefMI << "\n");
             unsigned regASubIdx = mi->getOperand(DstIdx).getSubReg();
             TII->reMaterialize(*mbbi, mi, regA, regASubIdx, DefMI, *TRI);
-            ReMatRegs.set(regB);
+            ReMatRegs.set(TargetRegisterInfo::virtReg2Index(regB));
             ++NumReMats;
           } else {
             BuildMI(*mbbi, mi, mi->getDebugLoc(), TII->get(TargetOpcode::COPY),
@@ -1234,13 +1231,12 @@ bool TwoAddressInstructionPass::runOnMachineFunction(MachineFunction &MF) {
   }
 
   // Some remat'ed instructions are dead.
-  int VReg = ReMatRegs.find_first();
-  while (VReg != -1) {
+  for (int i = ReMatRegs.find_first(); i != -1; i = ReMatRegs.find_next(i)) {
+    unsigned VReg = TargetRegisterInfo::index2VirtReg(i);
     if (MRI->use_nodbg_empty(VReg)) {
       MachineInstr *DefMI = MRI->getVRegDef(VReg);
       DefMI->eraseFromParent();
     }
-    VReg = ReMatRegs.find_next(VReg);
   }
 
   // Eliminate REG_SEQUENCE instructions. Their whole purpose was to preseve
@@ -1416,6 +1412,7 @@ bool TwoAddressInstructionPass::EliminateRegSequences() {
     SmallSet<unsigned, 4> Seen;
     for (unsigned i = 1, e = MI->getNumOperands(); i < e; i += 2) {
       unsigned SrcReg = MI->getOperand(i).getReg();
+      unsigned SubIdx = MI->getOperand(i+1).getImm();
       if (MI->getOperand(i).getSubReg() ||
           TargetRegisterInfo::isPhysicalRegister(SrcReg)) {
         DEBUG(dbgs() << "Illegal REG_SEQUENCE instruction:" << *MI);
@@ -1435,7 +1432,9 @@ bool TwoAddressInstructionPass::EliminateRegSequences() {
 
       bool isKill = MI->getOperand(i).isKill();
       if (!Seen.insert(SrcReg) || MI->getParent() != DefMI->getParent() ||
-          !isKill || HasOtherRegSequenceUses(SrcReg, MI, MRI)) {
+          !isKill || HasOtherRegSequenceUses(SrcReg, MI, MRI) ||
+          !TRI->getMatchingSuperRegClass(MRI->getRegClass(DstReg),
+                                         MRI->getRegClass(SrcReg), SubIdx)) {
         // REG_SEQUENCE cannot have duplicated operands, add a copy.
         // Also add an copy if the source is live-in the block. We don't want
         // to end up with a partial-redef of a livein, e.g.
@@ -1464,7 +1463,7 @@ bool TwoAddressInstructionPass::EliminateRegSequences() {
         MachineBasicBlock::iterator InsertLoc = MI;
         MachineInstr *CopyMI = BuildMI(*MI->getParent(), InsertLoc,
                                 MI->getDebugLoc(), TII->get(TargetOpcode::COPY))
-            .addReg(DstReg, RegState::Define, MI->getOperand(i+1).getImm())
+            .addReg(DstReg, RegState::Define, SubIdx)
             .addReg(SrcReg, getKillRegState(isKill));
         MI->getOperand(i).setReg(0);
         if (LV && isKill)

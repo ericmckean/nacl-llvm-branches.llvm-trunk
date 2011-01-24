@@ -11,8 +11,15 @@ set(CMAKE_MODULE_PATH
   )
 
 set(PACKAGE_VERSION "2.9")
+
 include(VersionFromVCS)
-add_version_info_from_vcs(PACKAGE_VERSION)
+
+option(LLVM_APPEND_VC_REV
+  "Append the version control system revision id to LLVM version" OFF)
+
+if( LLVM_APPEND_VC_REV )
+  add_version_info_from_vcs(PACKAGE_VERSION)
+endif()
 
 set(PACKAGE_NAME llvm)
 set(PACKAGE_STRING "${PACKAGE_NAME} ${PACKAGE_VERSION}")
@@ -25,6 +32,20 @@ Please create a directory and run cmake from there, passing the path
 to this source directory as the last argument.
 This process created the file `CMakeCache.txt' and the directory `CMakeFiles'.
 Please delete them.")
+endif()
+
+# Run-time build mode; It is used for unittests.
+if(MSVC_IDE)
+  # Expect "$(Configuration)", "$(OutDir)", etc.
+  # It is expanded by msbuild or similar.
+  set(RUNTIME_BUILD_MODE "${CMAKE_CFG_INTDIR}")
+elseif(NOT CMAKE_BUILD_TYPE STREQUAL "")
+  # Expect "Release" "Debug", etc.
+  # Or unittests could not run.
+  set(RUNTIME_BUILD_MODE ${CMAKE_BUILD_TYPE})
+else()
+  # It might be "."
+  set(RUNTIME_BUILD_MODE "${CMAKE_CFG_INTDIR}")
 endif()
 
 string(TOUPPER "${CMAKE_BUILD_TYPE}" uppercase_CMAKE_BUILD_TYPE)
@@ -82,6 +103,20 @@ endif( MSVC )
 
 set(CLANG_RESOURCE_DIR "" CACHE STRING
   "Relative directory from the Clang binary to its resource files.")
+
+option(LLVM_ENABLE_CBE_PRINTF_A "Set to ON if CBE is enabled for printf %a output" ON)
+if(LLVM_ENABLE_CBE_PRINTF_A)
+  set(ENABLE_CBE_PRINTF_A 1)
+endif()
+
+option(LLVM_ENABLE_TIMESTAMPS "Enable embedding timestamp information in build" ON)
+if(LLVM_ENABLE_TIMESTAMPS)
+  set(ENABLE_TIMESTAMPS 1)
+endif()
+
+option(LLVM_ENABLE_FFI "Use libffi to call external functions from the interpreter" OFF)
+set(FFI_LIBRARY_DIR "" CACHE PATH "Additional directory, where CMake should search for libffi.so")
+set(FFI_INCLUDE_DIR "" CACHE PATH "Additional directory, where CMake should search for ffi.h or ffi/ffi.h")
 
 set(C_INCLUDE_DIRS "" CACHE STRING
   "Colon separated list of directories clang will search for headers.")
@@ -174,26 +209,29 @@ else(WIN32)
   endif(UNIX)
 endif(WIN32)
 
-include(config-ix)
-
 option(LLVM_ENABLE_PIC "Build Position-Independent Code" ON)
 
-set(ENABLE_PIC 0)
 if( LLVM_ENABLE_PIC )
- if( XCODE )
-   # Xcode has -mdynamic-no-pic on by default, which overrides -fPIC. I don't
-   # know how to disable this, so just force ENABLE_PIC off for now.
-   message(STATUS "Warning: -fPIC not supported with Xcode.")
- else( XCODE )
-   if( SUPPORTS_FPIC_FLAG )
+  if( XCODE )
+    # Xcode has -mdynamic-no-pic on by default, which overrides -fPIC. I don't
+    # know how to disable this, so just force ENABLE_PIC off for now.
+    message(WARNING "-fPIC not supported with Xcode.")
+  elseif( WIN32 )
+    # On Windows all code is PIC. MinGW warns if -fPIC is used.
+  else()
+    include(CheckCXXCompilerFlag)
+    check_cxx_compiler_flag("-fPIC" SUPPORTS_FPIC_FLAG)
+    if( SUPPORTS_FPIC_FLAG )
       message(STATUS "Building with -fPIC")
-      add_llvm_definitions(-fPIC)
-      set(ENABLE_PIC 1)
-   else( SUPPORTS_FPIC_FLAG )
-      message(STATUS "Warning: -fPIC not supported.")
-   endif()
- endif()
+      set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
+      set(CMAKE_C_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
+    else( SUPPORTS_FPIC_FLAG )
+      message(WARNING "-fPIC not supported.")
+    endif()
+  endif()
 endif()
+
+include(config-ix)
 
 set( CMAKE_RUNTIME_OUTPUT_DIRECTORY ${LLVM_TOOLS_BINARY_DIR} )
 set( CMAKE_LIBRARY_OUTPUT_DIRECTORY ${LLVM_BINARY_DIR}/lib )
@@ -228,14 +266,34 @@ endif( CMAKE_SIZEOF_VOID_P EQUAL 8 AND NOT WIN32 )
 if( MSVC )
   include(ChooseMSVCCRT)
 
-  add_llvm_definitions( -D_CRT_SECURE_NO_DEPRECATE -D_CRT_SECURE_NO_WARNINGS )
-  add_llvm_definitions( -D_SCL_SECURE_NO_WARNINGS -DCRT_NONSTDC_NO_WARNINGS )
-  add_llvm_definitions( -D_SCL_SECURE_NO_DEPRECATE )
-  add_llvm_definitions( -wd4146 -wd4503 -wd4996 -wd4800 -wd4244 -wd4624 )
-  add_llvm_definitions( -wd4355 -wd4715 -wd4180 -wd4345 -wd4224 -wd4267 -wd4291 )
+  # Add definitions that make MSVC much less annoying.
+  add_llvm_definitions(
+    # For some reason MS wants to deprecate a bunch of standard functions...
+    -D_CRT_SECURE_NO_DEPRECATE
+    -D_CRT_SECURE_NO_WARNINGS
+    -D_CRT_NONSTDC_NO_DEPRECATE
+    -D_CRT_NONSTDC_NO_WARNINGS
+    -D_SCL_SECURE_NO_DEPRECATE
+    -D_SCL_SECURE_NO_WARNINGS
 
-  # Suppress 'new behavior: elements of array 'array' will be default initialized'
-  add_llvm_definitions( -wd4351 )
+    -wd4146 # Suppress 'unary minus operator applied to unsigned type, result still unsigned'
+    -wd4180 # Suppress 'qualifier applied to function type has no meaning; ignored'
+    -wd4224 # Suppress 'nonstandard extension used : formal parameter 'identifier' was previously defined as a type'
+    -wd4244 # Suppress ''argument' : conversion from 'type1' to 'type2', possible loss of data'
+    -wd4267 # Suppress ''var' : conversion from 'size_t' to 'type', possible loss of data'
+    -wd4275 # Suppress 'An exported class was derived from a class that was not exported.'
+    -wd4291 # Suppress ''declaration' : no matching operator delete found; memory will not be freed if initialization throws an exception'
+    -wd4345 # Suppress 'behavior change: an object of POD type constructed with an initializer of the form () will be default-initialized'
+    -wd4351 # Suppress 'new behavior: elements of array 'array' will be default initialized'
+    -wd4355 # Suppress ''this' : used in base member initializer list'
+    -wd4503 # Suppress ''identifier' : decorated name length exceeded, name was truncated'
+    -wd4624 # Suppress ''derived class' : destructor could not be generated because a base class destructor is inaccessible'
+    -wd4715 # Suppress ''function' : not all control paths return a value'
+    -wd4800 # Suppress ''type' : forcing value to bool 'true' or 'false' (performance warning)'
+    -wd4065 # Suppress 'switch statement contains 'default' but no 'case' labels'
+
+    -w14062 # Promote "enumerator in switch of enum is not handled" to level 1 warning.
+    )
 
   # Enable warnings
   if (LLVM_ENABLE_WARNINGS)
@@ -262,7 +320,7 @@ endif( MSVC )
 include_directories( ${LLVM_BINARY_DIR}/include ${LLVM_MAIN_INCLUDE_DIR})
 
 if( ${CMAKE_SYSTEM_NAME} MATCHES SunOS )
-   SET(CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS} "-include llvm/System/Solaris.h")
+   SET(CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS} "-include llvm/Support/Solaris.h")
 endif( ${CMAKE_SYSTEM_NAME} MATCHES SunOS )
 
 include(AddLLVM)
@@ -277,10 +335,15 @@ if( MINGW )
   set(CMAKE_C_STANDARD_LIBRARIES "${CMAKE_C_STANDARD_LIBRARIES}${LLVM_SYSTEM_LIBS}")
 endif()
 
-add_subdirectory(lib/Support)
-add_subdirectory(lib/System)
+if( MINGW )
+  # People report that -O3 is unreliable on MinGW. The traditional
+  # build also uses -O2 for that reason:
+  llvm_replace_compiler_option(CMAKE_CXX_FLAGS_RELEASE "-O3" "-O2")
+endif()
 
-# Everything else depends on Support and System:
+add_subdirectory(lib/Support)
+
+# Everything else depends on Support:
 set(LLVM_COMMON_DEPENDS ${LLVM_COMMON_DEPENDS} ${LLVM_LIBS} )
 
 set(LLVM_TABLEGEN "tblgen" CACHE
@@ -318,6 +381,7 @@ add_subdirectory(lib/MC/MCDisassembler)
 add_subdirectory(lib/Object)
 
 add_subdirectory(utils/FileCheck)
+add_subdirectory(utils/FileUpdate)
 add_subdirectory(utils/count)
 add_subdirectory(utils/not)
 add_subdirectory(utils/llvm-lit)
@@ -332,7 +396,7 @@ foreach(t ${LLVM_TARGETS_TO_BUILD})
   set( td ${LLVM_MAIN_SRC_DIR}/lib/Target/${t} )
   file(GLOB asmp_file "${td}/*AsmPrinter.cpp")
   if( asmp_file )
-    set(LLVM_ENUM_ASM_PRINTERS 
+    set(LLVM_ENUM_ASM_PRINTERS
       "${LLVM_ENUM_ASM_PRINTERS}LLVM_ASM_PRINTER(${t})\n")
   endif()
   if( EXISTS ${td}/InstPrinter/CMakeLists.txt )
@@ -340,7 +404,7 @@ foreach(t ${LLVM_TARGETS_TO_BUILD})
   endif()
   if( EXISTS ${td}/AsmParser/CMakeLists.txt )
     add_subdirectory(lib/Target/${t}/AsmParser)
-    set(LLVM_ENUM_ASM_PARSERS 
+    set(LLVM_ENUM_ASM_PARSERS
       "${LLVM_ENUM_ASM_PARSERS}LLVM_ASM_PARSER(${t})\n")
   endif()
   if( EXISTS ${td}/Disassembler/CMakeLists.txt )
