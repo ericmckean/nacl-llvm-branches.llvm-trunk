@@ -28,6 +28,7 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/system_error.h"
 #include <cassert>
 #include <cstdlib>
 #include <cstring>
@@ -36,7 +37,6 @@ using namespace llvm;
 
 void llvm::initializeCore(PassRegistry &Registry) {
   initializeDominatorTreePass(Registry);
-  initializeDominanceFrontierPass(Registry);
   initializePrintModulePassPass(Registry);
   initializePrintFunctionPassPass(Registry);
   initializeVerifierPass(Registry);
@@ -135,6 +135,12 @@ void LLVMDumpModule(LLVMModuleRef M) {
 /*--.. Operations on inline assembler ......................................--*/
 void LLVMSetModuleInlineAsm(LLVMModuleRef M, const char *Asm) {
   unwrap(M)->setModuleInlineAsm(StringRef(Asm));
+}
+
+
+/*--.. Operations on module contexts ......................................--*/
+LLVMContextRef LLVMGetModuleContext(LLVMModuleRef M) {
+  return wrap(&unwrap(M)->getContext());
 }
 
 
@@ -2214,25 +2220,27 @@ LLVMBool LLVMCreateMemoryBufferWithContentsOfFile(
     LLVMMemoryBufferRef *OutMemBuf,
     char **OutMessage) {
 
-  std::string Error;
-  if (MemoryBuffer *MB = MemoryBuffer::getFile(Path, &Error)) {
-    *OutMemBuf = wrap(MB);
+  OwningPtr<MemoryBuffer> MB;
+  error_code ec;
+  if (!(ec = MemoryBuffer::getFile(Path, MB))) {
+    *OutMemBuf = wrap(MB.take());
     return 0;
   }
-  
-  *OutMessage = strdup(Error.c_str());
+
+  *OutMessage = strdup(ec.message().c_str());
   return 1;
 }
 
 LLVMBool LLVMCreateMemoryBufferWithSTDIN(LLVMMemoryBufferRef *OutMemBuf,
                                          char **OutMessage) {
-  std::string Error;
-  if (MemoryBuffer *MB = MemoryBuffer::getSTDIN(&Error)) {
-    *OutMemBuf = wrap(MB);
+  OwningPtr<MemoryBuffer> MB;
+  error_code ec;
+  if (!(ec = MemoryBuffer::getSTDIN(MB))) {
+    *OutMemBuf = wrap(MB.take());
     return 0;
   }
 
-  *OutMessage = strdup(Error.c_str());
+  *OutMessage = strdup(ec.message().c_str());
   return 1;
 }
 

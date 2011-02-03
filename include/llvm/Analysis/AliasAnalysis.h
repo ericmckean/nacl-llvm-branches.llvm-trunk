@@ -49,6 +49,7 @@ class TargetData;
 class Pass;
 class AnalysisUsage;
 class MemTransferInst;
+class MemIntrinsic;
 
 class AliasAnalysis {
 protected:
@@ -107,8 +108,7 @@ public:
     /// the location, or null if there is no known unique tag.
     const MDNode *TBAATag;
 
-    explicit Location(const Value *P = 0,
-                      uint64_t S = UnknownSize,
+    explicit Location(const Value *P = 0, uint64_t S = UnknownSize,
                       const MDNode *N = 0)
       : Ptr(P), Size(S), TBAATag(N) {}
 
@@ -137,7 +137,7 @@ public:
   Location getLocation(const StoreInst *SI);
   Location getLocation(const VAArgInst *VI);
   static Location getLocationForSource(const MemTransferInst *MTI);
-  static Location getLocationForDest(const MemTransferInst *MTI);
+  static Location getLocationForDest(const MemIntrinsic *MI);
 
   /// Alias analysis result - Either we know for sure that it does not alias, we
   /// know for sure it must alias, or we don't know anything: The two pointers
@@ -150,8 +150,9 @@ public:
   ///
   enum AliasResult {
     NoAlias = 0,        ///< No dependencies.
-    MayAlias = 1,       ///< Anything goes.
-    MustAlias = 2       ///< Pointers are equal.
+    MayAlias,           ///< Anything goes.
+    PartialAlias,       ///< Pointers differ, but pointees overlap.
+    MustAlias           ///< Pointers are equal.
   };
 
   /// alias - The main low level interface to the alias analysis implementation.
@@ -182,7 +183,17 @@ public:
                  const Value *V2, uint64_t V2Size) {
     return isNoAlias(Location(V1, V1Size), Location(V2, V2Size));
   }
+  
+  /// isMustAlias - A convenience wrapper.
+  bool isMustAlias(const Location &LocA, const Location &LocB) {
+    return alias(LocA, LocB) == MustAlias;
+  }
 
+  /// isMustAlias - A convenience wrapper.
+  bool isMustAlias(const Value *V1, const Value *V2) {
+    return alias(V1, 1, V2, 1) == MustAlias;
+  }
+  
   /// pointsToConstantMemory - If the specified memory location is
   /// known to be constant, return true. If OrLocal is true and the
   /// specified memory location is known to be "local" (derived from
@@ -391,7 +402,7 @@ public:
   ModRefResult getModRefInfo(const StoreInst *S, const Location &Loc);
 
   /// getModRefInfo (for stores) - A convenience wrapper.
-  ModRefResult getModRefInfo(const StoreInst *S, const Value *P, uint64_t Size) {
+  ModRefResult getModRefInfo(const StoreInst *S, const Value *P, uint64_t Size){
     return getModRefInfo(S, Location(P, Size));
   }
 
@@ -400,7 +411,7 @@ public:
   ModRefResult getModRefInfo(const VAArgInst* I, const Location &Loc);
 
   /// getModRefInfo (for va_args) - A convenience wrapper.
-  ModRefResult getModRefInfo(const VAArgInst* I, const Value* P, uint64_t Size) {
+  ModRefResult getModRefInfo(const VAArgInst* I, const Value* P, uint64_t Size){
     return getModRefInfo(I, Location(P, Size));
   }
 
@@ -457,6 +468,17 @@ public:
   /// value, it should ignore the request.
   ///
   virtual void copyValue(Value *From, Value *To);
+
+  /// addEscapingUse - This method should be used whenever an escaping use is
+  /// added to a pointer value.  Analysis implementations may either return
+  /// conservative responses for that value in the future, or may recompute
+  /// some or all internal state to continue providing precise responses.
+  ///
+  /// Escaping uses are considered by anything _except_ the following:
+  ///  - GEPs or bitcasts of the pointer
+  ///  - Loads through the pointer
+  ///  - Stores through (but not of) the pointer
+  virtual void addEscapingUse(Use &U);
 
   /// replaceWithNewValue - This method is the obvious combination of the two
   /// above, and it provided as a helper to simplify client code.

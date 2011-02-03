@@ -302,7 +302,7 @@ def GR8 : RegisterClass<"X86", [i8],  8,
     GR8Class::iterator
     GR8Class::allocation_order_end(const MachineFunction &MF) const {
       const TargetMachine &TM = MF.getTarget();
-      const TargetFrameInfo *TFI = TM.getFrameInfo();
+      const TargetFrameLowering *TFI = TM.getFrameLowering();
       const X86Subtarget &Subtarget = TM.getSubtarget<X86Subtarget>();
       const X86MachineFunctionInfo *MFI = MF.getInfo<X86MachineFunctionInfo>();
       // Does the function dedicate RBP / EBP to being a frame ptr?
@@ -347,7 +347,7 @@ def GR16 : RegisterClass<"X86", [i16], 16,
     GR16Class::iterator
     GR16Class::allocation_order_end(const MachineFunction &MF) const {
       const TargetMachine &TM = MF.getTarget();
-      const TargetFrameInfo *TFI = TM.getFrameInfo();
+      const TargetFrameLowering *TFI = TM.getFrameLowering();
       const X86Subtarget &Subtarget = TM.getSubtarget<X86Subtarget>();
       const X86MachineFunctionInfo *MFI = MF.getInfo<X86MachineFunctionInfo>();
       if (Subtarget.is64Bit()) {
@@ -399,7 +399,7 @@ def GR32 : RegisterClass<"X86", [i32], 32,
     GR32Class::iterator
     GR32Class::allocation_order_end(const MachineFunction &MF) const {
       const TargetMachine &TM = MF.getTarget();
-      const TargetFrameInfo *TFI = TM.getFrameInfo();
+      const TargetFrameLowering *TFI = TM.getFrameLowering();
       const X86Subtarget &Subtarget = TM.getSubtarget<X86Subtarget>();
       const X86MachineFunctionInfo *MFI = MF.getInfo<X86MachineFunctionInfo>();
       if (Subtarget.is64Bit()) {
@@ -439,7 +439,7 @@ def GR64 : RegisterClass<"X86", [i64], 64,
     GR64Class::iterator
     GR64Class::allocation_order_end(const MachineFunction &MF) const {
       const TargetMachine &TM = MF.getTarget();
-      const TargetFrameInfo *TFI = TM.getFrameInfo();
+      const TargetFrameLowering *TFI = TM.getFrameLowering();
       const X86Subtarget &Subtarget = TM.getSubtarget<X86Subtarget>();
       const X86MachineFunctionInfo *MFI = MF.getInfo<X86MachineFunctionInfo>();
       if (!Subtarget.is64Bit())
@@ -550,7 +550,7 @@ def GR16_NOREX : RegisterClass<"X86", [i16], 16,
     GR16_NOREXClass::iterator
     GR16_NOREXClass::allocation_order_end(const MachineFunction &MF) const {
       const TargetMachine &TM = MF.getTarget();
-      const TargetFrameInfo *TFI = TM.getFrameInfo();
+      const TargetFrameLowering *TFI = TM.getFrameLowering();
       const X86MachineFunctionInfo *MFI = MF.getInfo<X86MachineFunctionInfo>();
       // Does the function dedicate RBP / EBP to being a frame ptr?
       if (TFI->hasFP(MF) || MFI->getReserveFP())
@@ -574,7 +574,7 @@ def GR32_NOREX : RegisterClass<"X86", [i32], 32,
     GR32_NOREXClass::iterator
     GR32_NOREXClass::allocation_order_end(const MachineFunction &MF) const {
       const TargetMachine &TM = MF.getTarget();
-      const TargetFrameInfo *TFI = TM.getFrameInfo();
+      const TargetFrameLowering *TFI = TM.getFrameLowering();
       const X86MachineFunctionInfo *MFI = MF.getInfo<X86MachineFunctionInfo>();
       // Does the function dedicate RBP / EBP to being a frame ptr?
       if (TFI->hasFP(MF) || MFI->getReserveFP())
@@ -599,7 +599,7 @@ def GR64_NOREX : RegisterClass<"X86", [i64], 64,
     GR64_NOREXClass::iterator
     GR64_NOREXClass::allocation_order_end(const MachineFunction &MF) const {
       const TargetMachine &TM = MF.getTarget();
-      const TargetFrameInfo *TFI = TM.getFrameInfo();
+      const TargetFrameLowering *TFI = TM.getFrameLowering();
       const X86MachineFunctionInfo *MFI = MF.getInfo<X86MachineFunctionInfo>();
       // Does the function dedicate RBP to being a frame ptr?
       if (TFI->hasFP(MF) || MFI->getReserveFP())
@@ -641,7 +641,7 @@ def GR32_NOSP : RegisterClass<"X86", [i32], 32,
     GR32_NOSPClass::iterator
     GR32_NOSPClass::allocation_order_end(const MachineFunction &MF) const {
       const TargetMachine &TM = MF.getTarget();
-      const TargetFrameInfo *TFI = TM.getFrameInfo();
+      const TargetFrameLowering *TFI = TM.getFrameLowering();
       const X86Subtarget &Subtarget = TM.getSubtarget<X86Subtarget>();
       const X86MachineFunctionInfo *MFI = MF.getInfo<X86MachineFunctionInfo>();
       if (Subtarget.is64Bit()) {
@@ -679,7 +679,7 @@ def GR64_NOSP : RegisterClass<"X86", [i64], 64,
     GR64_NOSPClass::iterator
     GR64_NOSPClass::allocation_order_end(const MachineFunction &MF) const {
       const TargetMachine &TM = MF.getTarget();
-      const TargetFrameInfo *TFI = TM.getFrameInfo();
+      const TargetFrameLowering *TFI = TM.getFrameLowering();
       const X86Subtarget &Subtarget = TM.getSubtarget<X86Subtarget>();
       const X86MachineFunctionInfo *MFI = MF.getInfo<X86MachineFunctionInfo>();
       if (!Subtarget.is64Bit())
@@ -707,7 +707,7 @@ def GR64_NOREX_NOSP : RegisterClass<"X86", [i64], 64,
     GR64_NOREX_NOSPClass::allocation_order_end(const MachineFunction &MF) const
   {
       const TargetMachine &TM = MF.getTarget();
-      const TargetFrameInfo *TFI = TM.getFrameInfo();
+      const TargetFrameLowering *TFI = TM.getFrameLowering();
       const X86MachineFunctionInfo *MFI = MF.getInfo<X86MachineFunctionInfo>();
       // Does the function dedicate RBP to being a frame ptr?
       if (TFI->hasFP(MF) || MFI->getReserveFP())

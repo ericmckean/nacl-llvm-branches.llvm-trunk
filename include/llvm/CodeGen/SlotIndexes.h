@@ -545,18 +545,22 @@ namespace llvm {
       return nextNonNull;
     }
 
-    /// Returns the first index in the given basic block.
-    SlotIndex getMBBStartIdx(const MachineBasicBlock *mbb) const {
+    /// Return the (start,end) range of the given basic block.
+    const std::pair<SlotIndex, SlotIndex> &
+    getMBBRange(const MachineBasicBlock *mbb) const {
       MBB2IdxMap::const_iterator itr = mbb2IdxMap.find(mbb);
       assert(itr != mbb2IdxMap.end() && "MBB not found in maps.");
-      return itr->second.first;
+      return itr->second;
+    }
+
+    /// Returns the first index in the given basic block.
+    SlotIndex getMBBStartIdx(const MachineBasicBlock *mbb) const {
+      return getMBBRange(mbb).first;
     }
 
     /// Returns the last index in the given basic block.
     SlotIndex getMBBEndIdx(const MachineBasicBlock *mbb) const {
-      MBB2IdxMap::const_iterator itr = mbb2IdxMap.find(mbb);
-      assert(itr != mbb2IdxMap.end() && "MBB not found in maps.");
-      return itr->second.second;
+      return getMBBRange(mbb).second;
     }
 
     /// Returns the basic block which the given index falls in.
@@ -621,6 +625,9 @@ namespace llvm {
     SlotIndex insertMachineInstrInMaps(MachineInstr *mi,
                                         bool *deferredRenumber = 0) {
       assert(mi2iMap.find(mi) == mi2iMap.end() && "Instr already indexed.");
+      // Numbering DBG_VALUE instructions could cause code generation to be
+      // affected by debug information.
+      assert(!mi->isDebugValue() && "Cannot number DBG_VALUE instructions.");
 
       MachineBasicBlock *mbb = mi->getParent();
 
@@ -772,6 +779,20 @@ namespace llvm {
 
   };
 
+
+  // Specialize IntervalMapInfo for half-open slot index intervals.
+  template <typename> struct IntervalMapInfo;
+  template <> struct IntervalMapInfo<SlotIndex> {
+    static inline bool startLess(const SlotIndex &x, const SlotIndex &a) {
+      return x < a;
+    }
+    static inline bool stopLess(const SlotIndex &b, const SlotIndex &x) {
+      return b <= x;
+    }
+    static inline bool adjacent(const SlotIndex &a, const SlotIndex &b) {
+      return a == b;
+    }
+  };
 
 }
 

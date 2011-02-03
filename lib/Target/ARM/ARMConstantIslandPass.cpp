@@ -1,4 +1,4 @@
-//===-- ARMConstantIslandPass.cpp - ARM constant islands --------*- C++ -*-===//
+//===-- ARMConstantIslandPass.cpp - ARM constant islands ------------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -367,7 +367,7 @@ bool ARMConstantIslands::runOnMachineFunction(MachineFunction &MF) {
   }
 
   /// The next UID to take is the first unused one.
-  AFI->initConstPoolEntryUId(CPEMIs.size());
+  AFI->initPICLabelUId(CPEMIs.size());
 
   // Do the initial scan of the function, building up information about the
   // sizes of each block, the location of all the water, and finding all of the
@@ -378,7 +378,7 @@ bool ARMConstantIslands::runOnMachineFunction(MachineFunction &MF) {
 
 
   /// Remove dead constant pool entries.
-  RemoveUnusedCPEntries();
+  MadeChange |= RemoveUnusedCPEntries();
 
   // Iteratively place constant pool entries and fix up branches until there
   // is no change.
@@ -593,9 +593,8 @@ unsigned ARMConstantIslands::GetFudge(const MachineInstr* I,
     break;
     }
   case ARM::BX:
-  case ARM::BXr9:
+  case ARM::BXr9_CALL:
   case ARM::BX_RET:
-  case ARM::BRIND:
     // cannot be in the last slot
     if ( (offset + fudge) % kBundleSize == 0xc) fudge += 4;
     // one mask
@@ -653,7 +652,7 @@ void ARMConstantIslands::InitialFunctionScan(MachineFunction &MF,
         HasInlineAsm = true;
   }
 
-  // Now go back through the instructions and build up our data structures
+  // Now go back through the instructions and build up our data structures.
   unsigned Offset = 0;
   for (MachineFunction::iterator MBBI = MF.begin(), E = MF.end();
        MBBI != E; ++MBBI) {
@@ -785,13 +784,16 @@ void ARMConstantIslands::InitialFunctionScan(MachineFunction &MF,
 
           case ARM::LDRi12:
           case ARM::LDRcp:
-          case ARM::t2LDRpci:
+          case ARM::t2LDRi12:
+          case ARM::t2LDRHi12:
+          case ARM::t2LDRBi12:
+          case ARM::t2LDRSHi12:
+          case ARM::t2LDRSBi12:
             Bits = 12;  // +-offset_12
             NegOk = true;
             break;
 
           case ARM::tLDRpci:
-          case ARM::tLDRcp:
             Bits = 8;
             Scale = 4;  // +(offset_8*4)
             break;
@@ -1468,7 +1470,7 @@ bool ARMConstantIslands::HandleConstantPoolUser(MachineFunction &MF,
 
   // No existing clone of this CPE is within range.
   // We will be generating a new clone.  Get a UID for it.
-  unsigned ID = AFI->createConstPoolEntryUId();
+  unsigned ID = AFI->createPICLabelUId();
 
   // Look for water where we can place this CPE.
   MachineBasicBlock *NewIsland = MF.CreateMachineBasicBlock();
@@ -1877,7 +1879,7 @@ bool ARMConstantIslands::OptimizeThumb2Branches(MachineFunction &MF) {
     unsigned DestOffset = BBOffsets[DestBB->getNumber()];
     if (BrOffset < DestOffset && (DestOffset - BrOffset) <= 126) {
       MachineBasicBlock::iterator CmpMI = Br.MI; --CmpMI;
-      if (CmpMI->getOpcode() == ARM::tCMPzi8) {
+      if (CmpMI->getOpcode() == ARM::tCMPi8) {
         unsigned Reg = CmpMI->getOperand(0).getReg();
         Pred = llvm::getInstrPredicate(CmpMI, PredReg);
         if (Pred == ARMCC::AL &&
@@ -1999,7 +2001,7 @@ bool ARMConstantIslands::OptimizeThumb2JumpTables(MachineFunction &MF) {
       if (!OptOk)
         continue;
 
-      unsigned Opc = ByteOk ? ARM::t2TBB : ARM::t2TBH;
+      unsigned Opc = ByteOk ? ARM::t2TBB_JT : ARM::t2TBH_JT;
       MachineInstr *NewJTMI = BuildMI(MBB, MI->getDebugLoc(), TII->get(Opc))
         .addReg(IdxReg, getKillRegState(IdxRegKill))
         .addJumpTableIndex(JTI, JTOP.getTargetFlags())

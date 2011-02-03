@@ -504,6 +504,10 @@ fdivrp %st(1), %st(0) // CHECK: encoding: [0xde,0xf9]
 fsubrp %ST(0), %ST(1) // CHECK: encoding: [0xde,0xe9]
 fsubrp %ST(1), %ST(0) // CHECK: encoding: [0xde,0xe9]
 
+// also PR8861
+fdivp %st(0), %st(1) // CHECK: encoding: [0xde,0xf1]
+fdivp %st(1), %st(0) // CHECK: encoding: [0xde,0xf1]
+
 
 movl	foo(%rip), %eax
 // CHECK: movl	foo(%rip), %eax
@@ -738,6 +742,11 @@ lock  incl 1(%rsp)
 // CHECK: lock
 // CHECK: incl 1(%rsp)
 
+// rdar://8741045
+lock/incl 1(%rsp)
+// CHECK: lock
+// CHECK: incl 1(%rsp)
+
 // rdar://8033482
 rep movsl
 // CHECK: rep
@@ -910,3 +919,10 @@ movq	%rax, %mm5 // CHECK: movd %rax, %mm5 # encoding: [0x48,0x0f,0x6e,0xe8]
 movq	%mm5, %rbx // CHECK: movd %mm5, %rbx # encoding: [0x48,0x0f,0x7e,0xeb]
 
 rex64 // CHECK: rex64 # encoding: [0x48]
+data16 // CHECK: data16 # encoding: [0x66]
+
+// PR8855
+movq 18446744073709551615,%rbx   // CHECK: movq	-1, %rbx
+
+// PR8946
+movdqu	%xmm0, %xmm1 // CHECK: movdqu	%xmm0, %xmm1 # encoding: [0xf3,0x0f,0x6f,0xc8]

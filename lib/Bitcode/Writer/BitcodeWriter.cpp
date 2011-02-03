@@ -26,7 +26,8 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/System/Program.h"
+#include "llvm/Support/Program.h"
+#include <cctype>
 using namespace llvm;
 
 /// These are manifest constants used by the bitcode writer. They do not need to
@@ -403,7 +404,8 @@ static void WriteModuleInfo(const Module *M, const ValueEnumerator &VE,
     unsigned AbbrevToUse = 0;
 
     // GLOBALVAR: [type, isconst, initid,
-    //             linkage, alignment, section, visibility, threadlocal]
+    //             linkage, alignment, section, visibility, threadlocal,
+    //             unnamed_addr]
     Vals.push_back(VE.getTypeID(GV->getType()));
     Vals.push_back(GV->isConstant());
     Vals.push_back(GV->isDeclaration() ? 0 :
@@ -412,9 +414,11 @@ static void WriteModuleInfo(const Module *M, const ValueEnumerator &VE,
     Vals.push_back(Log2_32(GV->getAlignment())+1);
     Vals.push_back(GV->hasSection() ? SectionMap[GV->getSection()] : 0);
     if (GV->isThreadLocal() ||
-        GV->getVisibility() != GlobalValue::DefaultVisibility) {
+        GV->getVisibility() != GlobalValue::DefaultVisibility ||
+        GV->hasUnnamedAddr()) {
       Vals.push_back(getEncodedVisibility(GV));
       Vals.push_back(GV->isThreadLocal());
+      Vals.push_back(GV->hasUnnamedAddr());
     } else {
       AbbrevToUse = SimpleGVarAbbrev;
     }
@@ -426,7 +430,7 @@ static void WriteModuleInfo(const Module *M, const ValueEnumerator &VE,
   // Emit the function proto information.
   for (Module::const_iterator F = M->begin(), E = M->end(); F != E; ++F) {
     // FUNCTION:  [type, callingconv, isproto, paramattr,
-    //             linkage, alignment, section, visibility, gc]
+    //             linkage, alignment, section, visibility, gc, unnamed_addr]
     Vals.push_back(VE.getTypeID(F->getType()));
     Vals.push_back(F->getCallingConv());
     Vals.push_back(F->isDeclaration());
@@ -436,6 +440,7 @@ static void WriteModuleInfo(const Module *M, const ValueEnumerator &VE,
     Vals.push_back(F->hasSection() ? SectionMap[F->getSection()] : 0);
     Vals.push_back(getEncodedVisibility(F));
     Vals.push_back(F->hasGC() ? GCMap[F->getGC()] : 0);
+    Vals.push_back(F->hasUnnamedAddr());
 
     unsigned AbbrevToUse = 0;
     Stream.EmitRecord(bitc::MODULE_CODE_FUNCTION, Vals, AbbrevToUse);
@@ -1642,9 +1647,12 @@ void llvm::WriteBitcodeToFile(const Module *M, raw_ostream &Out) {
 /// WriteBitcodeToStream - Write the specified module to the specified output
 /// stream.
 void llvm::WriteBitcodeToStream(const Module *M, BitstreamWriter &Stream) {
-  // If this is darwin, emit a file header and trailer if needed.
-  bool isDarwin = M->getTargetTriple().find("-darwin") != std::string::npos;
-  if (isDarwin)
+  // If this is darwin or another generic macho target, emit a file header and
+  // trailer if needed.
+  bool isMacho =
+    M->getTargetTriple().find("-darwin") != std::string::npos ||
+    M->getTargetTriple().find("-macho") != std::string::npos;
+  if (isMacho)
     EmitDarwinBCHeader(Stream, M->getTargetTriple());
 
   // Emit the file header.
@@ -1658,6 +1666,6 @@ void llvm::WriteBitcodeToStream(const Module *M, BitstreamWriter &Stream) {
   // Emit the module.
   WriteModule(M, Stream);
 
-  if (isDarwin)
+  if (isMacho)
     EmitDarwinBCTrailer(Stream, Stream.getBuffer().size());
 }

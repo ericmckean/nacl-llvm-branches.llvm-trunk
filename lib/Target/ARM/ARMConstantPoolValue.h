@@ -99,11 +99,7 @@ public:
   bool isValue() const { return Kind == ARMCP::CPValue; }
   // @LOCALMOD-END
 
-  virtual unsigned getRelocationInfo() const {
-    // FIXME: This is conservatively claiming that these entries require a
-    // relocation, we may be able to do better than this.
-    return 2;
-  }
+  virtual unsigned getRelocationInfo() const { return 2; }
 
   virtual int getExistingMachineCPValue(MachineConstantPool *CP,
                                         unsigned Alignment);

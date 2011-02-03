@@ -32,9 +32,17 @@ macro(add_llvm_loadable_module name)
   if( NOT LLVM_ON_UNIX OR CYGWIN )
     message(STATUS "Loadable modules not supported on this platform.
 ${name} ignored.")
+    # Add empty "phony" target
+    add_custom_target(${name})
   else()
     llvm_process_sources( ALL_FILES ${ARGN} )
-    add_library( ${name} MODULE ${ALL_FILES} )
+    if (MODULE)
+      set(libkind MODULE)
+    else()
+      set(libkind SHARED)
+    endif()
+
+    add_library( ${name} ${libkind} ${ALL_FILES} )
     set_target_properties( ${name} PROPERTIES PREFIX "" )
 
     if (APPLE)

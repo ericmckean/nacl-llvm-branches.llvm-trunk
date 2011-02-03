@@ -13,7 +13,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "ARM.h"
-#include "llvm/CodeGen/AsmPrinter.h"
+#include "ARMAsmPrinter.h"
+#include "ARMMCExpr.h"
 #include "llvm/Constants.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/MC/MCExpr.h"
@@ -23,38 +24,47 @@ using namespace llvm;
 
 
 static MCOperand GetSymbolRef(const MachineOperand &MO, const MCSymbol *Symbol,
-                              AsmPrinter &Printer) {
+                              ARMAsmPrinter &Printer) {
   MCContext &Ctx = Printer.OutContext;
   const MCExpr *Expr;
   switch (MO.getTargetFlags()) {
-  default: assert(0 && "Unknown target flag on symbol operand");
-  case 0:
+  default: {
     Expr = MCSymbolRefExpr::Create(Symbol, MCSymbolRefExpr::VK_None, Ctx);
+    switch (MO.getTargetFlags()) {
+    default:
+      assert(0 && "Unknown target flag on symbol operand");
+    case 0:
+      break;
+    case ARMII::MO_LO16:
+      Expr = MCSymbolRefExpr::Create(Symbol, MCSymbolRefExpr::VK_None, Ctx);
+      Expr = ARMMCExpr::CreateLower16(Expr, Ctx);
+      break;
+    case ARMII::MO_HI16:
+      Expr = MCSymbolRefExpr::Create(Symbol, MCSymbolRefExpr::VK_None, Ctx);
+      Expr = ARMMCExpr::CreateUpper16(Expr, Ctx);
+      break;
+    }
     break;
-  case ARMII::MO_LO16:
-    Expr = MCSymbolRefExpr::Create(Symbol, MCSymbolRefExpr::VK_ARM_LO16, Ctx);
-    break;
-  case ARMII::MO_HI16:
-    Expr = MCSymbolRefExpr::Create(Symbol, MCSymbolRefExpr::VK_ARM_HI16, Ctx);
-    break;
+  }
+
   case ARMII::MO_PLT:
     Expr = MCSymbolRefExpr::Create(Symbol, MCSymbolRefExpr::VK_ARM_PLT, Ctx);
     break;
   }
-  
+
   if (!MO.isJTI() && MO.getOffset())
     Expr = MCBinaryExpr::CreateAdd(Expr,
                                    MCConstantExpr::Create(MO.getOffset(), Ctx),
                                    Ctx);
   return MCOperand::CreateExpr(Expr);
-  
+
 }
 
 // @LOCALMOD-BEGIN essentially the loop body of LowerARMMachineOperandToMCInst.
 // Returns true if the Operand was really converted to an MCOperand.
 static bool LowerARMMachineOperandToMCOperand(const MachineOperand &MO,
                                                const MachineInstr *MI,
-                                               AsmPrinter &AP,
+                                               ARMAsmPrinter &AP,
                                                MCOperand &OutOp) {
   MCOperand MCOp;
   switch (MO.getType()) {
@@ -105,7 +115,7 @@ static bool LowerARMMachineOperandToMCOperand(const MachineOperand &MO,
 
 
 void llvm::LowerARMMachineInstrToMCInst(const MachineInstr *MI, MCInst &OutMI,
-                                        AsmPrinter &AP) {
+                                        ARMAsmPrinter &AP) {
   OutMI.setOpcode(MI->getOpcode());
 
   for (unsigned i = 0, e = MI->getNumOperands(); i != e; ++i) {
@@ -127,7 +137,7 @@ void llvm::LowerARMMachineInstrToMCInst(const MachineInstr *MI, MCInst &OutMI,
 // (used for MOVi16PIC / MOVTi16PIC, etc. -- see .td file)
 void llvm::LowerARMMachineInstrToMCInstPCRel(const MachineInstr *MI,
                                              MCInst &OutMI,
-                                             AsmPrinter &AP,
+                                             ARMAsmPrinter &AP,
                                              unsigned ImmIndex,
                                              unsigned PCIndex,
                                              MCSymbol *PCLabel,
@@ -147,8 +157,19 @@ void llvm::LowerARMMachineInstrToMCInstPCRel(const MachineInstr *MI,
       MCOperand SymOp;
       bool DidLower = LowerARMMachineOperandToMCOperand(MOImm, MI, AP, SymOp);
       assert (DidLower && "Immediate-like operand should have been lowered");
-      const MCExpr *Expr =
-          MCBinaryExpr::CreateSub(SymOp.getExpr(), PCRelExpr, Ctx);
+
+      const MCExpr *Expr = SymOp.getExpr();
+      ARMMCExpr::VariantKind TargetKind = ARMMCExpr::VK_ARM_None;
+      /* Unwrap and rewrap the ARMMCExpr */
+      if (Expr->getKind() == MCExpr::Target) {
+        const ARMMCExpr *TargetExpr = cast<ARMMCExpr>(Expr);
+        TargetKind = TargetExpr->getKind();
+        Expr = TargetExpr->getSubExpr();
+      }
+      Expr = MCBinaryExpr::CreateSub(Expr, PCRelExpr, Ctx);
+      if (TargetKind != ARMMCExpr::VK_ARM_None) {
+        Expr = ARMMCExpr::Create(TargetKind, Expr, Ctx);
+      }
       MCOperand MCOp = MCOperand::CreateExpr(Expr);
       OutMI.addOperand(MCOp);
     } else if (i == PCIndex) {  // dummy index already handled as PCLabel

@@ -30,6 +30,7 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetAsmBackend.h"
+#include "llvm/Target/TargetAsmInfo.h"
 
 using namespace llvm;
 
@@ -71,7 +72,7 @@ class MCELFStreamer : public MCObjectStreamer {
 public:
   MCELFStreamer(MCContext &Context, TargetAsmBackend &TAB,
                   raw_ostream &OS, MCCodeEmitter *Emitter)
-    : MCObjectStreamer(Context, TAB, OS, Emitter, false) {}
+    : MCObjectStreamer(Context, TAB, OS, Emitter) {}
 
   ~MCELFStreamer() {}
 
@@ -112,9 +113,8 @@ public:
      SD.setSize(Value);
   }
 
-  virtual void EmitLocalCommonSymbol(MCSymbol *Symbol, uint64_t Size) {
-    assert(0 && "ELF doesn't support this directive");
-  }
+  virtual void EmitLocalCommonSymbol(MCSymbol *Symbol, uint64_t Size);
+
   virtual void EmitZerofill(const MCSection *Section, MCSymbol *Symbol = 0,
                             unsigned Size = 0, unsigned ByteAlignment = 0) {
     assert(0 && "ELF doesn't support this directive");
@@ -124,17 +124,11 @@ public:
     assert(0 && "ELF doesn't support this directive");
   }
   virtual void EmitBytes(StringRef Data, unsigned AddrSpace);
-  virtual void EmitValue(const MCExpr *Value, unsigned Size,unsigned AddrSpace);
-  virtual void EmitGPRel32Value(const MCExpr *Value) {
-    assert(0 && "ELF doesn't support this directive");
-  }
   virtual void EmitValueToAlignment(unsigned ByteAlignment, int64_t Value = 0,
                                     unsigned ValueSize = 1,
                                     unsigned MaxBytesToEmit = 0);
   virtual void EmitCodeAlignment(unsigned ByteAlignment,
                                  unsigned MaxBytesToEmit = 0);
-  virtual void EmitValueToOffset(const MCExpr *Offset,
-                                 unsigned char Value = 0);
 
   virtual void EmitFileDirective(StringRef Filename);
 
@@ -161,21 +155,21 @@ private:
   }
 
   void SetSectionData() {
-    SetSection(".data", MCSectionELF::SHT_PROGBITS,
-               MCSectionELF::SHF_WRITE |MCSectionELF::SHF_ALLOC,
+    SetSection(".data", ELF::SHT_PROGBITS,
+               ELF::SHF_WRITE |ELF::SHF_ALLOC,
                SectionKind::getDataRel());
     EmitCodeAlignment(4, 0);
   }
   void SetSectionText() {
-    SetSection(".text", MCSectionELF::SHT_PROGBITS,
-               MCSectionELF::SHF_EXECINSTR |
-               MCSectionELF::SHF_ALLOC, SectionKind::getText());
+    SetSection(".text", ELF::SHT_PROGBITS,
+               ELF::SHF_EXECINSTR |
+               ELF::SHF_ALLOC, SectionKind::getText());
     EmitCodeAlignment(4, 0);
   }
   void SetSectionBss() {
-    SetSection(".bss", MCSectionELF::SHT_NOBITS,
-               MCSectionELF::SHF_WRITE |
-               MCSectionELF::SHF_ALLOC, SectionKind::getBSS());
+    SetSection(".bss", ELF::SHT_NOBITS,
+               ELF::SHF_WRITE |
+               ELF::SHF_ALLOC, SectionKind::getBSS());
     EmitCodeAlignment(4, 0);
   }
 };
@@ -194,24 +188,13 @@ void MCELFStreamer::InitSections() {
 void MCELFStreamer::EmitLabel(MCSymbol *Symbol) {
   assert(Symbol->isUndefined() && "Cannot define a symbol twice!");
 
-  Symbol->setSection(*CurSection);
-
-  MCSymbolData &SD = getAssembler().getOrCreateSymbolData(*Symbol);
+  MCObjectStreamer::EmitLabel(Symbol);
 
   const MCSectionELF &Section =
     static_cast<const MCSectionELF&>(Symbol->getSection());
-  if (Section.getFlags() & MCSectionELF::SHF_TLS)
+  MCSymbolData &SD = getAssembler().getSymbolData(*Symbol);
+  if (Section.getFlags() & ELF::SHF_TLS)
     SetType(SD, ELF::STT_TLS);
-
-  // FIXME: This is wasteful, we don't necessarily need to create a data
-  // fragment. Instead, we should mark the symbol as pointing into the data
-  // fragment if it exists, otherwise we should just queue the label and set its
-  // fragment pointer when we emit the next fragment.
-  MCDataFragment *F = getOrCreateDataFragment();
-
-  assert(!SD.getFragment() && "Unexpected fragment on symbol data!");
-  SD.setFragment(F);
-  SD.setOffset(F->getContents().size());
 }
 
 void MCELFStreamer::EmitAssemblerFlag(MCAssemblerFlag Flag) {
@@ -363,9 +346,9 @@ void MCELFStreamer::EmitCommonSymbol(MCSymbol *Symbol, uint64_t Size,
 
   if (GetBinding(SD) == ELF_STB_Local) {
     const MCSection *Section = getAssembler().getContext().getELFSection(".bss",
-                                                                    MCSectionELF::SHT_NOBITS,
-                                                                    MCSectionELF::SHF_WRITE |
-                                                                    MCSectionELF::SHF_ALLOC,
+                                                                    ELF::SHT_NOBITS,
+                                                                    ELF::SHF_WRITE |
+                                                                    ELF::SHF_ALLOC,
                                                                     SectionKind::getBSS());
     Symbol->setSection(*Section);
 
@@ -378,29 +361,20 @@ void MCELFStreamer::EmitCommonSymbol(MCSymbol *Symbol, uint64_t Size,
   SD.setSize(MCConstantExpr::Create(Size, getContext()));
 }
 
+void MCELFStreamer::EmitLocalCommonSymbol(MCSymbol *Symbol, uint64_t Size) {
+  // FIXME: Should this be caught and done earlier?
+  MCSymbolData &SD = getAssembler().getOrCreateSymbolData(*Symbol);
+  SetBinding(SD, ELF::STB_LOCAL);
+  SD.setExternal(false);
+  BindingExplicitlySet.insert(Symbol);
+  // FIXME: ByteAlignment is not needed here, but is required.
+  EmitCommonSymbol(Symbol, Size, 1);
+}
+
 void MCELFStreamer::EmitBytes(StringRef Data, unsigned AddrSpace) {
   // TODO: This is exactly the same as WinCOFFStreamer. Consider merging into
   // MCObjectStreamer.
   getOrCreateDataFragment()->getContents().append(Data.begin(), Data.end());
-}
-
-void MCELFStreamer::EmitValue(const MCExpr *Value, unsigned Size,
-                                unsigned AddrSpace) {
-  // TODO: This is exactly the same as WinCOFFStreamer. Consider merging into
-  // MCObjectStreamer.
-  MCDataFragment *DF = getOrCreateDataFragment();
-
-  // Avoid fixups when possible.
-  int64_t AbsValue;
-  if (AddValueSymbols(Value)->EvaluateAsAbsolute(AbsValue)) {
-    // FIXME: Endianness assumption.
-    for (unsigned i = 0; i != Size; ++i)
-      DF->getContents().push_back(uint8_t(AbsValue >> (i * 8)));
-  } else {
-    DF->addFixup(MCFixup::Create(DF->getContents().size(), AddValueSymbols(Value),
-                                 MCFixup::getKindForSize(Size)));
-    DF->getContents().resize(DF->getContents().size() + Size, 0);
-  }
 }
 
 void MCELFStreamer::EmitValueToAlignment(unsigned ByteAlignment,
@@ -431,13 +405,6 @@ void MCELFStreamer::EmitCodeAlignment(unsigned ByteAlignment,
   // Update the maximum alignment on the current section if necessary.
   if (ByteAlignment > getCurrentSectionData()->getAlignment())
     getCurrentSectionData()->setAlignment(ByteAlignment);
-}
-
-void MCELFStreamer::EmitValueToOffset(const MCExpr *Offset,
-                                        unsigned char Value) {
-  // TODO: This is exactly the same as MCMachOStreamer. Consider merging into
-  // MCObjectStreamer.
-  new MCOrgFragment(*Offset, Value, getCurrentSectionData());
 }
 
 // Add a symbol for the file name of this module. This is the second
@@ -493,23 +460,11 @@ void  MCELFStreamer::fixSymbolsInTLSFixups(const MCExpr *expr) {
 }
 
 void MCELFStreamer::EmitInstToFragment(const MCInst &Inst) {
-  MCInstFragment *IF = new MCInstFragment(Inst, getCurrentSectionData());
+  this->MCObjectStreamer::EmitInstToFragment(Inst);
+  MCInstFragment &F = *cast<MCInstFragment>(getCurrentFragment());
 
-  // Add the fixups and data.
-  //
-  // FIXME: Revisit this design decision when relaxation is done, we may be
-  // able to get away with not storing any extra data in the MCInst.
-  SmallVector<MCFixup, 4> Fixups;
-  SmallString<256> Code;
-  raw_svector_ostream VecOS(Code);
-  getAssembler().getEmitter().EncodeInstruction(Inst, VecOS, Fixups);
-  VecOS.flush();
-
-  for (unsigned i = 0, e = Fixups.size(); i != e; ++i)
-    fixSymbolsInTLSFixups(Fixups[i].getValue());
-
-  IF->getCode() = Code;
-  IF->getFixups() = Fixups;
+  for (unsigned i = 0, e = F.getFixups().size(); i != e; ++i)
+    fixSymbolsInTLSFixups(F.getFixups()[i].getValue());
 }
 
 void MCELFStreamer::EmitInstToData(const MCInst &Inst) {
@@ -541,17 +496,8 @@ void MCELFStreamer::EmitInstToData(const MCInst &Inst) {
 }
 
 void MCELFStreamer::Finish() {
-  // FIXME: duplicated code with the MachO streamer.
-  // Dump out the dwarf file & directory tables and line tables.
-  if (getContext().hasDwarfFiles()) {
-    const MCSection *DwarfLineSection =
-      getContext().getELFSection(".debug_line", 0, 0,
-                                 SectionKind::getDataRelLocal());
-    MCSectionData &DLS =
-      getAssembler().getOrCreateSectionData(*DwarfLineSection);
-    int PointerSize = getAssembler().getBackend().getPointerSize();
-    MCDwarfFileTable::Emit(this, DwarfLineSection, &DLS, PointerSize);
-  }
+  if (getNumFrameInfos())
+    MCDwarfFrameEmitter::Emit(*this);
 
   for (std::vector<LocalCommon>::const_iterator i = LocalCommons.begin(),
                                                 e = LocalCommons.end();
@@ -577,10 +523,12 @@ void MCELFStreamer::Finish() {
 }
 
 MCStreamer *llvm::createELFStreamer(MCContext &Context, TargetAsmBackend &TAB,
-                                      raw_ostream &OS, MCCodeEmitter *CE,
-                                      bool RelaxAll) {
+                                    raw_ostream &OS, MCCodeEmitter *CE,
+                                    bool RelaxAll, bool NoExecStack) {
   MCELFStreamer *S = new MCELFStreamer(Context, TAB, OS, CE);
   if (RelaxAll)
     S->getAssembler().setRelaxAll(true);
+  if (NoExecStack)
+    S->getAssembler().setNoExecStack(true);
   return S;
 }

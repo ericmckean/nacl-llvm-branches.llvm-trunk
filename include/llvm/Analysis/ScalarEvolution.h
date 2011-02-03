@@ -24,7 +24,7 @@
 #include "llvm/Pass.h"
 #include "llvm/Instructions.h"
 #include "llvm/Function.h"
-#include "llvm/System/DataTypes.h"
+#include "llvm/Support/DataTypes.h"
 #include "llvm/Support/ValueHandle.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/ConstantRange.h"
@@ -537,10 +537,11 @@ namespace llvm {
     ///
     const SCEV *getNotSCEV(const SCEV *V);
 
-    /// getMinusSCEV - Return LHS-RHS.
-    ///
-    const SCEV *getMinusSCEV(const SCEV *LHS,
-                             const SCEV *RHS);
+    /// getMinusSCEV - Return LHS-RHS.  Minus is represented in SCEV as A+B*-1,
+    /// and thus the HasNUW and HasNSW bits apply to the resultant add, not
+    /// whether the sub would have overflowed.
+    const SCEV *getMinusSCEV(const SCEV *LHS, const SCEV *RHS,
+                             bool HasNUW = false, bool HasNSW = false);
 
     /// getTruncateOrZeroExtend - Return a SCEV corresponding to a conversion
     /// of the input value to the specified type.  If the type must be

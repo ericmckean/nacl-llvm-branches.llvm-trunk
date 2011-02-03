@@ -29,21 +29,21 @@ class MachineFunction;
 class MachineMove;
 class RegScavenger;
 template<class T> class SmallVectorImpl;
+class raw_ostream;
 
 /// TargetRegisterDesc - This record contains all of the information known about
-/// a particular register.  The AliasSet field (if not null) contains a pointer
-/// to a Zero terminated array of registers that this register aliases.  This is
-/// needed for architectures like X86 which have AL alias AX alias EAX.
-/// Registers that this does not apply to simply should set this to null.
-/// The SubRegs field is a zero terminated array of registers that are
-/// sub-registers of the specific register, e.g. AL, AH are sub-registers of AX.
-/// The SuperRegs field is a zero terminated array of registers that are
+/// a particular register.  The Overlaps field contains a pointer to a zero
+/// terminated array of registers that this register aliases, starting with
+/// itself. This is needed for architectures like X86 which have AL alias AX
+/// alias EAX. The SubRegs field is a zero terminated array of registers that
+/// are sub-registers of the specific register, e.g. AL, AH are sub-registers of
+/// AX. The SuperRegs field is a zero terminated array of registers that are
 /// super-registers of the specific register, e.g. RAX, EAX, are super-registers
 /// of AX.
 ///
 struct TargetRegisterDesc {
   const char     *Name;         // Printable name for the reg (for debugging)
-  const unsigned *AliasSet;     // Register Alias Set, described above
+  const unsigned *Overlaps;     // Overlapping registers, described above
   const unsigned *SubRegs;      // Sub-register set, described above
   const unsigned *SuperRegs;    // Super-register set, described above
 };
@@ -295,30 +295,68 @@ protected:
   virtual ~TargetRegisterInfo();
 public:
 
-  enum {                        // Define some target independent constants
-    /// NoRegister - This physical register is not a real target register.  It
-    /// is useful as a sentinal.
-    NoRegister = 0,
+  // Register numbers can represent physical registers, virtual registers, and
+  // sometimes stack slots. The unsigned values are divided into these ranges:
+  //
+  //   0           Not a register, can be used as a sentinel.
+  //   [1;2^30)    Physical registers assigned by TableGen.
+  //   [2^30;2^31) Stack slots. (Rarely used.)
+  //   [2^31;2^32) Virtual registers assigned by MachineRegisterInfo.
+  //
+  // Further sentinels can be allocated from the small negative integers.
+  // DenseMapInfo<unsigned> uses -1u and -2u.
 
-    /// FirstVirtualRegister - This is the first register number that is
-    /// considered to be a 'virtual' register, which is part of the SSA
-    /// namespace.  This must be the same for all targets, which means that each
-    /// target is limited to this fixed number of registers.
-    FirstVirtualRegister = 16384
-  };
+  /// isStackSlot - Sometimes it is useful the be able to store a non-negative
+  /// frame index in a variable that normally holds a register. isStackSlot()
+  /// returns true if Reg is in the range used for stack slots.
+  ///
+  /// Note that isVirtualRegister() and isPhysicalRegister() cannot handle stack
+  /// slots, so if a variable may contains a stack slot, always check
+  /// isStackSlot() first.
+  ///
+  static bool isStackSlot(unsigned Reg) {
+    return int(Reg) >= (1 << 30);
+  }
+
+  /// stackSlot2Index - Compute the frame index from a register value
+  /// representing a stack slot.
+  static int stackSlot2Index(unsigned Reg) {
+    assert(isStackSlot(Reg) && "Not a stack slot");
+    return int(Reg - (1u << 30));
+  }
+
+  /// index2StackSlot - Convert a non-negative frame index to a stack slot
+  /// register value.
+  static unsigned index2StackSlot(int FI) {
+    assert(FI >= 0 && "Cannot hold a negative frame index.");
+    return FI + (1u << 30);
+  }
 
   /// isPhysicalRegister - Return true if the specified register number is in
   /// the physical register namespace.
   static bool isPhysicalRegister(unsigned Reg) {
-    assert(Reg && "this is not a register!");
-    return Reg < FirstVirtualRegister;
+    assert(!isStackSlot(Reg) && "Not a register! Check isStackSlot() first.");
+    return int(Reg) > 0;
   }
 
   /// isVirtualRegister - Return true if the specified register number is in
   /// the virtual register namespace.
   static bool isVirtualRegister(unsigned Reg) {
-    assert(Reg && "this is not a register!");
-    return Reg >= FirstVirtualRegister;
+    assert(!isStackSlot(Reg) && "Not a register! Check isStackSlot() first.");
+    return int(Reg) < 0;
+  }
+
+  /// virtReg2Index - Convert a virtual register number to a 0-based index.
+  /// The first virtual register in a function will get the index 0.
+  static unsigned virtReg2Index(unsigned Reg) {
+    assert(isVirtualRegister(Reg) && "Not a virtual register");
+    return Reg - (1u << 31);
+  }
+
+  /// index2VirtReg - Convert a 0-based index to a virtual register number.
+  /// This is the inverse operation of VirtReg2IndexFunctor below.
+  static unsigned index2VirtReg(unsigned Index) {
+    return Index + (1u << 31);
   }
 
   /// getMinimalPhysRegClass - Returns the Register Class of a physical
@@ -351,7 +389,17 @@ public:
   /// terminated.
   ///
   const unsigned *getAliasSet(unsigned RegNo) const {
-    return get(RegNo).AliasSet;
+    // The Overlaps set always begins with Reg itself.
+    return get(RegNo).Overlaps + 1;
+  }
+
+  /// getOverlaps - Return a list of registers that overlap Reg, including
+  /// itself. This is the same as the alias set except Reg is included in the
+  /// list.
+  /// These are exactly the registers in { x | regsOverlap(x, Reg) }.
+  ///
+  const unsigned *getOverlaps(unsigned RegNo) const {
+    return get(RegNo).Overlaps;
   }
 
   /// getSubRegisters - Return the list of registers that are sub-registers of
@@ -631,7 +679,7 @@ public:
 
   /// materializeFrameBaseRegister - Insert defining instruction(s) for
   /// BaseReg to be a pointer to FrameIdx before insertion point I.
-  virtual void materializeFrameBaseRegister(MachineBasicBlock::iterator I,
+  virtual void materializeFrameBaseRegister(MachineBasicBlock *MBB,
                                             unsigned BaseReg, int FrameIdx,
                                             int64_t Offset) const {
     assert(0 && "materializeFrameBaseRegister does not exist on this target");
@@ -678,21 +726,6 @@ public:
     assert(0 && "Call Frame Pseudo Instructions do not exist on this target!");
   }
 
-  /// processFunctionBeforeCalleeSavedScan - This method is called immediately
-  /// before PrologEpilogInserter scans the physical registers used to determine
-  /// what callee saved registers should be spilled. This method is optional.
-  virtual void processFunctionBeforeCalleeSavedScan(MachineFunction &MF,
-                                                RegScavenger *RS = NULL) const {
-
-  }
-
-  /// processFunctionBeforeFrameFinalized - This method is called immediately
-  /// before the specified function's frame layout (MF.getFrameInfo()) is
-  /// finalized.  Once the frame is finalized, MO_FrameIndex operands are
-  /// replaced with direct constants.  This method is optional.
-  ///
-  virtual void processFunctionBeforeFrameFinalized(MachineFunction &MF) const {
-  }
 
   /// saveScavengerRegister - Spill the register so it can be used by the
   /// register scavenger. Return true if the register was spilled, false
@@ -739,7 +772,7 @@ public:
 // This is useful when building IndexedMaps keyed on virtual registers
 struct VirtReg2IndexFunctor : public std::unary_function<unsigned, unsigned> {
   unsigned operator()(unsigned Reg) const {
-    return Reg - TargetRegisterInfo::FirstVirtualRegister;
+    return TargetRegisterInfo::virtReg2Index(Reg);
   }
 };
 
@@ -747,6 +780,33 @@ struct VirtReg2IndexFunctor : public std::unary_function<unsigned, unsigned> {
 /// if there is no common subclass.
 const TargetRegisterClass *getCommonSubClass(const TargetRegisterClass *A,
                                              const TargetRegisterClass *B);
+
+/// PrintReg - Helper class for printing registers on a raw_ostream.
+/// Prints virtual and physical registers with or without a TRI instance.
+///
+/// The format is:
+///   %noreg          - NoRegister
+///   %vreg5          - a virtual register.
+///   %vreg5:sub_8bit - a virtual register with sub-register index (with TRI).
+///   %EAX            - a physical register
+///   %physreg17      - a physical register when no TRI instance given.
+///
+/// Usage: OS << PrintReg(Reg, TRI) << '\n';
+///
+class PrintReg {
+  const TargetRegisterInfo *TRI;
+  unsigned Reg;
+  unsigned SubIdx;
+public:
+  PrintReg(unsigned reg, const TargetRegisterInfo *tri = 0, unsigned subidx = 0)
+    : TRI(tri), Reg(reg), SubIdx(subidx) {}
+  void print(raw_ostream&) const;
+};
+
+static inline raw_ostream &operator<<(raw_ostream &OS, const PrintReg &PR) {
+  PR.print(OS);
+  return OS;
+}
 
 } // End llvm namespace
 

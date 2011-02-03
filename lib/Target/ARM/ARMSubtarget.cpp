@@ -13,6 +13,7 @@
 
 #include "ARMSubtarget.h"
 #include "ARMGenSubtarget.inc"
+#include "ARMBaseRegisterInfo.h"
 #include "llvm/GlobalValue.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/Support/CommandLine.h"
@@ -24,8 +25,7 @@ ReserveR9("arm-reserve-r9", cl::Hidden,
           cl::desc("Reserve R9, making it unavailable as GPR"));
 
 static cl::opt<bool>
-UseMOVT("arm-use-movt",
-        cl::init(true), cl::Hidden);
+DarwinUseMOVT("arm-darwin-use-movt", cl::init(true), cl::Hidden);
 
 // @LOCALMOD-START
 // TODO: * JITing has not been tested at all
@@ -46,7 +46,7 @@ ARMSubtarget::ARMSubtarget(const std::string &TT, const std::string &FS,
   , ARMProcFamily(Others)
   , ARMFPUType(None)
   , UseNEONForSinglePrecisionFP(false)
-  , SlowVMLx(false)
+  , SlowFPVMLx(false)
   , SlowFPBrcc(false)
   , IsThumb(isT)
   , ThumbMode(Thumb1)
@@ -54,7 +54,7 @@ ARMSubtarget::ARMSubtarget(const std::string &TT, const std::string &FS,
   , PostRAScheduler(false)
   , IsR9Reserved(ReserveR9)
   , UseInlineJumpTables(!NoInlineJumpTables) // @LOCALMOD
-  , UseMovt(UseMOVT)
+  , UseMovt(false)
   , HasFP16(false)
   , HasD16(false)
   , HasHardwareDivide(false)
@@ -66,7 +66,7 @@ ARMSubtarget::ARMSubtarget(const std::string &TT, const std::string &FS,
   , AllowsUnalignedMem(false)
   , stackAlignment(4)
   , CPUString("generic")
-  , TargetType(isELF) // Default to ELF unless otherwise specified.
+  , TargetTriple(TT)
   , TargetABI(ARM_ABI_APCS) {
   // Default to soft float ABI
   if (FloatABIType == FloatABI::Default)
@@ -128,12 +128,6 @@ ARMSubtarget::ARMSubtarget(const std::string &TT, const std::string &FS,
     }
   }
 
-  if (Len >= 10) {
-    if (TT.find("-darwin") != std::string::npos)
-      // arm-darwin
-      TargetType = isDarwin;
-  }
-
   if (TT.find("eabi") != std::string::npos)
     TargetABI = ARM_ABI_AAPCS;
 
@@ -150,6 +144,9 @@ ARMSubtarget::ARMSubtarget(const std::string &TT, const std::string &FS,
     FSWithArch = FS;
   CPUString = ParseSubtargetFeatures(FSWithArch, CPUString);
 
+  // After parsing Itineraries, set ItinData.IssueWidth.
+  computeIssueWidth();
+
   // Thumb2 implies at least V6T2.
   if (ARMArchVersion >= V6T2)
     ThumbMode = Thumb2;
@@ -159,8 +156,17 @@ ARMSubtarget::ARMSubtarget(const std::string &TT, const std::string &FS,
   if (isAAPCS_ABI())
     stackAlignment = 8;
 
-  if (isTargetDarwin())
+  if (!isTargetDarwin())
+    UseMovt = hasV6T2Ops();
+  else {
     IsR9Reserved = ReserveR9 | (ARMArchVersion < V6);
+    UseMovt = DarwinUseMOVT && hasV6T2Ops();
+  }
+
+  // @LOCALMOD-BEGIN
+  // This should be true if isTargetNaCl()
+  UseMovt = true;
+  // @LOCALMOD-END
 
   if (!isThumb() || hasThumb2())
     PostRAScheduler = true;
@@ -211,7 +217,7 @@ ARMSubtarget::GVIsIndirectSymbol(const GlobalValue *GV,
       // through a stub.
       if (!isDecl && !GV->isWeakForLinker())
         return false;
-    
+
       // Unless we have a symbol with hidden visibility, we have to go through a
       // normal $non_lazy_ptr stub because this symbol might be resolved late.
       if (!GV->hasHiddenVisibility())  // Non-hidden $non_lazy_ptr reference.
@@ -229,9 +235,25 @@ unsigned ARMSubtarget::getMispredictionPenalty() const {
     return 13;
   else if (isCortexA9())
     return 8;
-  
+
   // Otherwise, just return a sensible default.
   return 10;
+}
+
+void ARMSubtarget::computeIssueWidth() {
+  unsigned allStage1Units = 0;
+  for (const InstrItinerary *itin = InstrItins.Itineraries;
+       itin->FirstStage != ~0U; ++itin) {
+    const InstrStage *IS = InstrItins.Stages + itin->FirstStage;
+    allStage1Units |= IS->getUnits();
+  }
+  InstrItins.IssueWidth = 0;
+  while (allStage1Units) {
+    ++InstrItins.IssueWidth;
+    // clear the lowest bit
+    allStage1Units ^= allStage1Units & ~(allStage1Units - 1);
+  }
+  assert(InstrItins.IssueWidth <= 2 && "itinerary bug, too many stage 1 units");
 }
 
 bool ARMSubtarget::enablePostRAScheduler(

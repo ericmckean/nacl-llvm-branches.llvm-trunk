@@ -492,6 +492,9 @@ struct SubtargetFeatureInfo {
 
 class AsmMatcherInfo {
 public:
+  /// Tracked Records
+  RecordKeeper &Records;
+
   /// The tablegen AsmParser record.
   Record *AsmParser;
 
@@ -546,7 +549,9 @@ private:
                                   MatchableInfo::AsmOperand &Op);
                                   
 public:
-  AsmMatcherInfo(Record *AsmParser, CodeGenTarget &Target);
+  AsmMatcherInfo(Record *AsmParser, 
+                 CodeGenTarget &Target, 
+                 RecordKeeper &Records);
 
   /// BuildInfo - Construct the various tables used during matching.
   void BuildInfo();
@@ -558,6 +563,10 @@ public:
     std::map<Record*, SubtargetFeatureInfo*>::const_iterator I =
       SubtargetFeatures.find(Def);
     return I == SubtargetFeatures.end() ? 0 : I->second;
+  }
+
+  RecordKeeper &getRecords() const {
+    return Records;
   }
 };
 
@@ -698,8 +707,8 @@ bool MatchableInfo::Validate(StringRef CommentDelimiter, bool Hack) const {
                   "mark it isCodeGenOnly");
   
   // Reject matchables with operand modifiers, these aren't something we can
-  /// handle, the target should be refactored to use operands instead of
-  /// modifiers.
+  // handle, the target should be refactored to use operands instead of
+  // modifiers.
   //
   // Also, check for instructions which reference the operand multiple times;
   // this implies a constraint we would not honor.
@@ -767,6 +776,7 @@ static std::string getEnumNameForToken(StringRef Str) {
     case '%': Res += "_PCT_"; break;
     case ':': Res += "_COLON_"; break;
     case '!': Res += "_EXCLAIM_"; break;
+    case '.': Res += "_DOT_"; break;
     default:
       if (isalnum(*it))
         Res += *it;
@@ -989,8 +999,10 @@ void AsmMatcherInfo::BuildOperandClasses() {
   }
 }
 
-AsmMatcherInfo::AsmMatcherInfo(Record *asmParser, CodeGenTarget &target)
-  : AsmParser(asmParser), Target(target),
+AsmMatcherInfo::AsmMatcherInfo(Record *asmParser, 
+                               CodeGenTarget &target, 
+                               RecordKeeper &records)
+  : Records(records), AsmParser(asmParser), Target(target),
     RegisterPrefix(AsmParser->getValueAsString("RegisterPrefix")) {
 }
 
@@ -1202,7 +1214,7 @@ void AsmMatcherInfo::BuildAliasOperandReference(MatchableInfo *II,
         CGA.ResultOperands[i].getName() == OperandName) {
       // It's safe to go with the first one we find, because CodeGenInstAlias
       // validates that all operands with the same name have the same record.
-      unsigned ResultIdx =CGA.getResultInstOperandIndexForResultOperandIndex(i);
+      unsigned ResultIdx = CGA.ResultInstOperandIndex[i];
       Op.Class = getOperandClass(CGA.ResultInst->Operands[ResultIdx]);
       Op.SrcOpName = OperandName;
       return;
@@ -1369,9 +1381,14 @@ static void EmitConvertToMCInst(CodeGenTarget &Target,
         break;
       }
       case MatchableInfo::ResOperand::RegOperand: {
-        std::string N = getQualifiedName(OpInfo.Register);
-        CaseOS << "    Inst.addOperand(MCOperand::CreateReg(" << N << "));\n";
-        Signature += "__reg" + OpInfo.Register->getName();
+        if (OpInfo.Register == 0) {
+          CaseOS << "    Inst.addOperand(MCOperand::CreateReg(0));\n";
+          Signature += "__reg0";
+        } else {
+          std::string N = getQualifiedName(OpInfo.Register);
+          CaseOS << "    Inst.addOperand(MCOperand::CreateReg(" << N << "));\n";
+          Signature += "__reg" + OpInfo.Register->getName();
+        }
       }  
       }
     }
@@ -1459,14 +1476,42 @@ static void EmitClassifyOperand(AsmMatcherInfo &Info,
   OS << "    }\n";
   OS << "  }\n\n";
 
-  // Classify user defined operands.
+  // Classify user defined operands.  To do so, we need to perform a topological
+  // sort of the superclass relationship graph so that we always match the 
+  // narrowest type first.
+  
+  // Collect the incoming edge counts for each class.
+  std::map<ClassInfo*, unsigned> IncomingEdges;
   for (std::vector<ClassInfo*>::iterator it = Info.Classes.begin(),
          ie = Info.Classes.end(); it != ie; ++it) {
     ClassInfo &CI = **it;
 
     if (!CI.isUserClass())
       continue;
-
+    
+    for (std::vector<ClassInfo*>::iterator SI = CI.SuperClasses.begin(),
+         SE = CI.SuperClasses.end(); SI != SE; ++SI)
+      ++IncomingEdges[*SI];
+  }
+  
+  // Initialize a worklist of classes with no incoming edges.
+  std::vector<ClassInfo*> LeafClasses;
+  for (std::vector<ClassInfo*>::iterator it = Info.Classes.begin(),
+         ie = Info.Classes.end(); it != ie; ++it) {
+    if (!IncomingEdges[*it])
+      LeafClasses.push_back(*it);
+  }
+  
+  // Iteratively pop the list, process that class, and update the incoming
+  // edge counts for its super classes.  When a superclass reaches zero
+  // incoming edges, push it onto the worklist for processing.
+  while (!LeafClasses.empty()) {
+    ClassInfo &CI = *LeafClasses.back();
+    LeafClasses.pop_back();
+    
+    if (!CI.isUserClass())
+      continue;
+    
     OS << "  // '" << CI.ClassName << "' class";
     if (!CI.SuperClasses.empty()) {
       OS << ", subclass of ";
@@ -1474,6 +1519,10 @@ static void EmitClassifyOperand(AsmMatcherInfo &Info,
         if (i) OS << ", ";
         OS << "'" << CI.SuperClasses[i]->ClassName << "'";
         assert(CI < *CI.SuperClasses[i] && "Invalid class relation!");
+        
+        --IncomingEdges[CI.SuperClasses[i]];
+        if (!IncomingEdges[CI.SuperClasses[i]])
+          LeafClasses.push_back(CI.SuperClasses[i]);
       }
     }
     OS << "\n";
@@ -1486,10 +1535,11 @@ static void EmitClassifyOperand(AsmMatcherInfo &Info,
         OS << "    assert(Operand." << CI.SuperClasses[i]->PredicateMethod
            << "() && \"Invalid class relationship!\");\n";
     }
-
+    
     OS << "    return " << CI.Name << ";\n";
     OS << "  }\n\n";
   }
+  
   OS << "  return InvalidMatchClass;\n";
   OS << "}\n\n";
 }
@@ -1659,7 +1709,7 @@ static std::string GetAliasRequiredFeatures(Record *R,
 /// emit a function for them and return true, otherwise return false.
 static bool EmitMnemonicAliases(raw_ostream &OS, const AsmMatcherInfo &Info) {
   std::vector<Record*> Aliases =
-    Records.getAllDerivedDefinitions("MnemonicAlias");
+    Info.getRecords().getAllDerivedDefinitions("MnemonicAlias");
   if (Aliases.empty()) return false;
 
   OS << "static void ApplyMnemonicAliases(StringRef &Mnemonic, "
@@ -1726,18 +1776,18 @@ static bool EmitMnemonicAliases(raw_ostream &OS, const AsmMatcherInfo &Info) {
   
   
   StringMatcher("Mnemonic", Cases, OS).Emit();
-  OS << "}\n";
+  OS << "}\n\n";
   
   return true;
 }
 
 void AsmMatcherEmitter::run(raw_ostream &OS) {
-  CodeGenTarget Target;
+  CodeGenTarget Target(Records);
   Record *AsmParser = Target.getAsmParser();
   std::string ClassName = AsmParser->getValueAsString("AsmParserClassName");
 
   // Compute the information on the instructions to match.
-  AsmMatcherInfo Info(AsmParser, Target);
+  AsmMatcherInfo Info(AsmParser, Target, Records);
   Info.BuildInfo();
 
   // Sort the instruction table using the partial order on classes. We use
@@ -1791,13 +1841,10 @@ void AsmMatcherEmitter::run(raw_ostream &OS) {
   OS << "    Match_Success, Match_MnemonicFail, Match_InvalidOperand,\n";
   OS << "    Match_MissingFeature\n";
   OS << "  };\n";
-  OS << "  MatchResultTy MatchInstructionImpl(const "
-     << "SmallVectorImpl<MCParsedAsmOperand*>"
-     << " &Operands, MCInst &Inst, unsigned &ErrorInfo);\n\n";
+  OS << "  MatchResultTy MatchInstructionImpl(\n";
+  OS << "    const SmallVectorImpl<MCParsedAsmOperand*> &Operands,\n";
+  OS << "    MCInst &Inst, unsigned &ErrorInfo);\n\n";
   OS << "#endif // GET_ASSEMBLER_HEADER_INFO\n\n";
-
-
-
 
   OS << "\n#ifdef GET_REGISTER_MATCHER\n";
   OS << "#undef GET_REGISTER_MATCHER\n\n";

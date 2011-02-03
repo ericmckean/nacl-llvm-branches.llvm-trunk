@@ -1,4 +1,4 @@
-//===-------- SplitKit.cpp - Toolkit for splitting live ranges --*- C++ -*-===//
+//===-------- SplitKit.h - Toolkit for splitting live ranges ----*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -12,8 +12,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/CodeGen/SlotIndexes.h"
 
 namespace llvm {
@@ -36,6 +36,7 @@ class MachineDominatorTree;
 template <class NodeT> class DomTreeNodeBase;
 typedef DomTreeNodeBase<MachineBasicBlock> MachineDomTreeNode;
 
+
 /// SplitAnalysis - Analyze a LiveInterval, looking for live range splitting
 /// opportunities.
 class SplitAnalysis {
@@ -48,6 +49,9 @@ public:
   // Instructions using the the current register.
   typedef SmallPtrSet<const MachineInstr*, 16> InstrPtrSet;
   InstrPtrSet usingInstrs_;
+
+  // Sorted slot indexes of using instructions.
+  SmallVector<SlotIndex, 8> UseSlots;
 
   // The number of instructions using curli in each basic block.
   typedef DenseMap<const MachineBasicBlock*, unsigned> BlockCountMap;
@@ -79,6 +83,11 @@ public:
   /// clear - clear all data structures so SplitAnalysis is ready to analyze a
   /// new interval.
   void clear();
+
+  /// hasUses - Return true if MBB has any uses of curli.
+  bool hasUses(const MachineBasicBlock *MBB) const {
+    return usingBlocks_.lookup(MBB);
+  }
 
   typedef SmallPtrSet<const MachineBasicBlock*, 16> BlockPtrSet;
   typedef SmallPtrSet<const MachineLoop*, 16> LoopPtrSet;
@@ -133,9 +142,22 @@ public:
   /// these edges, but they do require special treatment.
   void getCriticalPreds(const LoopBlocks &Blocks, BlockPtrSet &CriticalPreds);
 
+  /// getSplitLoops - Get the set of loops that have curli uses and would be
+  /// profitable to split.
+  void getSplitLoops(LoopPtrSet&);
+
   /// getBestSplitLoop - Return the loop where curli may best be split to a
   /// separate register, or NULL.
   const MachineLoop *getBestSplitLoop();
+
+  /// isBypassLoop - Return true if curli is live through Loop and has no uses
+  /// inside the loop. Bypass loops are candidates for splitting because it can
+  /// prevent interference inside the loop.
+  bool isBypassLoop(const MachineLoop *Loop);
+
+  /// getBypassLoops - Get all the maximal bypass loops. These are the bypass
+  /// loops whose parent is not a bypass loop.
+  void getBypassLoops(LoopPtrSet&);
 
   /// getMultiUseBlocks - Add basic blocks to Blocks that may benefit from
   /// having curli split to a new live interval. Return true if Blocks can be
@@ -193,6 +215,9 @@ class LiveIntervalMap {
   //
   // The cache is also used as a visiteed set by mapValue().
   LiveOutMap liveOutCache_;
+
+  // Dump the live-out cache to dbgs().
+  void dumpCache();
 
 public:
   LiveIntervalMap(LiveIntervals &lis,

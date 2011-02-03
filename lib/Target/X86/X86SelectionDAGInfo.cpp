@@ -35,6 +35,14 @@ X86SelectionDAGInfo::EmitTargetCodeForMemset(SelectionDAG &DAG, DebugLoc dl,
                                          MachinePointerInfo DstPtrInfo) const {
   ConstantSDNode *ConstantSize = dyn_cast<ConstantSDNode>(Size);
 
+  // @LOCALMOD-BEGIN
+  if (Subtarget->isTargetNaCl()) {
+    // TODO: Can we allow this optimization for Native Client?
+    // At the very least, pointer size needs to be fixed below.
+    return SDValue();
+  }
+  // @LOCALMOD-END
+
   // If to a segment-relative address space, use the default lowering.
   if (DstPtrInfo.getAddrSpace() >= 256)
     return SDValue();
@@ -74,14 +82,6 @@ X86SelectionDAGInfo::EmitTargetCodeForMemset(SelectionDAG &DAG, DebugLoc dl,
     // Otherwise have the target-independent code call memset.
     return SDValue();
   }
-
-  // @LOCALMOD-BEGIN
-  if (Subtarget->isTargetNaCl()) {
-    // TODO: Can we allow this optimization for Native Client?
-    // At the very least, pointer size needs to be fixed below.
-    return SDValue();
-  }
-  // @LOCALMOD-END
 
   uint64_t SizeVal = ConstantSize->getZExtValue();
   SDValue InFlag(0, 0);
@@ -144,7 +144,7 @@ X86SelectionDAGInfo::EmitTargetCodeForMemset(SelectionDAG &DAG, DebugLoc dl,
                             Dst, InFlag);
   InFlag = Chain.getValue(1);
 
-  SDVTList Tys = DAG.getVTList(MVT::Other, MVT::Flag);
+  SDVTList Tys = DAG.getVTList(MVT::Other, MVT::Glue);
   SDValue Ops[] = { Chain, DAG.getValueType(AVT), InFlag };
   Chain = DAG.getNode(X86ISD::REP_STOS, dl, Tys, Ops, array_lengthof(Ops));
 
@@ -158,7 +158,7 @@ X86SelectionDAGInfo::EmitTargetCodeForMemset(SelectionDAG &DAG, DebugLoc dl,
                                                              X86::ECX,
                               Left, InFlag);
     InFlag = Chain.getValue(1);
-    Tys = DAG.getVTList(MVT::Other, MVT::Flag);
+    Tys = DAG.getVTList(MVT::Other, MVT::Glue);
     SDValue Ops[] = { Chain, DAG.getValueType(MVT::i8), InFlag };
     Chain = DAG.getNode(X86ISD::REP_STOS, dl, Tys, Ops, array_lengthof(Ops));
   } else if (BytesLeft) {
@@ -196,8 +196,8 @@ X86SelectionDAGInfo::EmitTargetCodeForMemcpy(SelectionDAG &DAG, DebugLoc dl,
     return SDValue();
 
   // @LOCALMOD-BEGIN
-  // We can't emit REP MOVSQ on Native Client
   if (Subtarget->isTargetNaCl()) {
+    // TODO(pdox): Allow use of the NaCl pseudo-instruction for REP MOV
     return SDValue();
   }
   // @LOCALMOD-END
@@ -245,7 +245,7 @@ X86SelectionDAGInfo::EmitTargetCodeForMemcpy(SelectionDAG &DAG, DebugLoc dl,
                             Src, InFlag);
   InFlag = Chain.getValue(1);
 
-  SDVTList Tys = DAG.getVTList(MVT::Other, MVT::Flag);
+  SDVTList Tys = DAG.getVTList(MVT::Other, MVT::Glue);
   SDValue Ops[] = { Chain, DAG.getValueType(AVT), InFlag };
   SDValue RepMovs = DAG.getNode(X86ISD::REP_MOVS, dl, Tys, Ops,
                                 array_lengthof(Ops));
