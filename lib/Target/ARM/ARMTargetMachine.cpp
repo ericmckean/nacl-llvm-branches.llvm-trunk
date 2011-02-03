@@ -12,14 +12,17 @@
 
 #include "ARMTargetMachine.h"
 #include "ARMMCAsmInfo.h"
-#include "ARMFrameInfo.h"
+#include "ARMFrameLowering.h"
 #include "ARM.h"
 #include "llvm/PassManager.h"
 #include "llvm/CodeGen/Passes.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FormattedStream.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/Target/TargetRegistry.h"
 using namespace llvm;
+
+static cl::opt<bool>ExpandMLx("expand-fp-mlx", cl::init(false), cl::Hidden);
 
 // @LOCALMOD-START
 namespace llvm {
@@ -43,7 +46,8 @@ static MCStreamer *createMCStreamer(const Target &T, const std::string &TT,
                                     MCContext &Ctx, TargetAsmBackend &TAB,
                                     raw_ostream &OS,
                                     MCCodeEmitter *Emitter,
-                                    bool RelaxAll) {
+                                    bool RelaxAll,
+                                    bool NoExecStack) {
   switch (Triple(TT).getOS()) {
   case Triple::Darwin:
     return createMachOStreamer(Ctx, TAB, OS, Emitter, RelaxAll);
@@ -54,7 +58,7 @@ static MCStreamer *createMCStreamer(const Target &T, const std::string &TT,
     llvm_unreachable("ARM does not support Windows COFF format");
     return NULL;
   default:
-    return createELFStreamer(Ctx, TAB, OS, Emitter, RelaxAll);
+    return createELFStreamer(Ctx, TAB, OS, Emitter, RelaxAll, NoExecStack);
   }
 }
 
@@ -106,7 +110,7 @@ ARMTargetMachine::ARMTargetMachine(const Target &T, const std::string &TT,
     ELFWriterInfo(*this),
     TLInfo(*this),
     TSInfo(*this),
-    FrameInfo(Subtarget) {
+    FrameLowering(Subtarget) {
   if (!Subtarget.hasARMOps())
     report_fatal_error("CPU: '" + Subtarget.getCPUString() + "' does not "
                        "support ARM mode execution!");
@@ -128,9 +132,9 @@ ThumbTargetMachine::ThumbTargetMachine(const Target &T, const std::string &TT,
     ELFWriterInfo(*this),
     TLInfo(*this),
     TSInfo(*this),
-    FrameInfo(Subtarget.hasThumb2()
-              ? new ARMFrameInfo(Subtarget)
-              : (ARMFrameInfo*)new Thumb1FrameInfo(Subtarget)) {
+    FrameLowering(Subtarget.hasThumb2()
+              ? new ARMFrameLowering(Subtarget)
+              : (ARMFrameLowering*)new Thumb1FrameLowering(Subtarget)) {
 }
 
 // Pass Pipeline Configuration
@@ -153,6 +157,9 @@ bool ARMBaseTargetMachine::addPreRegAlloc(PassManagerBase &PM,
   // FIXME: temporarily disabling load / store optimization pass for Thumb1.
   if (OptLevel != CodeGenOpt::None && !Subtarget.isThumb1Only())
     PM.add(createARMLoadStoreOptimizationPass(true));
+  if (ExpandMLx &&
+      OptLevel != CodeGenOpt::None && Subtarget.hasVFP2())
+    PM.add(createMLxExpansionPass());
 
   return true;
 }

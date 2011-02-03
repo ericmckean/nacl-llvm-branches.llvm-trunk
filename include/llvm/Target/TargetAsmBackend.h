@@ -10,19 +10,19 @@
 #ifndef LLVM_TARGET_TARGETASMBACKEND_H
 #define LLVM_TARGET_TARGETASMBACKEND_H
 
-#include "llvm/System/DataTypes.h"
+#include "llvm/MC/MCDirectives.h"
+#include "llvm/MC/MCFixup.h"
+#include "llvm/MC/MCFixupKindInfo.h"
+#include "llvm/Support/DataTypes.h"
 
 namespace llvm {
-class MCDataFragment;
 class MCFixup;
 class MCInst;
-class MCObjectFormat;
 class MCObjectWriter;
 class MCSection;
 class MCStreamer;
 template<typename T>
 class SmallVectorImpl;
-class Target;
 class raw_ostream;
 
 /// TargetAsmBackend - Generic interface to target specific assembler backends.
@@ -30,20 +30,12 @@ class TargetAsmBackend {
   TargetAsmBackend(const TargetAsmBackend &);   // DO NOT IMPLEMENT
   void operator=(const TargetAsmBackend &);  // DO NOT IMPLEMENT
 protected: // Can only create subclasses.
-  TargetAsmBackend(const Target &);
-
-  /// TheTarget - The Target that this machine was created for.
-  const Target &TheTarget;
+  TargetAsmBackend();
 
   unsigned HasReliableSymbolDifference : 1;
-  unsigned HasScatteredSymbols : 1;
 
 public:
   virtual ~TargetAsmBackend();
-
-  const Target &getTarget() const { return TheTarget; }
-
-  virtual const MCObjectFormat &getObjectFormat() const = 0;
 
   /// createObjectWriter - Create a new MCObjectWriter instance for use by the
   /// assembler backend to emit the final object file.
@@ -63,16 +55,6 @@ public:
     return HasReliableSymbolDifference;
   }
 
-  /// hasScatteredSymbols - Check whether this target supports scattered
-  /// symbols. If so, the assembler should assume that atoms can be scattered by
-  /// the linker. In particular, this means that the offsets between symbols
-  /// which are in distinct atoms is not known at link time, and the assembler
-  /// must generate fixups and relocations appropriately.
-  ///
-  /// Note that the assembler currently does not reason about atoms, instead it
-  /// assumes all temporary symbols reside in the "current atom".
-  bool hasScatteredSymbols() const { return HasScatteredSymbols; }
-
   /// doesSectionRequireSymbols - Check whether the given section requires that
   /// all symbols (even temporaries) have symbol table entries.
   virtual bool doesSectionRequireSymbols(const MCSection &Section) const {
@@ -87,14 +69,27 @@ public:
     return true;
   }
 
-  /// getPointerSize - Get the pointer size in bytes.
-  virtual unsigned getPointerSize() const = 0;
+  /// @name Target Fixup Interfaces
+  /// @{
+
+  /// getNumFixupKinds - Get the number of target specific fixup kinds.
+  virtual unsigned getNumFixupKinds() const = 0;
+
+  /// getFixupKindInfo - Get information on a fixup kind.
+  virtual const MCFixupKindInfo &getFixupKindInfo(MCFixupKind Kind) const;
+
+  /// @}
 
   /// ApplyFixup - Apply the \arg Value for given \arg Fixup into the provided
   /// data fragment, at the offset specified by the fixup and following the
   /// fixup kind as appropriate.
-  virtual void ApplyFixup(const MCFixup &Fixup, MCDataFragment &Fragment,
+  virtual void ApplyFixup(const MCFixup &Fixup, char *Data, unsigned DataSize,
                           uint64_t Value) const = 0;
+
+  /// @}
+
+  /// @name Target Relaxation Interfaces
+  /// @{
 
   /// MayNeedRelaxation - Check whether the given instruction may need
   /// relaxation.
@@ -110,6 +105,8 @@ public:
   /// \parm Res [output] - On return, the relaxed instruction.
   virtual void RelaxInstruction(const MCInst &Inst, MCInst &Res) const = 0;
 
+  /// @}
+
   /// WriteNopData - Write an (optimal) nop sequence of Count bytes to the given
   /// output. If the target cannot generate such a sequence, it should return an
   /// error.
@@ -117,6 +114,10 @@ public:
   /// \return - True on success.
   virtual bool WriteNopData(uint64_t Count, MCObjectWriter *OW) const = 0;
 
+  /// HandleAssemblerFlag - Handle any target-specific assembler flags.
+  /// By default, do nothing.
+  virtual void HandleAssemblerFlag(MCAssemblerFlag Flag) {}
+  
   // @LOCALMOD-BEGIN
   /// getBundleSize - Return the size (in bytes) of code bundling units
   /// for this target. If 0, bundling is disabled. This is used exclusively

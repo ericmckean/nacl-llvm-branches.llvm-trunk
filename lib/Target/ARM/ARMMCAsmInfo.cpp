@@ -68,6 +68,6 @@ ARMELFMCAsmInfo::ARMELFMCAsmInfo() {
 
   // @LOCALMOD-START
   // Exceptions handling
-  ExceptionsType = ExceptionHandling::Dwarf;
+  ExceptionsType = ExceptionHandling::DwarfTable;
   // @LOCALMOD-END
 }

@@ -32,7 +32,7 @@ class formatted_raw_ostream;
 class MCCodeEmitter;
 class TargetAsmBackend;
 class MachineInstr;
-class AsmPrinter;
+class ARMAsmPrinter;
 class MCInst;
 
 MCCodeEmitter *createARMMCCodeEmitter(const Target &,
@@ -52,6 +52,7 @@ FunctionPass *createARMExpandPseudoPass();
 FunctionPass *createARMGlobalMergePass(const TargetLowering* tli);
 FunctionPass *createARMConstantIslandPass();
 FunctionPass *createNEONMoveFixPass();
+FunctionPass *createMLxExpansionPass();
 FunctionPass *createThumb2ITBlockPass();
 FunctionPass *createThumb2SizeReductionPass();
 
@@ -62,7 +63,7 @@ FunctionPass *createARMNaClRewritePass();
 extern Target TheARMTarget, TheThumbTarget;
 
 void LowerARMMachineInstrToMCInst(const MachineInstr *MI, MCInst &OutMI,
-                                  AsmPrinter &AP);
+                                  ARMAsmPrinter &AP);
 
 /* @LOCALMOD-START */
 // Used to lower the pc-relative MOVi16PIC / MOVTi16PIC pseudo instructions
@@ -70,7 +71,7 @@ void LowerARMMachineInstrToMCInst(const MachineInstr *MI, MCInst &OutMI,
 // See comment on MOVi16PIC for more details.
 void LowerARMMachineInstrToMCInstPCRel(const MachineInstr *MI,
                                        MCInst &OutMI,
-                                       AsmPrinter &AP,
+                                       ARMAsmPrinter &AP,
                                        unsigned ImmIndex,
                                        unsigned PCIndex,
                                        MCSymbol *PCLabel,

@@ -14,8 +14,9 @@
 #ifndef LLVM_MC_MCSTREAMER_H
 #define LLVM_MC_MCSTREAMER_H
 
-#include "llvm/System/DataTypes.h"
+#include "llvm/Support/DataTypes.h"
 #include "llvm/MC/MCDirectives.h"
+#include "llvm/MC/MCDwarf.h"
 
 namespace llvm {
   class MCAsmInfo;
@@ -48,6 +49,13 @@ namespace llvm {
     MCStreamer(const MCStreamer&); // DO NOT IMPLEMENT
     MCStreamer &operator=(const MCStreamer&); // DO NOT IMPLEMENT
 
+    void EmitSymbolValue(const MCSymbol *Sym, unsigned Size,
+                         bool isPCRel, unsigned AddrSpace);
+
+    std::vector<MCDwarfFrameInfo> FrameInfos;
+    MCDwarfFrameInfo *getCurrentFrameInfo();
+    void EnsureValidFrame();
+
   protected:
     MCStreamer(MCContext &Ctx);
 
@@ -63,6 +71,14 @@ namespace llvm {
     virtual ~MCStreamer();
 
     MCContext &getContext() const { return Context; }
+
+    unsigned getNumFrameInfos() {
+      return FrameInfos.size();
+    }
+
+    const MCDwarfFrameInfo &getFrameInfo(unsigned i) {
+      return FrameInfos[i];
+    }
 
     /// @name Assembly File Formatting.
     /// @{
@@ -241,14 +257,25 @@ namespace llvm {
     /// @param Value - The value to emit.
     /// @param Size - The size of the integer (in bytes) to emit. This must
     /// match a native machine width.
-    virtual void EmitValue(const MCExpr *Value, unsigned Size,
-                           unsigned AddrSpace = 0) = 0;
+    virtual void EmitValueImpl(const MCExpr *Value, unsigned Size,
+                               bool isPCRel, unsigned AddrSpace) = 0;
+
+    void EmitValue(const MCExpr *Value, unsigned Size, unsigned AddrSpace = 0);
+
+    void EmitPCRelValue(const MCExpr *Value, unsigned Size,
+                        unsigned AddrSpace = 0);
 
     /// EmitIntValue - Special case of EmitValue that avoids the client having
     /// to pass in a MCExpr for constant integers.
     virtual void EmitIntValue(uint64_t Value, unsigned Size,
                               unsigned AddrSpace = 0);
 
+    /// EmitAbsValue - Emit the Value, but try to avoid relocations. On MachO
+    /// this is done by producing
+    /// foo = value
+    /// .long foo
+    void EmitAbsValue(const MCExpr *Value, unsigned Size,
+                      unsigned AddrSpace = 0);
 
     virtual void EmitULEB128Value(const MCExpr *Value,
                                   unsigned AddrSpace = 0) = 0;
@@ -258,23 +285,26 @@ namespace llvm {
 
     /// EmitULEB128Value - Special case of EmitULEB128Value that avoids the
     /// client having to pass in a MCExpr for constant integers.
-    virtual void EmitULEB128IntValue(uint64_t Value, unsigned AddrSpace = 0);
+    void EmitULEB128IntValue(uint64_t Value, unsigned AddrSpace = 0);
 
     /// EmitSLEB128Value - Special case of EmitSLEB128Value that avoids the
     /// client having to pass in a MCExpr for constant integers.
-    virtual void EmitSLEB128IntValue(int64_t Value, unsigned AddrSpace = 0);
+    void EmitSLEB128IntValue(int64_t Value, unsigned AddrSpace = 0);
 
     /// EmitSymbolValue - Special case of EmitValue that avoids the client
     /// having to pass in a MCExpr for MCSymbols.
-    virtual void EmitSymbolValue(const MCSymbol *Sym, unsigned Size,
-                                 unsigned AddrSpace = 0);
+    void EmitSymbolValue(const MCSymbol *Sym, unsigned Size,
+                         unsigned AddrSpace = 0);
+
+    void EmitPCRelSymbolValue(const MCSymbol *Sym, unsigned Size,
+                              unsigned AddrSpace = 0);
 
     /// EmitGPRel32Value - Emit the expression @p Value into the output as a
     /// gprel32 (32-bit GP relative) value.
     ///
     /// This is used to implement assembler directives such as .gprel32 on
     /// targets that support them.
-    virtual void EmitGPRel32Value(const MCExpr *Value) = 0;
+    virtual void EmitGPRel32Value(const MCExpr *Value);
 
     /// EmitFill - Emit NumBytes bytes worth of the value specified by
     /// FillValue.  This implements directives such as '.space'.
@@ -373,13 +403,28 @@ namespace llvm {
                                        unsigned Isa,
                                        unsigned Discriminator);
 
+    virtual void EmitDwarfAdvanceLineAddr(int64_t LineDelta,
+                                          const MCSymbol *LastLabel,
+                                          const MCSymbol *Label) = 0;
+
+    virtual void EmitDwarfAdvanceFrameAddr(const MCSymbol *LastLabel,
+                                           const MCSymbol *Label) {
+    }
+
+    void EmitDwarfSetLineAddr(int64_t LineDelta, const MCSymbol *Label,
+                              int PointerSize);
+
     virtual bool EmitCFIStartProc();
     virtual bool EmitCFIEndProc();
+    virtual bool EmitCFIDefCfa(int64_t Register, int64_t Offset);
     virtual bool EmitCFIDefCfaOffset(int64_t Offset);
     virtual bool EmitCFIDefCfaRegister(int64_t Register);
     virtual bool EmitCFIOffset(int64_t Register, int64_t Offset);
-    virtual bool EmitCFIPersonality(const MCSymbol *Sym);
-    virtual bool EmitCFILsda(const MCSymbol *Sym);
+    virtual bool EmitCFIPersonality(const MCSymbol *Sym,
+                                    unsigned Encoding);
+    virtual bool EmitCFILsda(const MCSymbol *Sym, unsigned Encoding);
+    virtual bool EmitCFIRememberState();
+    virtual bool EmitCFIRestoreState();
 
     /// EmitInstruction - Emit the given @p Instruction into the current
     /// section.
@@ -410,21 +455,19 @@ namespace llvm {
   /// \param CE - If given, a code emitter to use to show the instruction
   /// encoding inline with the assembly. This method takes ownership of \arg CE.
   ///
+  /// \param TAB - If given, a target asm backend to use to show the fixup
+  /// information in conjunction with encoding information. This method takes
+  /// ownership of \arg TAB.
+  ///
   /// \param ShowInst - Whether to show the MCInst representation inline with
   /// the assembly.
   MCStreamer *createAsmStreamer(MCContext &Ctx, formatted_raw_ostream &OS,
-                                bool isLittleEndian, bool isVerboseAsm,
+                                bool isVerboseAsm,
+                                bool useLoc,
                                 MCInstPrinter *InstPrint = 0,
                                 MCCodeEmitter *CE = 0,
+                                TargetAsmBackend *TAB = 0,
                                 bool ShowInst = false);
-
-  MCStreamer *createAsmStreamerNoLoc(MCContext &Ctx, formatted_raw_ostream &OS,
-                                     bool isLittleEndian, bool isVerboseAsm,
-                                     const TargetLoweringObjectFile *TLOF,
-                                     int PointerSize,
-                                     MCInstPrinter *InstPrint = 0,
-                                     MCCodeEmitter *CE = 0,
-                                     bool ShowInst = false);
 
   /// createMachOStreamer - Create a machine code streamer which will generate
   /// Mach-O format object files.
@@ -447,7 +490,7 @@ namespace llvm {
   /// ELF format object files.
   MCStreamer *createELFStreamer(MCContext &Ctx, TargetAsmBackend &TAB,
 				raw_ostream &OS, MCCodeEmitter *CE,
-				bool RelaxAll = false);
+				bool RelaxAll, bool NoExecStack);
 
   /// createLoggingStreamer - Create a machine code streamer which just logs the
   /// API calls and then dispatches to another streamer.

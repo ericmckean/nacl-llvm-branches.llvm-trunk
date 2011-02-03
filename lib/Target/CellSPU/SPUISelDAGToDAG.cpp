@@ -15,7 +15,7 @@
 #include "SPU.h"
 #include "SPUTargetMachine.h"
 #include "SPUHazardRecognizers.h"
-#include "SPUFrameInfo.h"
+#include "SPUFrameLowering.h"
 #include "SPURegisterNames.h"
 #include "SPUTargetMachine.h"
 #include "llvm/CodeGen/MachineConstantPool.h"
@@ -301,14 +301,6 @@ namespace {
       return "Cell SPU DAG->DAG Pattern Instruction Selection";
     }
 
-    /// CreateTargetHazardRecognizer - Return the hazard recognizer to use for
-    /// this target when scheduling the DAG.
-    virtual ScheduleHazardRecognizer *CreateTargetHazardRecognizer() {
-      const TargetInstrInfo *II = TM.getInstrInfo();
-      assert(II && "No InstrInfo?");
-      return new SPUHazardRecognizer(*II);
-    }
-
   private:
     SDValue getRC( MVT );
 
@@ -398,8 +390,8 @@ bool
 SPUDAGToDAGISel::SelectDFormAddr(SDNode *Op, SDValue N, SDValue &Base,
                                  SDValue &Index) {
   return DFormAddressPredicate(Op, N, Base, Index,
-                               SPUFrameInfo::minFrameOffset(),
-                               SPUFrameInfo::maxFrameOffset());
+                               SPUFrameLowering::minFrameOffset(),
+                               SPUFrameLowering::maxFrameOffset());
 }
 
 bool
@@ -415,7 +407,7 @@ SPUDAGToDAGISel::DFormAddressPredicate(SDNode *Op, SDValue N, SDValue &Base,
     int FI = int(FIN->getIndex());
     DEBUG(errs() << "SelectDFormAddr: ISD::FrameIndex = "
                << FI << "\n");
-    if (SPUFrameInfo::FItoStackOffset(FI) < maxOffset) {
+    if (SPUFrameLowering::FItoStackOffset(FI) < maxOffset) {
       Base = CurDAG->getTargetConstant(0, PtrTy);
       Index = CurDAG->getTargetFrameIndex(FI, PtrTy);
       return true;
@@ -441,7 +433,7 @@ SPUDAGToDAGISel::DFormAddressPredicate(SDNode *Op, SDValue N, SDValue &Base,
         DEBUG(errs() << "SelectDFormAddr: ISD::ADD offset = " << offset
                    << " frame index = " << FI << "\n");
 
-        if (SPUFrameInfo::FItoStackOffset(FI) < maxOffset) {
+        if (SPUFrameLowering::FItoStackOffset(FI) < maxOffset) {
           Base = CurDAG->getTargetConstant(offset, PtrTy);
           Index = CurDAG->getTargetFrameIndex(FI, PtrTy);
           return true;
@@ -462,7 +454,7 @@ SPUDAGToDAGISel::DFormAddressPredicate(SDNode *Op, SDValue N, SDValue &Base,
         DEBUG(errs() << "SelectDFormAddr: ISD::ADD offset = " << offset
                    << " frame index = " << FI << "\n");
 
-        if (SPUFrameInfo::FItoStackOffset(FI) < maxOffset) {
+        if (SPUFrameLowering::FItoStackOffset(FI) < maxOffset) {
           Base = CurDAG->getTargetConstant(offset, PtrTy);
           Index = CurDAG->getTargetFrameIndex(FI, PtrTy);
           return true;
@@ -596,6 +588,9 @@ SDValue SPUDAGToDAGISel::getRC( MVT VT ) {
   case MVT::i64:
     return CurDAG->getTargetConstant(SPU::R64CRegClass.getID(), MVT::i32);
     break;
+  case MVT::i128:
+    return CurDAG->getTargetConstant(SPU::GPRCRegClass.getID(), MVT::i32);
+    break;
   case MVT::v16i8:
   case MVT::v8i16:
   case MVT::v4i32:
@@ -617,7 +612,7 @@ SDNode *
 SPUDAGToDAGISel::Select(SDNode *N) {
   unsigned Opc = N->getOpcode();
   int n_ops = -1;
-  unsigned NewOpc;
+  unsigned NewOpc = 0;
   EVT OpVT = N->getValueType(0);
   SDValue Ops[8];
   DebugLoc dl = N->getDebugLoc();
@@ -639,7 +634,7 @@ SPUDAGToDAGISel::Select(SDNode *N) {
       NewOpc = SPU::Ar32;
       Ops[0] = CurDAG->getRegister(SPU::R1, N->getValueType(0));
       Ops[1] = SDValue(CurDAG->getMachineNode(SPU::ILAr32, dl,
-                                              N->getValueType(0), TFI, Imm0),
+                                              N->getValueType(0), TFI),
                        0);
       n_ops = 2;
     }

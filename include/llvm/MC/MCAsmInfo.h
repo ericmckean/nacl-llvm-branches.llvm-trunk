@@ -25,7 +25,9 @@ namespace llvm {
 
   /// MCAsmInfo - This class is intended to be used as a base class for asm
   /// properties and features specific to the target.
-  namespace ExceptionHandling { enum ExceptionsType { None, Dwarf, SjLj }; }
+  namespace ExceptionHandling {
+    enum ExceptionsType { None, DwarfTable, DwarfCFI, SjLj };
+  }
 
   class MCAsmInfo {
   protected:
@@ -50,6 +52,11 @@ namespace llvm {
     /// directive after the a static ctor/dtor list.  This directive is only
     /// emitted in Static relocation model.
     bool HasStaticCtorDtorReferenceInStaticMode;  // Default is false.
+
+    /// LinkerRequiresNonEmptyDwarfLines - True if the linker has a bug and
+    /// requires that the debug_line section be of a minimum size. In practice
+    /// such a linker requires a non empty line sequence if a file is present.
+    bool LinkerRequiresNonEmptyDwarfLines; // Default to false.
 
     /// MaxInstLength - This is the maximum possible length of an instruction,
     /// which is needed to compute the size of an inline asm.
@@ -192,6 +199,13 @@ namespace llvm {
     /// HasSetDirective - True if the assembler supports the .set directive.
     bool HasSetDirective;                    // Defaults to true.
 
+    /// HasAggressiveSymbolFolding - False if the assembler requires that we use
+    /// Lc = a - b
+    /// .long Lc
+    /// instead of
+    /// .long a - b
+    bool HasAggressiveSymbolFolding;           // Defaults to true.
+
     /// HasLCOMMDirective - This is true if the target supports the .lcomm
     /// directive.
     bool HasLCOMMDirective;                  // Defaults to false.
@@ -322,6 +336,9 @@ namespace llvm {
     bool hasStaticCtorDtorReferenceInStaticMode() const {
       return HasStaticCtorDtorReferenceInStaticMode;
     }
+    bool getLinkerRequiresNonEmptyDwarfLines() const {
+      return LinkerRequiresNonEmptyDwarfLines;
+    }
     unsigned getMaxInstLength() const {
       return MaxInstLength;
     }
@@ -392,6 +409,9 @@ namespace llvm {
       return ExternDirective;
     }
     bool hasSetDirective() const { return HasSetDirective; }
+    bool hasAggressiveSymbolFolding() const {
+      return HasAggressiveSymbolFolding;
+    }
     bool hasLCOMMDirective() const { return HasLCOMMDirective; }
     bool hasDotTypeDotSizeDirective() const {return HasDotTypeDotSizeDirective;}
     bool getCOMMDirectiveAlignmentIsInBytes() const {
@@ -420,6 +440,12 @@ namespace llvm {
     ExceptionHandling::ExceptionsType getExceptionHandlingType() const {
       return ExceptionsType;
     }
+    bool isExceptionHandlingDwarf() const {
+      return
+        (ExceptionsType == ExceptionHandling::DwarfTable ||
+         ExceptionsType == ExceptionHandling::DwarfCFI);
+    }
+
     bool doesDwarfRequireFrameSection() const {
       return DwarfRequiresFrameSection;
     }

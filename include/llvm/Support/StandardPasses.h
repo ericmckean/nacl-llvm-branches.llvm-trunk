@@ -20,7 +20,6 @@
 #define LLVM_SUPPORT_STANDARDPASSES_H
 
 #include "llvm/PassManager.h"
-#include "llvm/Analysis/Dominators.h"
 #include "llvm/Analysis/Passes.h"
 #include "llvm/Analysis/Verifier.h"
 #include "llvm/Transforms/Scalar.h"
@@ -82,11 +81,8 @@ namespace llvm {
     if (OptimizationLevel > 0) {
       createStandardAliasAnalysisPasses(PM);
       PM->add(createCFGSimplificationPass());
-      if (OptimizationLevel == 1)
-        PM->add(createPromoteMemoryToRegisterPass());
-      else
-        PM->add(createScalarReplAggregatesPass());
-      PM->add(createInstructionCombiningPass());
+      PM->add(createScalarReplAggregatesPass());
+      PM->add(createEarlyCSEPass());
     }
   }
 
@@ -97,7 +93,7 @@ namespace llvm {
                                                 bool OptimizeSize,
                                                 bool UnitAtATime,
                                                 bool UnrollLoops,
-                                                bool SimplifyLibCalls,
+                                                bool OptimizeBuiltins,
                                                 bool HaveExceptions,
                                                 Pass *InliningPass) {
     createStandardAliasAnalysisPasses(PM);
@@ -128,10 +124,11 @@ namespace llvm {
       PM->add(createArgumentPromotionPass());   // Scalarize uninlined fn args
     
     // Start of function pass.
-    PM->add(createScalarReplAggregatesPass());  // Break up aggregate allocas
-    if (SimplifyLibCalls)
+    // Break up aggregate allocas, using SSAUpdater.
+    PM->add(createScalarReplAggregatesPass(-1, false));
+    PM->add(createEarlyCSEPass());              // Catch trivial redundancies
+    if (OptimizeBuiltins)
       PM->add(createSimplifyLibCallsPass());    // Library Call Optimizations
-    PM->add(createInstructionCombiningPass());  // Cleanup for scalarrepl.
     PM->add(createJumpThreadingPass());         // Thread jumps.
     PM->add(createCorrelatedValuePropagationPass()); // Propagate conditionals
     PM->add(createCFGSimplificationPass());     // Merge & remove BBs
@@ -145,6 +142,8 @@ namespace llvm {
     PM->add(createLoopUnswitchPass(OptimizeSize || OptimizationLevel < 3));
     PM->add(createInstructionCombiningPass());  
     PM->add(createIndVarSimplifyPass());        // Canonicalize indvars
+    if (OptimizeBuiltins)
+      PM->add(createLoopIdiomPass());           // Recognize idioms like memset.
     PM->add(createLoopDeletionPass());          // Delete dead loops
     if (UnrollLoops)
       PM->add(createLoopUnrollPass());          // Unroll small loops

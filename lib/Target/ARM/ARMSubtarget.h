@@ -17,7 +17,7 @@
 #include "llvm/Target/TargetInstrItineraries.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetSubtarget.h"
-#include "ARMBaseRegisterInfo.h"
+#include "llvm/ADT/Triple.h"
 #include <string>
 
 // @LOCALMOD-BEGIN
@@ -65,9 +65,9 @@ protected:
   /// determine if NEON should actually be used.
   bool UseNEONForSinglePrecisionFP;
 
-  /// SlowVMLx - If the VFP2 instructions are available, indicates whether
-  /// the VML[AS] instructions are slow (if so, don't use them).
-  bool SlowVMLx;
+  /// SlowFPVMLx - If the VFP2 / NEON instructions are available, indicates
+  /// whether the FP VML[AS] instructions are slow (if so, don't use them).
+  bool SlowFPVMLx;
 
   /// SlowFPBrcc - True if floating point compare + branch is slow.
   bool SlowFPBrcc;
@@ -134,6 +134,9 @@ protected:
   /// CPUString - String name of used CPU.
   std::string CPUString;
 
+  /// TargetTriple - What processor and OS we're targeting.
+  Triple TargetTriple;
+
   /// Selected instruction itineraries (one entry per itinerary class.)
   InstrItineraryData InstrItins;
 
@@ -170,6 +173,8 @@ protected:
   std::string ParseSubtargetFeatures(const std::string &FS,
                                      const std::string &CPU);
 
+  void computeIssueWidth();
+
   bool hasV4TOps()  const { return ARMArchVersion >= V4T;  }
   bool hasV5TOps()  const { return ARMArchVersion >= V5T;  }
   bool hasV5TEOps() const { return ARMArchVersion >= V5TE; }
@@ -190,7 +195,7 @@ protected:
   bool hasDivide() const { return HasHardwareDivide; }
   bool hasT2ExtractPack() const { return HasT2ExtractPack; }
   bool hasDataBarrier() const { return HasDataBarrier; }
-  bool useVMLx() const {return hasVFP2() && !SlowVMLx; }
+  bool useFPVMLx() const { return !SlowFPVMLx; }
   bool isFPBrccSlow() const { return SlowFPBrcc; }
   bool isFPOnlySP() const { return FPOnlySP; }
   bool prefers32BitThumb() const { return Pref32BitThumb; }
@@ -199,8 +204,8 @@ protected:
   bool hasFP16() const { return HasFP16; }
   bool hasD16() const { return HasD16; }
 
-  bool isTargetDarwin() const { return TargetType == isDarwin; }
-  bool isTargetELF() const { return TargetType == isELF; }
+  bool isTargetDarwin() const { return TargetTriple.getOS() == Triple::Darwin; }
+  bool isTargetELF() const { return !isTargetDarwin(); }
 
   bool isAPCS_ABI() const { return TargetABI == ARM_ABI_APCS; }
   bool isAAPCS_ABI() const { return TargetABI == ARM_ABI_AAPCS; }
@@ -222,7 +227,7 @@ protected:
   const std::string & getCPUString() const { return CPUString; }
 
   unsigned getMispredictionPenalty() const;
-  
+
   /// enablePostRAScheduler - True at 'More' optimization.
   bool enablePostRAScheduler(CodeGenOpt::Level OptLevel,
                              TargetSubtarget::AntiDepBreakMode& Mode,

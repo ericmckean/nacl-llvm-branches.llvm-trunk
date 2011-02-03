@@ -125,6 +125,10 @@ public:
   /// srl/add/sra.
   bool isPow2DivCheap() const { return Pow2DivIsCheap; }
 
+  /// isJumpExpensive() - Return true if Flow Control is an expensive operation
+  /// that should be avoided.
+  bool isJumpExpensive() const { return JumpIsExpensive; }
+
   /// getSetCCResultType - Return the ValueType of the result of SETCC
   /// operations.  Also used to obtain the target's preferred type for
   /// the condition operand of SELECT and BRCOND nodes.  In the case of
@@ -638,21 +642,30 @@ public:
 
   /// This function returns the maximum number of store operations permitted
   /// to replace a call to llvm.memset. The value is set by the target at the
-  /// performance threshold for such a replacement.
+  /// performance threshold for such a replacement. If OptSize is true,
+  /// return the limit for functions that have OptSize attribute.
   /// @brief Get maximum # of store operations permitted for llvm.memset
-  unsigned getMaxStoresPerMemset() const { return maxStoresPerMemset; }
+  unsigned getMaxStoresPerMemset(bool OptSize) const {
+    return OptSize ? maxStoresPerMemsetOptSize : maxStoresPerMemset;
+  }
 
   /// This function returns the maximum number of store operations permitted
   /// to replace a call to llvm.memcpy. The value is set by the target at the
-  /// performance threshold for such a replacement.
+  /// performance threshold for such a replacement. If OptSize is true,
+  /// return the limit for functions that have OptSize attribute.
   /// @brief Get maximum # of store operations permitted for llvm.memcpy
-  unsigned getMaxStoresPerMemcpy() const { return maxStoresPerMemcpy; }
+  unsigned getMaxStoresPerMemcpy(bool OptSize) const {
+    return OptSize ? maxStoresPerMemcpyOptSize : maxStoresPerMemcpy;
+  }
 
   /// This function returns the maximum number of store operations permitted
   /// to replace a call to llvm.memmove. The value is set by the target at the
-  /// performance threshold for such a replacement.
+  /// performance threshold for such a replacement. If OptSize is true,
+  /// return the limit for functions that have OptSize attribute.
   /// @brief Get maximum # of store operations permitted for llvm.memmove
-  unsigned getMaxStoresPerMemmove() const { return maxStoresPerMemmove; }
+  unsigned getMaxStoresPerMemmove(bool OptSize) const {
+    return OptSize ? maxStoresPerMemmoveOptSize : maxStoresPerMemmove;
+  }
 
   /// This function returns true if the target allows unaligned memory accesses.
   /// of the specified type. This is used, for example, in situations where an
@@ -1013,7 +1026,16 @@ protected:
 
   /// SelectIsExpensive - Tells the code generator not to expand operations
   /// into sequences that use the select operations if possible.
-  void setSelectIsExpensive() { SelectIsExpensive = true; }
+  void setSelectIsExpensive(bool isExpensive = true) { 
+    SelectIsExpensive = isExpensive; 
+  }
+
+  /// JumpIsExpensive - Tells the code generator not to expand sequence of 
+  /// operations into a seperate sequences that increases the amount of 
+  /// flow control.
+  void setJumpIsExpensive(bool isExpensive = true) {
+    JumpIsExpensive = isExpensive;
+  }
 
   /// setIntDivIsCheap - Tells the code generator that integer divide is
   /// expensive, and if possible, should be replaced by an alternate sequence
@@ -1243,6 +1265,13 @@ public:
                 DebugLoc dl, SelectionDAG &DAG) const {
     assert(0 && "Not Implemented");
     return SDValue();    // this is here to silence compiler errors
+  }
+
+  /// isUsedByReturnOnly - Return true if result of the specified node is used
+  /// by a return node only. This is used to determine whether it is possible
+  /// to codegen a libcall as tail call at legalization time.
+  virtual bool isUsedByReturnOnly(SDNode *N) const {
+    return false;
   }
 
   /// LowerOperationWrapper - This callback is invoked by the type legalizer
@@ -1597,6 +1626,11 @@ private:
   /// it.
   bool Pow2DivIsCheap;
 
+  /// JumpIsExpensive - Tells the code generator that it shouldn't generate
+  /// extra flow control instructions and should attempt to combine flow
+  /// control instructions via predication.
+  bool JumpIsExpensive;
+
   /// UseUnderscoreSetJmp - This target prefers to use _setjmp to implement
   /// llvm.setjmp.  Defaults to false.
   bool UseUnderscoreSetJmp;
@@ -1751,6 +1785,10 @@ protected:
   /// @brief Specify maximum number of store instructions per memset call.
   unsigned maxStoresPerMemset;
 
+  /// Maximum number of stores operations that may be substituted for the call
+  /// to memset, used for functions with OptSize attribute.
+  unsigned maxStoresPerMemsetOptSize;
+
   /// When lowering \@llvm.memcpy this field specifies the maximum number of
   /// store operations that may be substituted for a call to memcpy. Targets
   /// must set this value based on the cost threshold for that target. Targets
@@ -1763,6 +1801,10 @@ protected:
   /// @brief Specify maximum bytes of store instructions per memcpy call.
   unsigned maxStoresPerMemcpy;
 
+  /// Maximum number of store operations that may be substituted for a call
+  /// to memcpy, used for functions with OptSize attribute.
+  unsigned maxStoresPerMemcpyOptSize;
+
   /// When lowering \@llvm.memmove this field specifies the maximum number of
   /// store instructions that may be substituted for a call to memmove. Targets
   /// must set this value based on the cost threshold for that target. Targets
@@ -1773,6 +1815,10 @@ protected:
   /// applies to copying a constant array of constant size.
   /// @brief Specify maximum bytes of store instructions per memmove call.
   unsigned maxStoresPerMemmove;
+
+  /// Maximum number of store instructions that may be substituted for a call
+  /// to memmove, used for functions with OpSize attribute.
+  unsigned maxStoresPerMemmoveOptSize;
 
   /// This field specifies whether the target can benefit from code placement
   /// optimization.

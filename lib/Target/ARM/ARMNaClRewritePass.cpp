@@ -98,7 +98,7 @@ static bool IsIndirectJump(const MachineInstr &MI) {
   switch (MI.getOpcode()) {
    default: return false;
 
-   case ARM::BRIND:
+   case ARM::BX:
    case ARM::TAILJMPr:
    case ARM::TAILJMPrND:
     return true;

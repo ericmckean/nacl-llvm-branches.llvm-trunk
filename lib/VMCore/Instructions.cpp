@@ -96,8 +96,7 @@ PHINode::PHINode(const PHINode &PN)
 }
 
 PHINode::~PHINode() {
-  if (OperandList)
-    dropHungoffUses(OperandList);
+  dropHungoffUses();
 }
 
 // removeIncomingValue - Remove an incoming value.  This is useful if a
@@ -158,7 +157,7 @@ void PHINode::resizeOperands(unsigned NumOps) {
   Use *NewOps = allocHungoffUses(NumOps);
   std::copy(OldOps, OldOps + e, NewOps);
   OperandList = NewOps;
-  if (OldOps) Use::zap(OldOps, OldOps + e, true);
+  Use::zap(OldOps, OldOps + e, true);
 }
 
 /// hasConstantValue - If the specified PHI node always merges together the same
@@ -186,7 +185,7 @@ void CallInst::init(Value *Func, Value* const *Params, unsigned NumParams) {
 
   const FunctionType *FTy =
     cast<FunctionType>(cast<PointerType>(Func->getType())->getElementType());
-  FTy = FTy;  // silence warning.
+  (void)FTy;  // silence warning.
 
   assert((NumParams == FTy->getNumParams() ||
           (FTy->isVarArg() && NumParams > FTy->getNumParams())) &&
@@ -207,7 +206,7 @@ void CallInst::init(Value *Func, Value *Actual1, Value *Actual2) {
 
   const FunctionType *FTy =
     cast<FunctionType>(cast<PointerType>(Func->getType())->getElementType());
-  FTy = FTy;  // silence warning.
+  (void)FTy;  // silence warning.
 
   assert((FTy->getNumParams() == 2 ||
           (FTy->isVarArg() && FTy->getNumParams() < 2)) &&
@@ -227,7 +226,7 @@ void CallInst::init(Value *Func, Value *Actual) {
 
   const FunctionType *FTy =
     cast<FunctionType>(cast<PointerType>(Func->getType())->getElementType());
-  FTy = FTy;  // silence warning.
+  (void)FTy;  // silence warning.
 
   assert((FTy->getNumParams() == 1 ||
           (FTy->isVarArg() && FTy->getNumParams() == 0)) &&
@@ -243,7 +242,7 @@ void CallInst::init(Value *Func) {
 
   const FunctionType *FTy =
     cast<FunctionType>(cast<PointerType>(Func->getType())->getElementType());
-  FTy = FTy;  // silence warning.
+  (void)FTy;  // silence warning.
 
   assert(FTy->getNumParams() == 0 && "Calling a function with bad signature");
 }
@@ -500,7 +499,7 @@ void InvokeInst::init(Value *Fn, BasicBlock *IfNormal, BasicBlock *IfException,
   Op<-1>() = IfException;
   const FunctionType *FTy =
     cast<FunctionType>(cast<PointerType>(Fn->getType())->getElementType());
-  FTy = FTy;  // silence warning.
+  (void)FTy;  // silence warning.
 
   assert(((NumArgs == FTy->getNumParams()) ||
           (FTy->isVarArg() && NumArgs > FTy->getNumParams())) &&
@@ -729,31 +728,6 @@ BranchInst::BranchInst(const BranchInst &BI) :
   }
   SubclassOptionalData = BI.SubclassOptionalData;
 }
-
-
-Use* Use::getPrefix() {
-  PointerIntPair<Use**, 2, PrevPtrTag> &PotentialPrefix(this[-1].Prev);
-  if (PotentialPrefix.getOpaqueValue())
-    return 0;
-
-  return reinterpret_cast<Use*>((char*)&PotentialPrefix + 1);
-}
-
-BranchInst::~BranchInst() {
-  if (NumOperands == 1) {
-    if (Use *Prefix = OperandList->getPrefix()) {
-      Op<-1>() = 0;
-      //
-      // mark OperandList to have a special value for scrutiny
-      // by baseclass destructors and operator delete
-      OperandList = Prefix;
-    } else {
-      NumOperands = 3;
-      OperandList = op_begin();
-    }
-  }
-}
-
 
 BasicBlock *BranchInst::getSuccessorV(unsigned idx) const {
   return getSuccessor(idx);
@@ -1199,6 +1173,12 @@ const Type* GetElementPtrInst::getIndexedType(const Type *Ptr,
 }
 
 const Type* GetElementPtrInst::getIndexedType(const Type *Ptr,
+                                              Constant* const *Idxs,
+                                              unsigned NumIdx) {
+  return getIndexedTypeInternal(Ptr, Idxs, NumIdx);
+}
+
+const Type* GetElementPtrInst::getIndexedType(const Type *Ptr,
                                               uint64_t const *Idxs,
                                               unsigned NumIdx) {
   return getIndexedTypeInternal(Ptr, Idxs, NumIdx);
@@ -1424,6 +1404,8 @@ int ShuffleVectorInst::getMaskValue(unsigned i) const {
 void InsertValueInst::init(Value *Agg, Value *Val, const unsigned *Idx, 
                            unsigned NumIdx, const Twine &Name) {
   assert(NumOperands == 2 && "NumOperands not initialized?");
+  assert(ExtractValueInst::getIndexedType(Agg->getType(), Idx, Idx + NumIdx) ==
+         Val->getType() && "Inserted value must match indexed type!");
   Op<0>() = Agg;
   Op<1>() = Val;
 
@@ -1434,6 +1416,8 @@ void InsertValueInst::init(Value *Agg, Value *Val, const unsigned *Idx,
 void InsertValueInst::init(Value *Agg, Value *Val, unsigned Idx, 
                            const Twine &Name) {
   assert(NumOperands == 2 && "NumOperands not initialized?");
+  assert(ExtractValueInst::getIndexedType(Agg->getType(), Idx) == Val->getType()
+         && "Inserted value must match indexed type!");
   Op<0>() = Agg;
   Op<1>() = Val;
 
@@ -1506,13 +1490,26 @@ ExtractValueInst::ExtractValueInst(const ExtractValueInst &EVI)
 const Type* ExtractValueInst::getIndexedType(const Type *Agg,
                                              const unsigned *Idxs,
                                              unsigned NumIdx) {
-  unsigned CurIdx = 0;
-  for (; CurIdx != NumIdx; ++CurIdx) {
-    const CompositeType *CT = dyn_cast<CompositeType>(Agg);
-    if (!CT || CT->isPointerTy() || CT->isVectorTy()) return 0;
+  for (unsigned CurIdx = 0; CurIdx != NumIdx; ++CurIdx) {
     unsigned Index = Idxs[CurIdx];
-    if (!CT->indexValid(Index)) return 0;
-    Agg = CT->getTypeAtIndex(Index);
+    // We can't use CompositeType::indexValid(Index) here.
+    // indexValid() always returns true for arrays because getelementptr allows
+    // out-of-bounds indices. Since we don't allow those for extractvalue and
+    // insertvalue we need to check array indexing manually.
+    // Since the only other types we can index into are struct types it's just
+    // as easy to check those manually as well.
+    if (const ArrayType *AT = dyn_cast<ArrayType>(Agg)) {
+      if (Index >= AT->getNumElements())
+        return 0;
+    } else if (const StructType *ST = dyn_cast<StructType>(Agg)) {
+      if (Index >= ST->getNumElements())
+        return 0;
+    } else {
+      // Not a valid type to index into.
+      return 0;
+    }
+
+    Agg = cast<CompositeType>(Agg)->getTypeAtIndex(Index);
 
     // If the new type forwards to another type, then it is in the middle
     // of being refined to another type (and hence, may have dropped all
@@ -1521,7 +1518,7 @@ const Type* ExtractValueInst::getIndexedType(const Type *Agg,
     if (const Type *Ty = Agg->getForwardedType())
       Agg = Ty;
   }
-  return CurIdx == NumIdx ? Agg : 0;
+  return Agg;
 }
 
 const Type* ExtractValueInst::getIndexedType(const Type *Agg,
@@ -1562,7 +1559,7 @@ BinaryOperator::BinaryOperator(BinaryOps iType, Value *S1, Value *S2,
 
 void BinaryOperator::init(BinaryOps iType) {
   Value *LHS = getOperand(0), *RHS = getOperand(1);
-  LHS = LHS; RHS = RHS; // Silence warnings.
+  (void)LHS; (void)RHS; // Silence warnings.
   assert(LHS->getType() == RHS->getType() &&
          "Binary operator operand types must match!");
 #ifndef NDEBUG
@@ -2719,14 +2716,14 @@ void CmpInst::swapOperands() {
     cast<FCmpInst>(this)->swapOperands();
 }
 
-bool CmpInst::isCommutative() {
-  if (ICmpInst *IC = dyn_cast<ICmpInst>(this))
+bool CmpInst::isCommutative() const {
+  if (const ICmpInst *IC = dyn_cast<ICmpInst>(this))
     return IC->isCommutative();
   return cast<FCmpInst>(this)->isCommutative();
 }
 
-bool CmpInst::isEquality() {
-  if (ICmpInst *IC = dyn_cast<ICmpInst>(this))
+bool CmpInst::isEquality() const {
+  if (const ICmpInst *IC = dyn_cast<ICmpInst>(this))
     return IC->isEquality();
   return cast<FCmpInst>(this)->isEquality();
 }
@@ -2984,7 +2981,7 @@ SwitchInst::SwitchInst(const SwitchInst &SI)
 }
 
 SwitchInst::~SwitchInst() {
-  dropHungoffUses(OperandList);
+  dropHungoffUses();
 }
 
 
@@ -3055,7 +3052,7 @@ void SwitchInst::resizeOperands(unsigned NumOps) {
       NewOps[i] = OldOps[i];
   }
   OperandList = NewOps;
-  if (OldOps) Use::zap(OldOps, OldOps + e, true);
+  Use::zap(OldOps, OldOps + e, true);
 }
 
 
@@ -3070,7 +3067,7 @@ void SwitchInst::setSuccessorV(unsigned idx, BasicBlock *B) {
 }
 
 //===----------------------------------------------------------------------===//
-//                        SwitchInst Implementation
+//                        IndirectBrInst Implementation
 //===----------------------------------------------------------------------===//
 
 void IndirectBrInst::init(Value *Address, unsigned NumDests) {
@@ -3110,7 +3107,7 @@ void IndirectBrInst::resizeOperands(unsigned NumOps) {
   for (unsigned i = 0; i != e; ++i)
     NewOps[i] = OldOps[i];
   OperandList = NewOps;
-  if (OldOps) Use::zap(OldOps, OldOps + e, true);
+  Use::zap(OldOps, OldOps + e, true);
 }
 
 IndirectBrInst::IndirectBrInst(Value *Address, unsigned NumCases,
@@ -3138,7 +3135,7 @@ IndirectBrInst::IndirectBrInst(const IndirectBrInst &IBI)
 }
 
 IndirectBrInst::~IndirectBrInst() {
-  dropHungoffUses(OperandList);
+  dropHungoffUses();
 }
 
 /// addDestination - Add a destination.
@@ -3312,8 +3309,7 @@ ReturnInst *ReturnInst::clone_impl() const {
 }
 
 BranchInst *BranchInst::clone_impl() const {
-  unsigned Ops(getNumOperands());
-  return new(Ops, Ops == 1) BranchInst(*this);
+  return new(getNumOperands()) BranchInst(*this);
 }
 
 SwitchInst *SwitchInst::clone_impl() const {

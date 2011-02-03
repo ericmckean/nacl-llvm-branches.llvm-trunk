@@ -149,8 +149,9 @@ XCoreTargetLowering::XCoreTargetLowering(XCoreTargetMachine &XTM)
   setOperationAction(ISD::STACKRESTORE, MVT::Other, Expand);
   setOperationAction(ISD::DYNAMIC_STACKALLOC, MVT::i32, Expand);
   
-  maxStoresPerMemset = 4;
-  maxStoresPerMemmove = maxStoresPerMemcpy = 2;
+  maxStoresPerMemset = maxStoresPerMemsetOptSize = 4;
+  maxStoresPerMemmove = maxStoresPerMemmoveOptSize
+    = maxStoresPerMemcpy = maxStoresPerMemcpyOptSize = 2;
 
   // We have target-specific dag combine patterns for the following nodes:
   setTargetDAGCombine(ISD::STORE);
@@ -926,7 +927,7 @@ XCoreTargetLowering::LowerCCCCallTo(SDValue Chain, SDValue Callee,
   //             = Chain, Callee, Reg#1, Reg#2, ...  
   //
   // Returns a chain & a flag for retval copy to use.
-  SDVTList NodeTys = DAG.getVTList(MVT::Other, MVT::Flag);
+  SDVTList NodeTys = DAG.getVTList(MVT::Other, MVT::Glue);
   SmallVector<SDValue, 8> Ops;
   Ops.push_back(Chain);
   Ops.push_back(Callee);
@@ -1032,7 +1033,7 @@ XCoreTargetLowering::LowerCCCArguments(SDValue Chain,
 
   CCInfo.AnalyzeFormalArguments(Ins, CC_XCore);
 
-  unsigned StackSlotSize = XCoreFrameInfo::stackSlotSize();
+  unsigned StackSlotSize = XCoreFrameLowering::stackSlotSize();
 
   unsigned LRSaveSize = StackSlotSize;
   

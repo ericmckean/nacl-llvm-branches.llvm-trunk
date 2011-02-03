@@ -10,13 +10,12 @@
 #include "llvm/Target/TargetAsmBackend.h"
 #include "MBlaze.h"
 #include "MBlazeELFWriterInfo.h"
-#include "MBlazeFixupKinds.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/MC/MCAssembler.h"
 #include "llvm/MC/MCAsmLayout.h"
+#include "llvm/MC/MCELFObjectWriter.h"
 #include "llvm/MC/MCELFSymbolFlags.h"
 #include "llvm/MC/MCExpr.h"
-#include "llvm/MC/MCObjectFormat.h"
 #include "llvm/MC/MCObjectWriter.h"
 #include "llvm/MC/MCSectionELF.h"
 #include "llvm/MC/MCSectionMachO.h"
@@ -32,9 +31,9 @@ static unsigned getFixupKindSize(unsigned Kind) {
   switch (Kind) {
   default: assert(0 && "invalid fixup kind!");
   case FK_Data_1: return 1;
-  case MBlaze::reloc_pcrel_2byte:
+  case FK_PCRel_2:
   case FK_Data_2: return 2;
-  case MBlaze::reloc_pcrel_4byte:
+  case FK_PCRel_4:
   case FK_Data_4: return 4;
   case FK_Data_8: return 8;
   }
@@ -42,10 +41,21 @@ static unsigned getFixupKindSize(unsigned Kind) {
 
 
 namespace {
+class MBlazeELFObjectWriter : public MCELFObjectTargetWriter {
+public:
+  MBlazeELFObjectWriter(Triple::OSType OSType)
+    : MCELFObjectTargetWriter(/*is64Bit*/ false, OSType, ELF::EM_MBLAZE,
+                              /*HasRelocationAddend*/ true) {}
+};
+
 class MBlazeAsmBackend : public TargetAsmBackend {
 public:
   MBlazeAsmBackend(const Target &T)
-    : TargetAsmBackend(T) {
+    : TargetAsmBackend() {
+  }
+
+  unsigned getNumFixupKinds() const {
+    return 2;
   }
 
   bool MayNeedRelaxation(const MCInst &Inst) const;
@@ -62,7 +72,7 @@ public:
 static unsigned getRelaxedOpcode(unsigned Op) {
     switch (Op) {
     default:            return Op;
-    case MBlaze::ADDI:  return MBlaze::ADDI32;
+    case MBlaze::ADDIK: return MBlaze::ADDIK32;
     case MBlaze::ORI:   return MBlaze::ORI32;
     case MBlaze::BRLID: return MBlaze::BRLID32;
     }
@@ -97,39 +107,28 @@ bool MBlazeAsmBackend::WriteNopData(uint64_t Count, MCObjectWriter *OW) const {
 
 namespace {
 class ELFMBlazeAsmBackend : public MBlazeAsmBackend {
-  MCELFObjectFormat Format;
-
 public:
   Triple::OSType OSType;
   ELFMBlazeAsmBackend(const Target &T, Triple::OSType _OSType)
-    : MBlazeAsmBackend(T), OSType(_OSType) {
-    HasScatteredSymbols = true;
-  }
+    : MBlazeAsmBackend(T), OSType(_OSType) { }
 
-  virtual const MCObjectFormat &getObjectFormat() const {
-    return Format;
-  }
-
-
-  void ApplyFixup(const MCFixup &Fixup, MCDataFragment &DF,
+  void ApplyFixup(const MCFixup &Fixup, char *Data, unsigned DataSize,
                   uint64_t Value) const;
 
   MCObjectWriter *createObjectWriter(raw_ostream &OS) const {
-    return createELFObjectWriter(OS,/*Is64Bit=*/false,
-                                 OSType, ELF::EM_MBLAZE,
-                                 /*IsLittleEndian=*/false,
-                                 /*HasRelocationAddend=*/true);
+    return createELFObjectWriter(new MBlazeELFObjectWriter(OSType), OS,
+                                 /*IsLittleEndian*/ false);
   }
 };
 
-void ELFMBlazeAsmBackend::ApplyFixup(const MCFixup &Fixup, MCDataFragment &DF,
-                                     uint64_t Value) const {
+void ELFMBlazeAsmBackend::ApplyFixup(const MCFixup &Fixup, char *Data,
+                                     unsigned DataSize, uint64_t Value) const {
   unsigned Size = getFixupKindSize(Fixup.getKind());
 
-  assert(Fixup.getOffset() + Size <= DF.getContents().size() &&
+  assert(Fixup.getOffset() + Size <= DataSize &&
          "Invalid fixup offset!");
 
-  char *data = DF.getContents().data() + Fixup.getOffset();
+  char *data = Data + Fixup.getOffset();
   switch (Size) {
   default: llvm_unreachable("Cannot fixup unknown value.");
   case 1:  llvm_unreachable("Cannot fixup 1 byte value.");

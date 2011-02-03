@@ -23,9 +23,10 @@
 #include "llvm/Support/SystemUtils.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/MathExtras.h"
-#include "llvm/System/Host.h"
-#include "llvm/System/Path.h"
-#include "llvm/System/Process.h"
+#include "llvm/Support/Host.h"
+#include "llvm/Support/Path.h"
+#include "llvm/Support/Process.h"
+#include "llvm/Support/system_error.h"
 #include "llvm/Target/Mangler.h"
 #include "llvm/Target/SubtargetFeature.h"
 #include "llvm/MC/MCAsmInfo.h"
@@ -56,17 +57,17 @@ bool LTOModule::isBitcodeFileForTarget(const void *mem, size_t length,
 
 bool LTOModule::isBitcodeFileForTarget(const char *path,
                                        const char *triplePrefix) {
-  MemoryBuffer *buffer = MemoryBuffer::getFile(path);
-  if (buffer == NULL)
+  OwningPtr<MemoryBuffer> buffer;
+  if (MemoryBuffer::getFile(path, buffer))
     return false;
-  return isTargetMatch(buffer, triplePrefix);
+  return isTargetMatch(buffer.take(), triplePrefix);
 }
 
 // Takes ownership of buffer.
 bool LTOModule::isTargetMatch(MemoryBuffer *buffer, const char *triplePrefix) {
   std::string Triple = getBitcodeTargetTriple(buffer, getGlobalContext());
   delete buffer;
-  return (strncmp(Triple.c_str(), triplePrefix, 
+  return (strncmp(Triple.c_str(), triplePrefix,
  		  strlen(triplePrefix)) == 0);
 }
 
@@ -78,9 +79,11 @@ LTOModule::LTOModule(Module *m, TargetMachine *t)
 
 LTOModule *LTOModule::makeLTOModule(const char *path,
                                     std::string &errMsg) {
-  OwningPtr<MemoryBuffer> buffer(MemoryBuffer::getFile(path, &errMsg));
-  if (!buffer)
+  OwningPtr<MemoryBuffer> buffer;
+  if (error_code ec = MemoryBuffer::getFile(path, buffer)) {
+    errMsg = ec.message();
     return NULL;
+  }
   return makeLTOModule(buffer.get(), errMsg);
 }
 
@@ -423,7 +426,7 @@ void LTOModule::lazyParseSymbols() {
   _symbolsParsed = true;
 
   // Use mangler to add GlobalPrefix to names to match linker names.
-  MCContext Context(*_target->getMCAsmInfo());
+  MCContext Context(*_target->getMCAsmInfo(), NULL);
   Mangler mangler(Context, *_target->getTargetData());
 
   // add functions

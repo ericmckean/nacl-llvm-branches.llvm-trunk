@@ -38,6 +38,7 @@
 #include "llvm/Target/TargetLowering.h"
 #include "llvm/Target/TargetLoweringObjectFile.h"
 #include "llvm/Target/TargetRegisterInfo.h"
+#include "llvm/Assembly/Writer.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -185,9 +186,17 @@ bool AsmPrinter::doInitialization(Module &M) {
 
   if (MAI->doesSupportDebugInformation())
     DD = new DwarfDebug(this, &M);
-    
+
   if (MAI->doesSupportExceptionHandling())
-    DE = new DwarfException(this);
+    switch (MAI->getExceptionHandlingType()) {
+    default:
+    case ExceptionHandling::DwarfTable:
+      DE = new DwarfTableException(this);
+      break;
+    case ExceptionHandling::DwarfCFI:
+      DE = new DwarfCFIException(this);
+      break;
+    }
 
   return false;
 }
@@ -939,14 +948,6 @@ void AsmPrinter::EmitConstantPool() {
 
       const Type *Ty = CPE.getType();
       Offset = NewOffset + TM.getTargetData()->getTypeAllocSize(Ty);
-
-      // Emit the label with a comment on it.
-      if (isVerbose()) {
-        OutStreamer.GetCommentOS() << "constant pool ";
-        WriteTypeSymbolic(OutStreamer.GetCommentOS(), CPE.getType(),
-                          MF->getFunction()->getParent());
-        OutStreamer.GetCommentOS() << '\n';
-      }
       OutStreamer.EmitLabel(GetCPISymbol(CPI));
 
       if (CPE.isMachineConstantPoolEntry())

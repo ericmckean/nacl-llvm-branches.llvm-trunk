@@ -145,7 +145,7 @@ public:
   bool needsStackRealignment(const MachineFunction &MF) const;
   int64_t getFrameIndexInstrOffset(const MachineInstr *MI, int Idx) const;
   bool needsFrameBaseReg(MachineInstr *MI, int64_t Offset) const;
-  void materializeFrameBaseRegister(MachineBasicBlock::iterator I,
+  void materializeFrameBaseRegister(MachineBasicBlock *MBB,
                                     unsigned BaseReg, int FrameIdx,
                                     int64_t Offset) const;
   void resolveFrameIndex(MachineBasicBlock::iterator I,
@@ -153,9 +153,6 @@ public:
   bool isFrameOffsetLegal(const MachineInstr *MI, int64_t Offset) const;
 
   bool cannotEliminateFrame(const MachineFunction &MF) const;
-
-  void processFunctionBeforeCalleeSavedScan(MachineFunction &MF,
-                                            RegScavenger *RS = NULL) const;
 
   // Debug information queries.
   unsigned getRARegister() const;
@@ -198,8 +195,6 @@ public:
                                    int SPAdj, RegScavenger *RS = NULL) const;
 
 private:
-  unsigned estimateRSStackSizeLimit(MachineFunction &MF) const;
-
   unsigned getRegisterPairEven(unsigned Reg, const MachineFunction &MF) const;
 
   unsigned getRegisterPairOdd(unsigned Reg, const MachineFunction &MF) const;

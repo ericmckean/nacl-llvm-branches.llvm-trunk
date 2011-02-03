@@ -134,14 +134,14 @@ void X8664_ELFTargetObjectFile::Initialize(MCContext &Ctx,
   TargetLoweringObjectFileELF::Initialize(Ctx, TM);
   if (TM.getSubtarget<X86Subtarget>().isTargetNaCl()) {
     StaticCtorSection =
-      getContext().getELFSection(".init_array", MCSectionELF::SHT_INIT_ARRAY,
-                                 MCSectionELF::SHF_WRITE |
-                                 MCSectionELF::SHF_ALLOC,
+      getContext().getELFSection(".init_array", ELF::SHT_INIT_ARRAY,
+                                 ELF::SHF_WRITE |
+                                 ELF::SHF_ALLOC,
                                  SectionKind::getDataRel());
     StaticDtorSection =
-      getContext().getELFSection(".fini_array", MCSectionELF::SHT_FINI_ARRAY,
-                                 MCSectionELF::SHF_WRITE |
-                                 MCSectionELF::SHF_ALLOC,
+      getContext().getELFSection(".fini_array", ELF::SHT_FINI_ARRAY,
+                                 ELF::SHF_WRITE |
+                                 ELF::SHF_ALLOC,
                                  SectionKind::getDataRel());
   }
 }
@@ -151,14 +151,14 @@ void X8632_ELFTargetObjectFile::Initialize(MCContext &Ctx,
   TargetLoweringObjectFileELF::Initialize(Ctx, TM);
   if (TM.getSubtarget<X86Subtarget>().isTargetNaCl()) {
     StaticCtorSection =
-      getContext().getELFSection(".init_array", MCSectionELF::SHT_INIT_ARRAY,
-                                 MCSectionELF::SHF_WRITE |
-                                 MCSectionELF::SHF_ALLOC,
+      getContext().getELFSection(".init_array", ELF::SHT_INIT_ARRAY,
+                                 ELF::SHF_WRITE |
+                                 ELF::SHF_ALLOC,
                                  SectionKind::getDataRel());
     StaticDtorSection =
-      getContext().getELFSection(".fini_array", MCSectionELF::SHT_FINI_ARRAY,
-                                 MCSectionELF::SHF_WRITE |
-                                 MCSectionELF::SHF_ALLOC,
+      getContext().getELFSection(".fini_array", ELF::SHT_FINI_ARRAY,
+                                 ELF::SHF_WRITE |
+                                 ELF::SHF_ALLOC,
                                  SectionKind::getDataRel());
   }
 }

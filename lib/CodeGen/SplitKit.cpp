@@ -48,6 +48,7 @@ SplitAnalysis::SplitAnalysis(const MachineFunction &mf,
     curli_(0) {}
 
 void SplitAnalysis::clear() {
+  UseSlots.clear();
   usingInstrs_.clear();
   usingBlocks_.clear();
   usingLoops_.clear();
@@ -67,6 +68,7 @@ void SplitAnalysis::analyzeUses() {
        MachineInstr *MI = I.skipInstruction();) {
     if (MI->isDebugValue() || !usingInstrs_.insert(MI))
       continue;
+    UseSlots.push_back(lis_.getInstructionIndex(MI).getDefIndex());
     MachineBasicBlock *MBB = MI->getParent();
     if (usingBlocks_[MBB]++)
       continue;
@@ -74,6 +76,7 @@ void SplitAnalysis::analyzeUses() {
          Loop = Loop->getParentLoop())
       usingLoops_[Loop]++;
   }
+  array_pod_sort(UseSlots.begin(), UseSlots.end());
   DEBUG(dbgs() << "  counted "
                << usingInstrs_.size() << " instrs, "
                << usingBlocks_.size() << " blocks, "
@@ -257,12 +260,11 @@ void SplitAnalysis::analyze(const LiveInterval *li) {
   analyzeUses();
 }
 
-const MachineLoop *SplitAnalysis::getBestSplitLoop() {
-  assert(curli_ && "Call analyze() before getBestSplitLoop");
+void SplitAnalysis::getSplitLoops(LoopPtrSet &Loops) {
+  assert(curli_ && "Call analyze() before getSplitLoops");
   if (usingLoops_.empty())
-    return 0;
+    return;
 
-  LoopPtrSet Loops;
   LoopBlocks Blocks;
   BlockPtrSet CriticalExits;
 
@@ -280,11 +282,11 @@ const MachineLoop *SplitAnalysis::getBestSplitLoop() {
       // FIXME: We could split a live range with multiple uses in a peripheral
       // block and still make progress. However, it is possible that splitting
       // another live range will insert copies into a peripheral block, and
-      // there is a small chance we can enter an infinity loop, inserting copies
+      // there is a small chance we can enter an infinite loop, inserting copies
       // forever.
       // For safety, stick to splitting live ranges with uses outside the
       // periphery.
-      DEBUG(dbgs() << ": multiple peripheral uses\n");
+      DEBUG(dbgs() << ": multiple peripheral uses");
       break;
     case ContainedInLoop:
       DEBUG(dbgs() << ": fully contained\n");
@@ -302,9 +304,13 @@ const MachineLoop *SplitAnalysis::getBestSplitLoop() {
     Loops.insert(Loop);
   }
 
-  DEBUG(dbgs() << "  getBestSplitLoop found " << Loops.size()
+  DEBUG(dbgs() << "  getSplitLoops found " << Loops.size()
                << " candidate loops.\n");
+}
 
+const MachineLoop *SplitAnalysis::getBestSplitLoop() {
+  LoopPtrSet Loops;
+  getSplitLoops(Loops);
   if (Loops.empty())
     return 0;
 
@@ -321,6 +327,36 @@ const MachineLoop *SplitAnalysis::getBestSplitLoop() {
   DEBUG(dbgs() << "  getBestSplitLoop found " << *Best);
   return Best;
 }
+
+/// isBypassLoop - Return true if curli is live through Loop and has no uses
+/// inside the loop. Bypass loops are candidates for splitting because it can
+/// prevent interference inside the loop.
+bool SplitAnalysis::isBypassLoop(const MachineLoop *Loop) {
+  // If curli is live into the loop header and there are no uses in the loop, it
+  // must be live in the entire loop and live on at least one exiting edge.
+  return !usingLoops_.count(Loop) &&
+         lis_.isLiveInToMBB(*curli_, Loop->getHeader());
+}
+
+/// getBypassLoops - Get all the maximal bypass loops. These are the bypass
+/// loops whose parent is not a bypass loop.
+void SplitAnalysis::getBypassLoops(LoopPtrSet &BypassLoops) {
+  SmallVector<MachineLoop*, 8> Todo(loops_.begin(), loops_.end());
+  while (!Todo.empty()) {
+    MachineLoop *Loop = Todo.pop_back_val();
+    if (!usingLoops_.count(Loop)) {
+      // This is either a bypass loop or completely irrelevant.
+      if (lis_.isLiveInToMBB(*curli_, Loop->getHeader()))
+        BypassLoops.insert(Loop);
+      // Either way, skip the child loops.
+      continue;
+    }
+
+    // The child loops may be bypass loops.
+    Todo.append(Loop->begin(), Loop->end());
+  }
+}
+
 
 //===----------------------------------------------------------------------===//
 //                               LiveIntervalMap
@@ -413,6 +449,7 @@ VNInfo *LiveIntervalMap::mapValue(const VNInfo *ParentVNI, SlotIndex Idx,
   // VNInfo. Insert phi-def VNInfos along the path back to IdxMBB.
   DEBUG(dbgs() << "\n  Reaching defs for BB#" << IdxMBB->getNumber()
                << " at " << Idx << " in " << *li_ << '\n');
+  DEBUG(dumpCache());
 
   // Blocks where li_ should be live-in.
   SmallVector<MachineDomTreeNode*, 16> LiveIn;
@@ -550,6 +587,7 @@ VNInfo *LiveIntervalMap::mapValue(const VNInfo *ParentVNI, SlotIndex Idx,
   assert(IdxVNI && "Didn't find value for Idx");
 
 #ifndef NDEBUG
+  DEBUG(dumpCache());
   // Check the liveOutCache_ invariants.
   for (LiveOutMap::iterator I = liveOutCache_.begin(), E = liveOutCache_.end();
          I != E; ++I) {
@@ -583,6 +621,25 @@ VNInfo *LiveIntervalMap::mapValue(const VNInfo *ParentVNI, SlotIndex Idx,
 
   return IdxVNI;
 }
+
+#ifndef NDEBUG
+void LiveIntervalMap::dumpCache() {
+  for (LiveOutMap::iterator I = liveOutCache_.begin(), E = liveOutCache_.end();
+         I != E; ++I) {
+    assert(I->first && "Null MBB entry in cache");
+    assert(I->second.first && "Null VNInfo in cache");
+    assert(I->second.second && "Null DomTreeNode in cache");
+    dbgs() << "    cache: BB#" << I->first->getNumber()
+           << " has valno #" << I->second.first->id << " from BB#"
+           << I->second.second->getBlock()->getNumber() << ", preds";
+    for (MachineBasicBlock::pred_iterator PI = I->first->pred_begin(),
+           PE = I->first->pred_end(); PI != PE; ++PI)
+      dbgs() << " BB#" << (*PI)->getNumber();
+    dbgs() << '\n';
+  }
+  dbgs() << "    cache: " << liveOutCache_.size() << " entries.\n";
+}
+#endif
 
 // extendTo - Find the last li_ value defined in MBB at or before Idx. The
 // parentli_ is assumed to be live at Idx. Extend the live range to Idx.
@@ -831,9 +888,7 @@ void SplitEditor::leaveIntvAtTop(MachineBasicBlock &MBB) {
 /// LiveInterval, and ranges can be trimmed.
 void SplitEditor::closeIntv() {
   assert(openli_.getLI() && "openIntv not called before closeIntv");
-
-  DEBUG(dbgs() << "    closeIntv cleaning up\n");
-  DEBUG(dbgs() << "    open " << *openli_.getLI() << '\n');
+  DEBUG(dbgs() << "    closeIntv " << *openli_.getLI() << '\n');
   openli_.reset(0);
 }
 
@@ -929,6 +984,8 @@ void SplitEditor::computeRemainder() {
   // If values were fully rematted, they should be omitted.
   // FIXME: If a single value is redefined, just move the def and truncate.
   LiveInterval &parent = edit_.getParent();
+
+  DEBUG(dbgs() << "computeRemainder from " << parent << '\n');
 
   // Values that are fully contained in the split intervals.
   SmallPtrSet<const VNInfo*, 8> deadValues;
@@ -1044,11 +1101,13 @@ void SplitEditor::splitAroundLoop(const MachineLoop *Loop) {
   // Create new live interval for the loop.
   openIntv();
 
-  // Insert copies in the predecessors.
-  for (SplitAnalysis::BlockPtrSet::iterator I = Blocks.Preds.begin(),
-       E = Blocks.Preds.end(); I != E; ++I) {
-    MachineBasicBlock &MBB = const_cast<MachineBasicBlock&>(**I);
-    enterIntvAtEnd(MBB);
+  // Insert copies in the predecessors if live-in to the header.
+  if (lis_.isLiveInToMBB(edit_.getParent(), Loop->getHeader())) {
+    for (SplitAnalysis::BlockPtrSet::iterator I = Blocks.Preds.begin(),
+           E = Blocks.Preds.end(); I != E; ++I) {
+      MachineBasicBlock &MBB = const_cast<MachineBasicBlock&>(**I);
+      enterIntvAtEnd(MBB);
+    }
   }
 
   // Switch all loop blocks.

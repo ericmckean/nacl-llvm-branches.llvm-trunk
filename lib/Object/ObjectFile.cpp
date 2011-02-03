@@ -12,9 +12,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Object/ObjectFile.h"
+#include "llvm/ADT/OwningPtr.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MemoryBuffer.h"
-#include "llvm/System/Path.h"
+#include "llvm/Support/Path.h"
+#include "llvm/Support/system_error.h"
 
 using namespace llvm;
 using namespace object;
@@ -43,7 +45,7 @@ ObjectFile *ObjectFile::createObjectFile(MemoryBuffer *Object) {
     case sys::ELF_Executable_FileType:
     case sys::ELF_SharedObject_FileType:
     case sys::ELF_Core_FileType:
-        return 0;
+      return createELFObjectFile(Object);
     case sys::Mach_O_Object_FileType:
     case sys::Mach_O_Executable_FileType:
     case sys::Mach_O_FixedVirtualMemorySharedLib_FileType:
@@ -55,12 +57,15 @@ ObjectFile *ObjectFile::createObjectFile(MemoryBuffer *Object) {
     case sys::Mach_O_DynamicallyLinkedSharedLibStub_FileType:
       return 0;
     case sys::COFF_FileType:
-      return 0;
+      return createCOFFObjectFile(Object);
     default:
       llvm_unreachable("Unknown Object File Type");
   }
 }
 
 ObjectFile *ObjectFile::createObjectFile(StringRef ObjectPath) {
-  return createObjectFile(MemoryBuffer::getFile(ObjectPath));
+  OwningPtr<MemoryBuffer> File;
+  if (error_code ec = MemoryBuffer::getFile(ObjectPath, File))
+    return NULL;
+  return createObjectFile(File.take());
 }

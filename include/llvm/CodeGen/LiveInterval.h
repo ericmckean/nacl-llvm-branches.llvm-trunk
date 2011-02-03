@@ -21,7 +21,7 @@
 #ifndef LLVM_CODEGEN_LIVEINTERVAL_H
 #define LLVM_CODEGEN_LIVEINTERVAL_H
 
-#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/IntEqClasses.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/AlignOf.h"
 #include "llvm/CodeGen/SlotIndexes.h"
@@ -205,8 +205,7 @@ namespace llvm {
     typedef SmallVector<LiveRange,4> Ranges;
     typedef SmallVector<VNInfo*,4> VNInfoList;
 
-    unsigned reg;        // the register or stack slot of this interval
-                         // if the top bits is set, it represents a stack slot.
+    const unsigned reg;  // the register or stack slot of this interval.
     float weight;        // weight of this interval
     Ranges ranges;       // the ranges in which this register is live
     VNInfoList valnos;   // value#'s
@@ -222,11 +221,8 @@ namespace llvm {
 
     };
 
-    LiveInterval(unsigned Reg, float Weight, bool IsSS = false)
-      : reg(Reg), weight(Weight) {
-      if (IsSS)
-        reg = reg | (1U << (sizeof(unsigned)*CHAR_BIT-1));
-    }
+    LiveInterval(unsigned Reg, float Weight)
+      : reg(Reg), weight(Weight) {}
 
     typedef Ranges::iterator iterator;
     iterator begin() { return ranges.begin(); }
@@ -250,6 +246,7 @@ namespace llvm {
     /// position is in a hole, this method returns an iterator pointing to the
     /// LiveRange immediately after the hole.
     iterator advanceTo(iterator I, SlotIndex Pos) {
+      assert(I != end());
       if (Pos >= endIndex())
         return end();
       while (I->end <= Pos) ++I;
@@ -272,19 +269,6 @@ namespace llvm {
     void clear() {
       valnos.clear();
       ranges.clear();
-    }
-
-    /// isStackSlot - Return true if this is a stack slot interval.
-    ///
-    bool isStackSlot() const {
-      return reg & (1U << (sizeof(unsigned)*CHAR_BIT-1));
-    }
-
-    /// getStackSlotIndex - Return stack slot index if this is a stack slot
-    /// interval.
-    int getStackSlotIndex() const {
-      assert(isStackSlot() && "Interval is not a stack slot interval!");
-      return reg & ~(1U << (sizeof(unsigned)*CHAR_BIT-1));
     }
 
     bool hasAtLeastOneValue() const { return !valnos.empty(); }
@@ -560,11 +544,7 @@ namespace llvm {
 
   class ConnectedVNInfoEqClasses {
     LiveIntervals &lis_;
-
-    // Map each value number to its equivalence class.
-    // The invariant is that EqClass[x] <= x.
-    // Two values are connected iff EqClass[x] == EqClass[b].
-    SmallVector<unsigned, 8> eqClass_;
+    IntEqClasses eqClass_;
 
     // Note that values a and b are connected.
     void Connect(unsigned a, unsigned b);
