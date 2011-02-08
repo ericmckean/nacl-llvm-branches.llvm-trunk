@@ -296,12 +296,41 @@ bool X86NaClRewritePass::ApplyFrameSFI(MachineBasicBlock &MBB,
     return false;
 
   unsigned Opc = MI.getOpcode();
+  DebugLoc DL = MI.getDebugLoc();
 
-  // MOV RBP, RSP is safe
+  // Handle moves to RBP
   if (Opc == X86::MOV64rr) {
     assert(MI.getOperand(0).getReg() == X86::RBP);
-    assert(MI.getOperand(1).getReg() == X86::RSP);
-    return false;
+    unsigned SrcReg = MI.getOperand(1).getReg();
+
+    // MOV RBP, RSP is already safe
+    if (SrcReg == X86::RSP)
+      return false;
+
+    // Rewrite: mov %rbp, %rX
+    // To:      naclrestbp %eX, %r15
+    BuildMI(MBB, MBBI, DL, TII->get(X86::NACL_RESTBPr))
+      .addReg(DemoteRegTo32(SrcReg))
+      .addReg(X86::R15);
+    MI.eraseFromParent();
+    return true;
+  }
+
+  // Handle memory moves to RBP
+  if (Opc == X86::MOV64rm) {
+    assert(MI.getOperand(0).getReg() == X86::RBP);
+
+    // Rewrite: mov %rbp, (...)
+    // To:      naclrestbp (...), %r15
+    BuildMI(MBB, MBBI, DL, TII->get(X86::NACL_RESTBPm))
+      .addOperand(MI.getOperand(1))  // Base
+      .addOperand(MI.getOperand(2))  // Scale
+      .addOperand(MI.getOperand(3))  // Index
+      .addOperand(MI.getOperand(4))  // Offset
+      .addOperand(MI.getOperand(5))  // Segment
+      .addReg(X86::R15); // rZP
+    MI.eraseFromParent();
+    return true;
   }
 
   // Popping onto RBP
@@ -317,7 +346,6 @@ bool X86NaClRewritePass::ApplyFrameSFI(MachineBasicBlock &MBB,
   //   .bundle_unlock
   if (Opc == X86::POP64r) {
     assert(MI.getOperand(0).getReg() == X86::RBP);
-    DebugLoc DL = MI.getDebugLoc();
 
     BuildMI(MBB, MBBI, DL, TII->get(X86::NACL_RESTBPm))
       .addReg(X86::RSP)  // Base
