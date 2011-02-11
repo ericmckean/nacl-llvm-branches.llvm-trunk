@@ -32,6 +32,10 @@
 
 #define MAX_NACL_FILES 256
 #define MMAP_PAGE_SIZE 64 * 1024
+#define MMAP_ROUND_MASK (MMAP_PAGE_SIZE - 1)
+
+#define printerr(...)                           \
+  fprintf(stderr, __VA_ARGS__)
 
 extern "C" int __real_open(const char *pathname, int oflags, int mode);
 extern "C" int __wrap_open(const char *pathname, int oflags, int mode);
@@ -50,8 +54,11 @@ static int nacl_file_initialized = 0;
 struct NaCl_file_map {
   char *filename;
   int real_fd;
+  int is_reg_file;    /* We use shm for output, and UrlAsNaClDesc supplies
+                      * regular files. Differentiate between the two. */
   pthread_mutex_t mu;
-  size_t size;
+  size_t size;        /* Bytes mmap'ed for this file. */
+  size_t real_size;   /* Bytes actually written, if it is a shm. */
   struct NaCl_file_map *next;
 };
 
@@ -73,14 +80,19 @@ static int IsValidDescriptor(int dd) {
 }
 
 static size_t roundToNextPageSize(size_t size) {
-  size_t count_up = size + (MMAP_PAGE_SIZE-1);
-  return (count_up & ~(MMAP_PAGE_SIZE-1));
+  size_t count_up = size + (MMAP_ROUND_MASK);
+  return (count_up & ~(MMAP_ROUND_MASK));
 }
 
 /* Create a new entry representing the shm file descriptor.
-   Returns 0 on success. */
-int NaClFile_fd(char *pathname, int fd) {
+ * If real_size_opt is supplied, this means that we know
+ * the real size of the shm file. Otherwise, we need to count on fstat.
+ * Counting on fstat is fine if fd corresponds to a regular file.
+ * Returns 0 on success. */
+int NaClFile_fd(char *pathname, int fd,
+                int has_real_size, size_t real_size_opt) {
   int i;
+  int is_reg;
   struct stat stb;
   struct NaCl_file_map *entry;
 
@@ -89,23 +101,37 @@ int NaClFile_fd(char *pathname, int fd) {
     return -1;
   }
 
-  if (S_IFSHM != (stb.st_mode & S_IFMT)) {
-    printf("nacl_file: %d normal file?!\n", fd);
+  // NOTE: We do not have the S_ISSHM macro in our headers, only S_ISREG.
+  mode_t fmt = stb.st_mode & S_IFMT;
+  if (S_IFREG == fmt) {
+    is_reg = 1;
+  } else if (S_IFSHM == fmt) {
+    is_reg = 0;
+  } else {
+    printerr("nacl_file: %d non-shm and non-reg file?!\n", fd);
     return -1;
   }
 
   entry = (struct NaCl_file_map*)(malloc(sizeof *entry));
 
   if (NULL == entry) {
-    fprintf(stderr, "nacl_file: No memory for file map for %s\n", pathname);
+    printerr("nacl_file: No memory for file map for %s\n", pathname);
     exit(1);
   }
   if (NULL == (entry->filename = strdup(pathname))) {
-    fprintf(stderr, "nacl_file: No memory for file path %s\n", pathname);
+    printerr("nacl_file: No memory for file path %s\n", pathname);
     exit(1);
   }
   entry->real_fd = fd;
-  entry->size = stb.st_size;
+  if (has_real_size) {
+    entry->size = real_size_opt;
+    entry->real_size = real_size_opt;
+  } else {
+    entry->size = stb.st_size;
+    entry->real_size = stb.st_size;
+  }
+  entry->is_reg_file = is_reg;
+
   pthread_mutex_init(&(entry->mu), NULL);
 
   pthread_mutex_lock(&nacl_fs_mu);
@@ -131,51 +157,10 @@ int NaClFile_fd(char *pathname, int fd) {
 int NaClFile_new(char *pathname) {
   int fd = imc_mem_obj_create(MMAP_PAGE_SIZE);
   if (fd < 0) {
-    printf("nacl_file: imc_mem_obj_create failed %d\n", fd);
+    printerr("nacl_file: imc_mem_obj_create failed %d\n", fd);
     return -1;
   }
-  return NaClFile_fd(pathname, fd);
-}
-
-/* Create a new file for the specified size and return the fd for it.
-   Returns 0 on success. */
-int NaClFile_new_of_size(char *pathname, size_t size) {
-  int fd;
-  size_t count_up = roundToNextPageSize(size);
-
-  fd = imc_mem_obj_create(count_up);
-  if (fd < 0) {
-    printf("nacl_file: imc_mem_obj_create failed %d\n", fd);
-    return -1;
-  }
-
-  return NaClFile_fd(pathname, fd);
-}
-
-size_t get_file_size(int dd) {
-  size_t file_size;
-
-  if (!IsValidDescriptor(dd)) {
-    errno = EBADF;
-    return dd;
-  }
-
-  pthread_mutex_lock(&nacl_files[dd].mu);
-
-  if (NULL == nacl_files[dd].file_ptr) {
-    pthread_mutex_unlock(&nacl_files[dd].mu);
-    errno = EBADF;
-    return dd;
-  }
-
-  pthread_mutex_lock(&nacl_files[dd].file_ptr->mu);
-
-  file_size = nacl_files[dd].file_ptr->size;
-
-  pthread_mutex_unlock(&nacl_files[dd].file_ptr->mu);
-  pthread_mutex_unlock(&nacl_files[dd].mu);
-
-  return file_size;
+  return NaClFile_fd(pathname, fd, 0, 0);
 }
 
 int get_real_fd(int dd) {
@@ -204,9 +189,39 @@ int get_real_fd(int dd) {
   return fd;
 }
 
+/* NOTE: this is very similar to get_real_fd(). TODO(robertm): refactor. */
+int is_reg_file(int dd) {
+  int is_reg = 0;
+
+  if (!IsValidDescriptor(dd)) {
+    errno = EBADF;
+    return -1;
+  }
+
+  pthread_mutex_lock(&nacl_files[dd].mu);
+
+  if (NULL == nacl_files[dd].file_ptr) {
+    pthread_mutex_unlock(&nacl_files[dd].mu);
+    errno = EBADF;
+    return -1;
+  }
+
+  pthread_mutex_lock(&nacl_files[dd].file_ptr->mu);
+
+  is_reg = nacl_files[dd].file_ptr->is_reg_file;
+
+  pthread_mutex_unlock(&nacl_files[dd].file_ptr->mu);
+  pthread_mutex_unlock(&nacl_files[dd].mu);
+
+  return is_reg;
+}
+
+
 int get_real_fd_by_name(const char *pathname) {
   int fd = -1;
   struct NaCl_file_map *entry;
+
+  pthread_mutex_lock(&nacl_fs_mu);
 
   for (entry = nacl_fs; NULL != entry; entry = entry->next) {
     if (!strcmp(pathname, entry->filename)) {
@@ -215,11 +230,57 @@ int get_real_fd_by_name(const char *pathname) {
     }
   }
 
+  pthread_mutex_unlock(&nacl_fs_mu);
+
   if (-1 == fd) {
     errno = EBADF;
   }
 
   return fd;
+}
+
+/* NOTE: this is very similar to get_real_fd_by_name. TODO(robertm): refactor. */
+int get_real_size_by_name(const char *pathname) {
+  size_t real_size = 0;
+  struct NaCl_file_map *entry;
+
+  pthread_mutex_lock(&nacl_fs_mu);
+
+  for (entry = nacl_fs; NULL != entry; entry = entry->next) {
+    if (!strcmp(pathname, entry->filename)) {
+      real_size = entry->real_size;
+      break;
+    }
+  }
+
+  pthread_mutex_unlock(&nacl_fs_mu);
+
+  return real_size;
+}
+
+
+/* Copy at most a page of data between shm (from_fd to to_fd), starting at
+   base_pos for count bytes. */
+static int copy_shm_data(int from_fd, int to_fd, off_t base_pos, size_t count) {
+  void *from_data = mmap(NULL, MMAP_PAGE_SIZE, PROT_READ, MAP_SHARED,
+                         from_fd, base_pos);
+  void *to_data = mmap(NULL, MMAP_PAGE_SIZE, PROT_WRITE, MAP_SHARED,
+                       to_fd, base_pos);
+
+  if (count > MMAP_PAGE_SIZE) {
+    printerr("nacl_file: copy more than MMAP_PAGE_SIZE: %d?\n", count);
+    return -1;
+  }
+
+  if (NULL != from_data && NULL != to_data) {
+    memcpy(to_data, from_data, count);
+    munmap(from_data, MMAP_PAGE_SIZE);
+    munmap(to_data, MMAP_PAGE_SIZE);
+  } else {
+    printerr("nacl_file: mmap call failed!\n");
+    return -1;
+  }
+  return 0;
 }
 
 /* Adjust the size of a nacl file.
@@ -231,8 +292,6 @@ adjust_file_size(int dd, size_t new_size) {
   off_t base_pos;
   size_t count;
   size_t final_base;
-  uint8_t *new_data;
-  uint8_t *old_data;
   struct NaCl_file_map *entry;
 
   if (!IsValidDescriptor(dd)) {
@@ -246,56 +305,41 @@ adjust_file_size(int dd, size_t new_size) {
     errno = EBADF;
     return -1;
   }
-
   entry = nacl_files[dd].file_ptr;
+
   new_fd = imc_mem_obj_create(new_size);
   if (new_fd < 0) {
-    printf("nacl_file: imc_mem_obj_create failed %d\n", new_fd);
+    printerr("nacl_file: imc_mem_obj_create failed %d\n", new_fd);
     return -1;
   }
 
-  /* copy contents over */
-  final_base = entry->size & ~(MMAP_PAGE_SIZE-1);
+  /* copy contents over -- Beginning with MMAP_PAGE_SIZE chunks. */
+  final_base = entry->size & (~MMAP_ROUND_MASK);
   for (base_pos = 0; (size_t) base_pos < final_base;
        base_pos += MMAP_PAGE_SIZE) {
-    old_data = (uint8_t *) mmap(NULL, MMAP_PAGE_SIZE, PROT_READ, MAP_SHARED,
-                               entry->real_fd, base_pos);
-    new_data = (uint8_t *) mmap(NULL, MMAP_PAGE_SIZE, PROT_WRITE, MAP_SHARED,
-                               new_fd, base_pos);
-    if (NULL != old_data && NULL != new_data) {
-      memcpy(new_data, old_data, MMAP_PAGE_SIZE);
-      munmap(old_data, MMAP_PAGE_SIZE);
-      munmap(new_data, MMAP_PAGE_SIZE);
-    } else {
-      printf("nacl_file: mmap call failed!\n");
+    if (copy_shm_data(entry->real_fd, new_fd, base_pos, MMAP_PAGE_SIZE)) {
+      printerr("nacl_file: copy_shm_data failed!\n");
       return -1;
     }
   }
 
+  /* Copy the left overs (not a multiple of MMAP_PAGE_SIZE) */
   count = entry->size - final_base;
-
   if (count > 0) {
-    old_data = (uint8_t *) mmap(NULL, MMAP_PAGE_SIZE, PROT_READ, MAP_SHARED,
-                               entry->real_fd, base_pos);
-    new_data = (uint8_t *) mmap(NULL, MMAP_PAGE_SIZE, PROT_WRITE, MAP_SHARED,
-                               new_fd, base_pos);
-    if (NULL != old_data && NULL != new_data) {
-      memcpy(new_data, old_data, count);
-      munmap(old_data, MMAP_PAGE_SIZE);
-      munmap(new_data, MMAP_PAGE_SIZE);
-    } else {
-      printf("nacl_file: mmap call failed!\n");
+    if (copy_shm_data(entry->real_fd, new_fd, base_pos, count)) {
+      printerr("nacl_file: copy_shm_data failed!\n");
       return -1;
     }
   }
 
   if (__real_close(entry->real_fd) < 0) {
-    printf("nacl_file: close in size adjust failed!\n");
+    printerr("nacl_file: close in size adjust failed!\n");
     return -1;
   }
 
   entry->real_fd = new_fd;
   entry->size = new_size;
+  /* entry->real_size stays the same, since we haven't written anything new. */
 
   return 0;
 }
@@ -323,7 +367,7 @@ int __wrap_open(const char *pathname, int oflags, int mode) {
   }
 
   if (-1 == dd) {
-    fprintf(stderr, "nacl_file: Max open file count has been reached\n");
+    printerr("nacl_file: Max open file count has been reached\n");
     return -1;
   }
 
@@ -364,9 +408,18 @@ int __wrap_read(int dd, void *buf, size_t count) {
   off_t base_pos;
   off_t adj;
   size_t count_up;
+  struct stat stb;
+  mode_t fmt;
+  int fd;
 
   if (!IsValidDescriptor(dd)) {
     return __real_read(dd, buf, count);
+  }
+
+  /* Be careful w/ the test... if it !IsValidDescriptor it could return -1 */
+  if (1 == is_reg_file(dd)) {
+    fd = get_real_fd(dd);
+    return __real_read(fd, buf, count);
   }
 
   pthread_mutex_lock(&nacl_files[dd].mu);
@@ -377,7 +430,7 @@ int __wrap_read(int dd, void *buf, size_t count) {
   }
 
   if ((nacl_files[dd].mode & !O_RDONLY) != O_RDONLY) {
-    printf("nacl_file: invalid mode %d\n", nacl_files[dd].mode);
+    printerr("nacl_file: invalid mode %d\n", nacl_files[dd].mode);
     pthread_mutex_unlock(&nacl_files[dd].mu);
     return -1;
   }
@@ -390,11 +443,11 @@ int __wrap_read(int dd, void *buf, size_t count) {
       count = 0;
     else
       count = nacl_files[dd].file_ptr->size - nacl_files[dd].pos;
-    printf("nacl_file: warning, attempting read outside of file!\n");
+    printerr("nacl_file: warning, attempting read outside of file!\n");
   }
 
   /* use mmap to read data */
-  base_pos = nacl_files[dd].pos & ~(MMAP_PAGE_SIZE-1);
+  base_pos = nacl_files[dd].pos & (~(MMAP_ROUND_MASK));
   adj = nacl_files[dd].pos - base_pos;
   /* round count value to next 64KB */
   count_up = roundToNextPageSize(count + adj);
@@ -405,7 +458,7 @@ int __wrap_read(int dd, void *buf, size_t count) {
     munmap(data, count_up);
     got = count;
   } else {
-    printf("nacl_file: mmap call failed!\n");
+    printerr("nacl_file: mmap call failed!\n");
   }
 
   if (got > 0) {
@@ -417,6 +470,17 @@ int __wrap_read(int dd, void *buf, size_t count) {
 
   return got;
 }
+
+/* Update the file position after a write */
+static void nacl_file_update_pos(struct NaCl_file *nf, off_t pos) {
+  nf->pos = pos;
+  /* Update the real_size of the file, if we've written further in */
+  if (nf->file_ptr) {
+    nf->file_ptr->real_size = pos > nf->file_ptr->real_size ?
+        pos : nf->file_ptr->real_size;
+  }
+}
+
 
 int __wrap_write(int dd, const void *buf, size_t count) {
   int got = 0;
@@ -438,7 +502,7 @@ int __wrap_write(int dd, const void *buf, size_t count) {
   }
 
   if ((nacl_files[dd].mode & (O_WRONLY | O_RDWR)) == 0) {
-    printf("nacl_file: invalid mode %d\n", nacl_files[dd].mode);
+    printerr("nacl_file: invalid mode %d\n", nacl_files[dd].mode);
     pthread_mutex_unlock(&nacl_files[dd].mu);
     return -1;
   }
@@ -456,13 +520,13 @@ int __wrap_write(int dd, const void *buf, size_t count) {
     if (adjust_file_size(dd, new_size) != 0) {
       pthread_mutex_unlock(&nacl_files[dd].file_ptr->mu);
       pthread_mutex_unlock(&nacl_files[dd].mu);
-      printf("nacl_file: failed to adjust file size %d\n", dd);
+      printerr("nacl_file: failed to adjust file size %d\n", dd);
       return -1;
     }
   }
 
   /* use mmap to write data */
-  base_pos = nacl_files[dd].pos & ~(MMAP_PAGE_SIZE-1);
+  base_pos = nacl_files[dd].pos & (~(MMAP_ROUND_MASK));
   adj = nacl_files[dd].pos - base_pos;
   /* round count value to next 64KB */
   count_up = roundToNextPageSize(count + adj);
@@ -473,22 +537,29 @@ int __wrap_write(int dd, const void *buf, size_t count) {
     munmap(data, count_up);
     got = count;
   } else {
-    printf("nacl_file: mmap call failed!\n");
+    printerr("nacl_file: mmap call failed!\n");
   }
 
   if (got > 0) {
-    nacl_files[dd].pos += got;
+    nacl_file_update_pos(&nacl_files[dd], nacl_files[dd].pos + got);
   }
 
   pthread_mutex_unlock(&nacl_files[dd].file_ptr->mu);
   pthread_mutex_unlock(&nacl_files[dd].mu);
-
   return got;
 }
 
 off_t __wrap_lseek(int dd, off_t offset, int whence) {
+  int fd;
+
   if (!IsValidDescriptor(dd)) {
     return __real_lseek(dd, offset, whence);
+  }
+
+  /* Be careful w/ the test... if it !IsValidDescriptor it could return -1 */
+  if (1 == is_reg_file(dd)) {
+    fd = get_real_fd(dd);
+    return __real_lseek(fd, offset, whence);
   }
 
   pthread_mutex_lock(&nacl_files[dd].mu);
@@ -528,12 +599,17 @@ translate(NaClSrpcRpc *rpc,
           NaClSrpcArg **in_args,
           NaClSrpcArg **out_args,
           NaClSrpcClosure *done) {
+  /* TODO(robertm): receive command line arguments from SRPC.
+     That way, we can supply x86-32 params and ARM params as well. */
   char *argv[] = {"llc", "-march=x86-64", "-mcpu=core2",
                   "-asm-verbose=false", "-filetype=obj",
                   "bitcode_combined", "-o", "obj_combined"};
   int kArgvLength = sizeof argv / sizeof argv[0];
-  /* Input bitcode file. */
-  NaClFile_fd("bitcode_combined", in_args[0]->u.hval);
+  /* Input bitcode file.
+   * Supplied by urlAsNaClDesc, which should get the right
+   * size from fstat(). */
+  int bitcode_fd = in_args[0]->u.hval;
+  NaClFile_fd("bitcode_combined", bitcode_fd, 0, 0);
 
   /* Define output file. */
   NaClFile_new("obj_combined");
@@ -543,13 +619,14 @@ translate(NaClSrpcRpc *rpc,
 
   /* Save obj fd for return. */
   out_args[0]->u.hval = get_real_fd_by_name("obj_combined");
+  out_args[1]->u.ival = get_real_size_by_name("obj_combined");
 
   rpc->result = NACL_SRPC_RESULT_OK;
   done->Run(done);
 }
 
 const struct NaClSrpcHandlerDesc srpc_methods[] = {
-  { "Translate:h:h", translate },
+  { "Translate:h:hi", translate },
   { NULL, NULL },
 };
 
