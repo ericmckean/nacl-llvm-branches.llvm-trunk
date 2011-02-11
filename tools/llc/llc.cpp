@@ -43,8 +43,7 @@
 #if defined(__native_client__) && defined(NACL_SRPC)
 #include <fcntl.h>
 #include <sys/nacl_syscalls.h>
-
-extern size_t get_file_size(int dd);
+extern size_t get_real_size_by_name(const char *name);
 #endif
 
 using namespace llvm;
@@ -222,9 +221,9 @@ int llc_main(int argc, char **argv) {
   SMDiagnostic Err;
   std::auto_ptr<Module> M;
 
-  // This code opens and passes input file size to the
-  // MemoryBuffer::getOpenFile. This helps prevent llc
-  // from mmap'ing the input bitcode file contents itself.
+  // This code opens and passes the input file size to the
+  // MemoryBuffer::getOpenFile. This, along with changes in MemoryBuffer.cpp
+  // helps prevent llc from mmap'ing the input bitcode file contents itself.
 #if defined(__native_client__) && defined(NACL_SRPC)
   std::string ErrMsg;
   int OpenFlags = O_RDONLY;
@@ -232,16 +231,21 @@ int llc_main(int argc, char **argv) {
   OpenFlags |= O_BINARY;  // Open input file in binary mode on win32.
 #endif
   int FD = ::open(InputFilename.c_str(), OpenFlags);
-  MemoryBuffer *F = MemoryBuffer::getOpenFile(FD, InputFilename.c_str(), &ErrMsg,
-                                                 get_file_size(FD));
-  if (F == 0) {
-    Err = SMDiagnostic(InputFilename.c_str(), "Could not open input file: " + ErrMsg);
+  int64_t f_size = get_real_size_by_name(InputFilename.c_str());
+  OwningPtr<MemoryBuffer> F;
+  error_code err = MemoryBuffer::getOpenFile(FD,
+                                             InputFilename.c_str(),
+                                             F,
+                                             f_size);
+  if (!F) {
+    Err = SMDiagnostic(InputFilename.c_str(),
+                       "Could not open input file: " + err.message());
     return 0;
   }
-  M.reset(ParseIR(F, Err, Context));
+  M.reset(ParseIR(F.take(), Err, Context));
 #else
   M.reset(ParseIRFile(InputFilename, Err, Context));
-#endif
+#endif // defined(__native_client__) && defined(NACL_SRPC)
   if (M.get() == 0) {
     Err.Print(argv[0], errs());
     return 1;
@@ -384,4 +388,3 @@ main (int argc, char **argv) {
 #else
 // main() is in nacl_file.cpp.
 #endif
-
