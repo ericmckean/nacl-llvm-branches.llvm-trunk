@@ -11,7 +11,7 @@ LEVEL = ..
 include $(LEVEL)/Makefile.config
 
 PARALLEL_DIRS := VMCore AsmParser Bitcode Archive Analysis Transforms CodeGen \
-                Target ExecutionEngine Linker MC CompilerDriver Object
+                Target ExecutionEngine Linker MC CompilerDriver Object Wrap
 
 ifeq ($(NACL_SANDBOX),1)
   PARALLEL_DIRS := $(filter-out Archive ExecutionEngine Linker CompilerDriver, \
