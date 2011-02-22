@@ -20,6 +20,11 @@
 
 using namespace llvm;
 
+// This option makes it possible to overwrite the x86 jmp mask immediate.
+// Setting it to -1 will effectively turn masking into a nop which will
+// help with linking this code with non-sandboxed libs (at least for x86-32).
+cl::opt<int> FlagSfiX86JmpMask("sfi-x86-jmp-mask", cl::init(-32));
+
 static unsigned PrefixSaved = 0;
 static bool PrefixPass = false;
 
@@ -45,8 +50,9 @@ static void EmitRegTruncate(unsigned Reg64, MCStreamer &Out) {
 
 static void EmitIndirectBranch(const MCOperand &Op, bool Is64Bit, bool IsCall,
                                MCStreamer &Out) {
-  unsigned Reg32 = Op.getReg();
-  unsigned Reg64 = getX86SubSuperRegister(Reg32, MVT::i64);
+  const int JmpMask = FlagSfiX86JmpMask;
+  const unsigned Reg32 = Op.getReg();
+  const unsigned Reg64 = getX86SubSuperRegister(Reg32, MVT::i64);
 
   if (IsCall)
     Out.EmitBundleAlignEnd();
@@ -57,7 +63,7 @@ static void EmitIndirectBranch(const MCOperand &Op, bool Is64Bit, bool IsCall,
   ANDInst.setOpcode(X86::AND32ri8);
   ANDInst.addOperand(MCOperand::CreateReg(Reg32));
   ANDInst.addOperand(MCOperand::CreateReg(Reg32));
-  ANDInst.addOperand(MCOperand::CreateImm(-32));
+  ANDInst.addOperand(MCOperand::CreateImm(JmpMask));
   Out.EmitInstruction(ANDInst);
 
   if (Is64Bit) {
