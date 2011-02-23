@@ -93,7 +93,7 @@ namespace {
     void EmitTextAttribute(unsigned Attribute, StringRef String) {
       switch (Attribute) {
       case ARMBuildAttrs::CPU_name:
-        Streamer.EmitRawText(StringRef("\t.cpu ") + String);
+        Streamer.EmitRawText(StringRef("\t.cpu ") + LowercaseString(String));
         break;
       default: assert(0 && "Unsupported Text attribute in ASM Mode"); break;
       }
@@ -133,7 +133,7 @@ namespace {
 
     void EmitTextAttribute(unsigned Attribute, StringRef String) {
       Contents += Attribute;
-      Contents += String;
+      Contents += UppercaseString(String);
       Contents += 0;
     }
 
@@ -556,7 +556,7 @@ void ARMAsmPrinter::emitAttributes() {
 
   if (CPUString == "cortex-a8" ||
       Subtarget->isCortexA8()) {
-    AttrEmitter->EmitTextAttribute(ARMBuildAttrs::CPU_name, "CORTEX-A8");
+    AttrEmitter->EmitTextAttribute(ARMBuildAttrs::CPU_name, "cortex-a8");
     AttrEmitter->EmitAttribute(ARMBuildAttrs::CPU_arch, ARMBuildAttrs::v7);
     AttrEmitter->EmitAttribute(ARMBuildAttrs::CPU_arch_profile,
                                ARMBuildAttrs::ApplicationProfile);
