@@ -1555,7 +1555,7 @@ unsigned ARMELFObjectWriter::GetRelocType(const MCValue &Target,
         break;
       }
       break;
-    case ARM::fixup_arm_branch:
+    case ARM::fixup_arm_uncondbranch:
       switch (Modifier) {
       case MCSymbolRefExpr::VK_ARM_PLT:
         Type = ELF::R_ARM_PLT32;
@@ -1564,6 +1564,9 @@ unsigned ARMELFObjectWriter::GetRelocType(const MCValue &Target,
         Type = ELF::R_ARM_CALL;
         break;
       }
+      break;
+    case ARM::fixup_arm_condbranch:
+      Type = ELF::R_ARM_JUMP24;
       break;
     case ARM::fixup_arm_movt_hi16:
     case ARM::fixup_arm_movt_hi16_pcrel:
@@ -1617,10 +1620,11 @@ unsigned ARMELFObjectWriter::GetRelocType(const MCValue &Target,
     case ARM::fixup_arm_thumb_br:
       assert(0 && "Unimplemented");
       break;
-    case ARM::fixup_arm_branch:
-      // FIXME: Differentiate between R_ARM_CALL and
-      // R_ARM_JUMP24 (latter used for conditional jumps)
+    case ARM::fixup_arm_uncondbranch:
       Type = ELF::R_ARM_CALL;
+      break;
+    case ARM::fixup_arm_condbranch:
+      Type = ELF::R_ARM_JUMP24;
       break;
     case ARM::fixup_arm_movt_hi16:
       Type = ELF::R_ARM_MOVT_ABS;
