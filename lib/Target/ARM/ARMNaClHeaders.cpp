@@ -69,9 +69,18 @@ void EmitSFIHeaders(raw_ostream &O) {
 
   O << " @ ========================================\n";
   if (FlagSfiZeroMask) {
+    // This mode sets all mask to zero which makes them into nops
+    // this is useful for linking this code against non-sandboxed code
+    // for debugging purposes
     O <<
       "\t.macro sfi_data_mask reg cond\n"
       "\tbic\\cond \\reg, \\reg, #0\n"
+      "\t.endm\n"
+      "\n\n";
+
+    O <<
+      "\t.macro sfi_data_tst reg\n"
+      "\ttst \\reg, #0x00000000\n"
       "\t.endm\n"
       "\n\n";
 
