@@ -4026,3 +4026,71 @@ def MSRsysi : ABI<0b0011, (outs), (ins so_imm:$a, msr_mask:$mask), NoItinerary,
   let Inst{23-20} = 0b0110;
   let Inst{7-4} = 0b0000;
 }
+
+// @LOCALMOD-BEGIN
+//===----------------------------------------------------------------------===//
+// NativeClient intrinsics
+// These provide the ability to implement several low-level features without
+// having to link native ASM code on the client.
+// This code has to be kept in sync with include/llvm/Intrinsics.td and
+// lib/Target/X86InstrNaCl.{td, cpp}.
+// TODO(sehr): conditionalize this on IsNaCl64 | IsNaCl32 | IsNaClArm.
+
+let isTerminator = 1, isBarrier = 1, Uses = [R4, SP] in {
+  // At ELF startup time the parameters that are eventually passed to main
+  // need to be computed from one value on the stack.  That value, argc, is
+  // loaded into r0.  Four bytes above that is argv[argc + 1].  And above that
+  // is envp the start of the environment.
+  // The bic r3, ... fragment aligns the stack 0mod8.  Remove when issue
+  // http://code.google.com/p/nativeclient/issues/detail?id=94 is fixed.
+  // This intrinsic loads r0 = argc, r1 = argv, and r2 = envp, expecting that
+  // there will be a call to __nacl_startup(argc, argv, envp).
+  def NACL_ELF_START : AXI<(outs), (ins), MiscFrm, NoItinerary,
+                           "mov r11, #0; "            // clear frame pointer
+                           "mov lr, #0; "             // clear link register
+                           "ldr r0, [sp]; "           // r0 = argc
+                           "add r1, sp, #4; "         // r1 = argv
+                           "add r2, r1, r0, lsl #2; " // r2 = envp
+                           "bic r3, sp, #7; "
+                           "teq r3, sp; "
+                           "pushne {{r1}}; "          // sp aligned 0mod8
+                           "sfi_nops_to_force_slot2; "
+                           "sfi_code_mask r4; "
+                           "blx r4; "
+                           "trap",                    // Bundle start
+                           [(int_nacl_elf_start R4)]>;
+}
+
+let Uses = [R0], Defs = [R0] in {
+  // Saves all the callee-saves registers, sp, and lr to the JMP_BUF structure
+  // pointed to by r0.  The JMP_BUF structure is the maximum size over all
+  // supported architectures.
+  def NACL_SETJ : AXI<(outs), (ins),
+                      MiscFrm, NoItinerary,
+                      // Bundle start
+                      "sfi_nop_if_at_bundle_end; "
+                      "sfi_data_mask r0; "
+                      "stmia r0!, {{r4, r5, r6, r7, r8, r10, r11, sp, lr}}; "
+                      "mov r0, #0; ",
+                      [(set R0, (int_nacl_setjmp R0, LR))]>;
+}
+
+let isTerminator = 1, isBranch = 1, isBarrier = 1, Uses = [R0, R1] in {
+  // Restores all the callee-saves registers, sp, and lr from the JMP_BUF
+  // structure pointed to by r0.  Returns the value in r1 at entry.  This
+  // implements the tail of longjmp, with the normalization of the return value   // (if the caller passes zero to longjmp, it should return 1) done in the
+  // caller.
+  def NACL_LONGJ : AXI<(outs), (ins), MiscFrm, NoItinerary,
+                       // Bundle start
+                       "ldmia r0!, {{r4, r5, r6, r7, r8, r10, r11, r12, lr}}; "
+                       "sfi_nop_if_at_bundle_end; "
+                       "mov sp, r12; "
+                       "sfi_data_mask sp; "
+                       "movs r0, r1; "
+                       "moveq r0, #1; "
+                       "sfi_nop_if_at_bundle_end; "
+                       "sfi_code_mask lr; "
+                       "bx lr; ",
+                       [(int_nacl_longjmp R0, R1)]>;
+}
+// @LOCALMOD-END

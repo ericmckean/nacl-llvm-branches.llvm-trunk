@@ -480,6 +480,19 @@ def int_convertus  : Intrinsic<[llvm_anyint_ty],
 def int_convertuu  : Intrinsic<[llvm_anyint_ty],
                                [llvm_anyint_ty, llvm_i32_ty, llvm_i32_ty]>;
 
+// @LOCALMOD-BEGIN
+//===----------------------- Native Client Intrinsics ---------------------===//
+// TODO(sehr): conditionalize this on IsNaCl64 | IsNaCl32 | IsNaClArm.
+// The expansions of these are in lib/Target/X86/X86InstrNacl.{td, cpp} and
+// lib/Target/ARM/ARMInstrInfo.td.
+def int_nacl_elf_start : Intrinsic<[], [llvm_ptr_ty]>,
+                         GCCBuiltin<"__builtin_nacl_elf_start">;
+def int_nacl_setjmp : Intrinsic<[llvm_i32_ty],  [llvm_ptr_ty, llvm_ptr_ty]>,
+                      GCCBuiltin<"__builtin_nacl_setjmp">;
+def int_nacl_longjmp : Intrinsic<[],  [llvm_ptr_ty, llvm_i32_ty]>,
+                       GCCBuiltin<"__builtin_nacl_longjmp">;
+// @LOCALMOD-END
+
 //===----------------------------------------------------------------------===//
 // Target-specific intrinsics
 //===----------------------------------------------------------------------===//
