@@ -10,6 +10,10 @@
 // This file contains a pass that ensures stores and loads and stack/frame
 // pointer addresses are within the NaCl sandbox (for x86-64).
 // It also ensures that indirect control flow follows NaCl requirments.
+//
+// The other major portion of rewriting for NaCl is done in X86InstrNaCl.cpp,
+// which is responsible for expanding the NaCl-specific operations introduced
+// here and also the intrinsic functions to support setjmp, etc.
 //===----------------------------------------------------------------------===//
 #define DEBUG_TYPE "x86-sandboxing"
 
@@ -128,7 +132,7 @@ static bool IsRegAbsolute(unsigned Reg) {
           Reg == X86::R15 || Reg == X86::RIP);
 }
 
-static unsigned FindMemoryOperand(const MachineInstr &MI) {
+static bool FindMemoryOperand(const MachineInstr &MI, unsigned* index) {
   int NumFound = 0;
   unsigned MemOp = 0;
   for (unsigned i = 0; i < MI.getNumOperands(); ) {
@@ -141,13 +145,17 @@ static unsigned FindMemoryOperand(const MachineInstr &MI) {
     }
   }
 
+  // Intrinsics and other functions can have mayLoad and mayStore to reflect
+  // the side effects of those functions.  This function is used to find
+  // explicit memory references in the instruction, of which there are none.
   if (NumFound == 0)
-    llvm_unreachable("Unable to find memory operands in load/store!");
+    return false;
 
   if (NumFound > 1)
     llvm_unreachable("Too many memory operands in instruction!");
 
-  return MemOp;
+  *index = MemOp;
+  return true;
 }
 
 static unsigned PromoteRegTo64(unsigned RegIn) {
@@ -455,6 +463,14 @@ bool X86NaClRewritePass::ApplyControlSFI(MachineBasicBlock &MBB,
     return true;
   }
 
+  if (Opc == X86::NACL_ELF_START32 ||
+      Opc == X86::NACL_ELF_START64 ||
+      Opc == X86::NACL_LONGJ32 ||
+      Opc == X86::NACL_LONGJ64) {
+    // The expansions for these intrinsics already handle control SFI.
+    return false;
+  }
+
   DumpInstructionVerbose(MI);
   llvm_unreachable("Unhandled Control SFI");
 }
@@ -474,7 +490,9 @@ bool X86NaClRewritePass::ApplyMemorySFI(MachineBasicBlock &MBB,
   if (IsPushPop(MI))
     return false;
 
-  unsigned MemOp = FindMemoryOperand(MI);
+  unsigned MemOp;
+  if (!FindMemoryOperand(MI, &MemOp))
+    return false;
   assert(isMem(&MI, MemOp));
   MachineOperand &BaseReg  = MI.getOperand(MemOp + 0);
   MachineOperand &Scale = MI.getOperand(MemOp + 1);

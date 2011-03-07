@@ -29,7 +29,7 @@
 // These instructions cannot be encoded (written into an object file) by the
 // MCCodeEmitter. Instead, during direct object emission, they get lowered to
 // a sequence of streamer emits. (see X86InstrNaCl.cpp)
-// 
+//
 // These instructions should not be used in CodeGen. They have no pattern
 // and lack CodeGen metadata. Instead, the X86NaClRewritePass should
 // generate these instructions after CodeGen is finished.
@@ -314,3 +314,126 @@ def NACL_CG_VAARG_64 : I<0, Pseudo,
                      (X86vaarg64 addr:$ap, imm:$size, imm:$mode, imm:$align)),
                      (implicit EFLAGS)]>,
                      Requires<[IsNaCl64]>;
+
+//===----------------------------------------------------------------------===//
+// NativeClient intrinsics
+// These provide the ability to implement several low-level features without
+// having to link native ASM code on the client.
+// These need to be kept in sync with in lib/Target/ARM/ARMInstrInfo.td and
+// lib/Target/X86/X86InstrNaCl.cpp.
+// TODO(sehr): Separate this code to allow NaCl and non-NaCl versions.
+
+// At ELF startup time the parameters that are eventually passed to main
+// need to be computed from one value on the stack.  That value, argc, is
+// loaded into [er]si.  Four bytes above that is argv[argc + 1].  And above that
+// is envp the start of the environment.
+// This intrinsic loads [er]si = argc, [er]cx = argv, and [er]bp = envp, and
+// then sets up a call frame, expecting that there will be a call to
+// __nacl_startup(argc, argv, envp).
+let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1,
+    Uses = [EAX] in {
+def NACL_ELF_START32 : I<0, Pseudo, (outs), (ins),
+                         "popl %esi; "
+                         "movl %esp, %ecx; "
+                         "leal 4(%esp, %esi, 4), %ebx; "
+                         "andl $$0xfffffff0, %esp; "
+                         "andl $$0xfffffff0, %esp; "
+                         "xorl %ebp, %ebp; "
+                         "pushl %ebp; "
+                         "pushl %ebx; "
+                         "pushl %ecx; "
+                         "pushl %esi; "
+                         "naclcall %eax; "
+                         "hlt; ",
+                         [(int_nacl_elf_start EAX)]>,
+                         Requires<[IsNaCl32]>;
+}
+
+let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1,
+    Uses = [EAX, R15] in {
+def NACL_ELF_START64 : I<0, Pseudo, (outs), (ins),
+                         "popl %rsi; "
+                         "movl %rsp, %rcx; "
+                         "leal 4(%rsp, %rsi, 4), %ebx; "
+                         "andq $$0xfffffffffffffff0, %rsp; "
+                         "movq %rsi, %rdi; "
+                         "movq %rcx, %rsi; "
+                         "movl %ebx, %edx; "
+                         "movl %ebx, %edx; "
+                         "naclcall %eax, %r15; "
+                         "hlt; ",
+                         [(int_nacl_elf_start EAX)]>,
+                         Requires<[IsNaCl64]>;
+}
+
+// Saves all the callee-saves registers, [er]sp, and [er]ip to the JMP_BUF
+// structure pointed to by 4(%esp) or rdi.  The JMP_BUF structure is the
+// maximum size over all supported architectures.  The MC expansions happen
+// in X86InstrNaCl.cpp.
+let Uses = [ECX, RDX], Defs = [EAX, EFLAGS] in {
+  def NACL_SETJ32 : I<0, Pseudo, (outs), (ins),
+                     "movl %ebx, 0(%ecx); "
+                     "movl %ebp, 4(%ecx); "
+                     "movl %esp, 8(%ecx); "
+                     "movl %esi, 12(%ecx); "
+                     "movl %edi, 16(%ecx); "
+                     "movl %edx, 20(%ecx); "
+                     "xorl %eax, %eax; ",
+                     [(set EAX, (int_nacl_setjmp ECX, EDX))]>,
+                     Requires<[IsNaCl32]>;
+}
+let Uses = [EDI, RDX], Defs = [EAX, EFLAGS] in {
+  def NACL_SETJ64 : I<0, Pseudo, (outs), (ins),
+                      "movq %rbx, %nacl:0(%r15, %rdi); "
+                      "movq %rbp, %nacl:8(%r15, %rdi); "
+                      "movq %rsp, %nacl:16(%r15, %rdi); "
+                      "movq %r12, %nacl:24(%r15, %rdi); "
+                      "movq %r13, %nacl:32(%r15, %rdi); "
+                      "movq %r14, %nacl:40(%r15, %rdi); "
+                      "movq %rdx, %nacl:48(%r15, %rdi); "
+                      "xorl %eax, %eax; ",
+                      [(set EAX, (int_nacl_setjmp EDI, EDX))]>,
+                      Requires<[IsNaCl64]>;
+}
+
+// Restores all the callee-saves registers, [er]sp, and [er]ip from the JMP_BUF
+// structure pointed to by 4(%esp) or %rdi.  Returns the value in 8(%esp) or
+// %rsi at entry.  This implements the tail of longjmp, with the normalization
+// of the return value (if the caller passes zero to longjmp, it should return
+// 1) done in the caller. The MC expansions happen in X86InstrNaCl.cpp.
+let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1,
+    Uses = [EAX, ECX] in {
+  def NACL_LONGJ32 : I<0, Pseudo, (outs), (ins),
+                       "movl $$1, %ebx; "
+                       "andl %eax, %eax; "
+                       "cmovzl %ebx, %eax; "
+                       "movl 0(%ecx), %ebx; "
+                       "movl 4(%ecx), %ebp; "
+                       "movl 8(%ecx), %esp; "
+                       "movl 12(%ecx), %esi; "
+                       "movl 16(%ecx), %edi; "
+                       "movl 20(%ecx), %ecx; "
+                       "nacljmp %ecx; ",
+                       [(int_nacl_longjmp ECX, EAX)]>,
+                       Requires<[IsNaCl32]>, TB;
+}
+
+let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1,
+    Uses = [EAX, EDI, R15] in {
+  def NACL_LONGJ64 : I<0, Pseudo, (outs), (ins),
+                       "movl $$1, %ebx; "
+                       "andl %eax, %eax; "
+                       "cmovzl %ebx, %eax; "
+                       "movq %nacl:0(%r15, %edi), %rbx; "
+                       "movq %nacl:8(%r15, %edi), %rdx; "
+                       "naclrestbp %edx, %r15; "
+                       "movq %nacl:16(%r15, %edi), %rdx; "
+                       "naclrestsp %edx, %r15; "
+                       "movq %nacl:24(%r15, %edi), %r12; "
+                       "movq %nacl:32(%r15, %edi), %r13; "
+                       "movq %nacl:40(%r15, %edi), %r14; "
+                       "movq %nacl:48(%r15, %edi), %rcx; "
+                       "nacljmp %ecx, %r15; ",
+                       [(int_nacl_longjmp EDI, EAX)]>,
+                       Requires<[IsNaCl64]>, TB;
+}
