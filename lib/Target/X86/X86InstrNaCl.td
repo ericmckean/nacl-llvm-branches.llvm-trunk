@@ -437,3 +437,59 @@ let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1,
                        [(int_nacl_longjmp EDI, EAX)]>,
                        Requires<[IsNaCl64]>, TB;
 }
+
+//===========================================================================
+// The following intrinsics provide a replacement for the functions in
+// native_client/src/untrusted/stubs/tls_arm.c, which are the X86-specific
+// versions of an interface in native_client/src/untrusted/nacl/tls.h.  The
+// intrinsic names and pattern names are basically the functions there without
+// the leading underscores.  The return address size differs between 32 and
+// 64 bit compilation, leading to the duplication in NACL_RETURN_ADDRESS_SIZE
+// templates.
+
+// from src/untrusted/stubs/tls_x86_{32,64}.c:
+// int __nacl_tls_aligment() {
+//   return 32;
+// }
+def NACL_TLS_ALIGNMENT : I<0, Pseudo, (outs GR32:$dst), (ins),
+                           "movl $$32, $dst",
+                           [(set GR32:$dst, (int_nacl_tls_alignment))]>;
+
+// from src/untrusted/stubs/tls_x86_{32,64}.c:
+// size_t __nacl_tdb_offset_in_tls(size_t tls_data_and_bss_size) {
+//  return tls_data_and_bss_size; /* TDB after TLS */
+// }
+def NACL_TDB_OFFSET_IN_TLS :
+        I<0, Pseudo, (outs GR32:$dst), (ins GR32:$src),
+          "movl $src, $dst",
+          [(set GR32:$dst, (int_nacl_tdb_offset_in_tls GR32:$src))]>;
+
+// from src/untrusted/stubs/tls_x86_{32,64}.c:
+// size_t __nacl_tdb_effective_payload_size(size_t tdb_size) {
+//   return tdb_size; /* TDB after TLS */
+// }
+def NACL_TDB_EFFECTIVE_PAYLOAD_SIZE :
+        I<0, Pseudo, (outs GR32:$dst), (ins GR32:$src),
+          "movl $src, $dst",
+          [(set GR32:$dst, (int_nacl_tdb_effective_payload_size GR32:$src))]>;
+
+// from src/untrusted/stubs/tls_x86_32.c:
+// size_t __nacl_return_address_size() {
+//   return 4;
+// }
+def NACL_RETURN_ADDRESS_SIZE32 :
+        I<0, Pseudo, (outs GR32:$dst), (ins),
+          "movl $$4, $dst",
+          [(set GR32:$dst, (int_nacl_return_address_size))]>,
+        Requires<[IsNaCl32]>;
+
+// from src/untrusted/stubs/tls_x86_64.c:
+// size_t __nacl_return_address_size() {
+//   return 8;
+// }
+def NACL_RETURN_ADDRESS_SIZE64 :
+        I<0, Pseudo, (outs GR32:$dst), (ins),
+          "movl $$8, $dst",
+          [(set GR32:$dst, (int_nacl_return_address_size))]>,
+        Requires<[IsNaCl64]>;
+

@@ -491,6 +491,20 @@ def int_nacl_setjmp : Intrinsic<[llvm_i32_ty],  [llvm_ptr_ty, llvm_ptr_ty]>,
                       GCCBuiltin<"__builtin_nacl_setjmp">;
 def int_nacl_longjmp : Intrinsic<[],  [llvm_ptr_ty, llvm_i32_ty]>,
                        GCCBuiltin<"__builtin_nacl_longjmp">;
+
+// The following intrinsics provide a replacement for interface in
+// native_client/src/untrusted/nacl/tls.h.  The intrinsic names are basically
+// the functions there without the leading underscores.
+def int_nacl_tls_alignment : Intrinsic<[llvm_i32_ty], []>,
+                             GCCBuiltin<"__builtin_nacl_tls_alignment">;
+def int_nacl_tdb_offset_in_tls : Intrinsic<[llvm_i32_ty], [llvm_i32_ty]>,
+                             GCCBuiltin<"__builtin_nacl_tdb_offset_in_tls">;
+def int_nacl_tdb_effective_payload_size :
+        Intrinsic<[llvm_i32_ty], [llvm_i32_ty]>,
+        GCCBuiltin<"__builtin_nacl_tdb_effective_payload_size">;
+def int_nacl_return_address_size :
+        Intrinsic<[llvm_i32_ty], []>,
+        GCCBuiltin<"__builtin_nacl_return_address_size">;
 // @LOCALMOD-END
 
 //===----------------------------------------------------------------------===//
