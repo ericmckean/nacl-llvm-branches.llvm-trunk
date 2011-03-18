@@ -61,7 +61,7 @@ let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1,
 
 let isCall = 1, isAsmParserOnly = 1 in {
   def NACL_CALL32d : NaClPI32<(outs), (ins i32imm_pcrel:$dst),
-                     "call\t$dst">;
+                     "naclcall\t$dst">;
   def NACL_CALL32r : NaClPI32<(outs), (ins GR32:$dst),
                      "naclcall\t$dst">;
 }
@@ -91,7 +91,7 @@ let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1,
 
 let isCall = 1, isAsmParserOnly = 1 in {
   def NACL_CALL64d : NaClPI64<(outs), (ins i32imm_pcrel:$dst),
-                     "call\t$dst">;
+                     "naclcall\t$dst">;
   def NACL_CALL64r : NaClPI64<(outs), (ins GR32:$dst, GR64:$rZP),
                      "naclcall\t$dst,$rZP">;
 }
@@ -167,7 +167,7 @@ let isCall = 1 in
 
     def NACL_CG_CALLpcrel32 : I<0, Pseudo,
                               (outs), (ins i32imm_pcrel:$dst, variable_ops),
-                              "call\t$dst", []>, Requires<[IsNaCl32]>;
+                              "naclcall\t$dst", []>, Requires<[IsNaCl32]>;
     def NACL_CG_CALL32r     : I<0, Pseudo,
                               (outs), (ins GR32:$dst, variable_ops),
                               "naclcall\t$dst", [(X86call GR32:$dst)]>,
@@ -217,7 +217,7 @@ let isCall = 1 in
 
     def NACL_CG_CALL64pcrel32 : I<0, Pseudo, (outs),
                                 (ins i32imm_pcrel:$dst, variable_ops),
-                                "call\t$dst", []>,
+                                "naclcall\t$dst", []>,
                                 Requires<[IsNaCl64]>;
 
     def NACL_CG_CALL64r       : I<0, Pseudo, (outs), (ins GR32:$dst, variable_ops),
