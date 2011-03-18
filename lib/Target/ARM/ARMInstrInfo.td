@@ -4057,7 +4057,10 @@ let isTerminator = 1, isBarrier = 1, Uses = [R4, SP] in {
                            "sfi_nops_to_force_slot2; "
                            "sfi_code_mask r4; "
                            "blx r4; "
-                           "trap",                    // Bundle start
+                           // A bundle beginning is here, but we want to ensure
+                           // we halt if the function we're calling, typically
+                           // __nacl_startup, returns.
+                           "sfi_illegal_if_at_bundle_begining",
                            [(int_nacl_elf_start R4)]>;
 }
 
@@ -4093,4 +4096,47 @@ let isTerminator = 1, isBranch = 1, isBarrier = 1, Uses = [R0, R1] in {
                        "bx lr; ",
                        [(int_nacl_longjmp R0, R1)]>;
 }
+
+//===========================================================================
+// The following intrinsics provide a replacement for the functions in
+// native_client/src/untrusted/stubs/tls_arm.c, which are the ARM-specific
+// versions of an interface in native_client/src/untrusted/nacl/tls.h.  The
+// intrinsic names and pattern names are basically the functions there without
+// the leading underscores.
+
+// from src/untrusted/stubs/tls_arm.c:
+// int __nacl_tls_aligment() {
+//   return (1 << 12);
+// }
+def NACL_TLS_ALIGNMENT : AXI<(outs GPR:$dst), (ins), MiscFrm, NoItinerary,
+                           "mov $dst, #4096",
+                           [(set GPR:$dst, (int_nacl_tls_alignment))]>;
+
+// from src/untrusted/stubs/tls_arm.c:
+// size_t __nacl_tdb_offset_in_tls(size_t tls_data_and_bss_size) {
+//   return 0; /* TDB is the first symbol in the TLS. */
+// }
+def NACL_TDB_OFFSET_IN_TLS :
+        AXI<(outs GPR:$dst), (ins GPR:$src), MiscFrm, NoItinerary,
+          "mov $dst, #0\t@ incoming value of $src is ignored",
+          [(set GPR:$dst, (int_nacl_tdb_offset_in_tls GPR:$src))]>;
+
+// from src/untrusted/stubs/tls_arm.c:
+// size_t __nacl_tdb_effective_payload_size(size_t tdb_size) {
+//   return 0; /* TDB is the first symbol in the TLS. */
+// }
+def NACL_TDB_EFFECTIVE_PAYLOAD_SIZE :
+        AXI<(outs GPR:$dst), (ins GPR:$src), MiscFrm, NoItinerary,
+          "mov $dst, #0\t@ incoming value of $src is ignored",
+          [(set GPR:$dst, (int_nacl_tdb_effective_payload_size GPR:$src))]>;
+
+// from src/untrusted/stubs/tls_arm.c:
+// size_t __nacl_return_address_size() {
+//   return 4;
+// }
+def NACL_RETURN_ADDRESS_SIZE :
+        AXI<(outs GPR:$dst), (ins), MiscFrm, NoItinerary,
+          "mov $dst, #4",
+          [(set GPR:$dst, (int_nacl_return_address_size))]>;
+
 // @LOCALMOD-END
