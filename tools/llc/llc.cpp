@@ -299,6 +299,11 @@ int llc_main(int argc, char **argv) {
   if (MCPU.size() || MAttrs.size()) {
     SubtargetFeatures Features;
     Features.setCPU(MCPU);
+    // @LOCALMOD-BEGIN
+    // Use the same default attribute settings as libLTO.
+    // TODO(pdox): Figure out why this isn't done for upstream llc.
+    Features.getDefaultSubtargetFeatures(MCPU, TheTriple);
+    // @LOCALMOD-END
     for (unsigned i = 0; i != MAttrs.size(); ++i)
       Features.AddFeature(MAttrs[i]);
     FeaturesStr = Features.getString();

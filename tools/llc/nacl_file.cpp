@@ -37,8 +37,8 @@
 #define printerr(...)                           \
   fprintf(stderr, __VA_ARGS__)
 
-extern "C" int __real_open(const char *pathname, int oflags, int mode);
-extern "C" int __wrap_open(const char *pathname, int oflags, int mode);
+extern "C" int __real_open(const char *pathname, int oflags, ...);
+extern "C" int __wrap_open(const char *pathname, int oflags, ...);
 extern "C" int __real_close(int dd);
 extern "C" int __wrap_close(int dd);
 extern "C" int __real_read(int dd, void *, size_t);
@@ -344,10 +344,17 @@ adjust_file_size(int dd, size_t new_size) {
   return 0;
 }
 
-int __wrap_open(const char *pathname, int oflags, int mode) {
+int __wrap_open(const char *pathname, int oflags, ...) {
   int dd = -1;
   int i;
+  int mode = 0;
+  va_list ap;
   struct NaCl_file_map *entry;
+
+  va_start(ap, oflags);
+  if (oflags & O_CREAT) {
+    mode = va_arg(ap, int);
+  }
 
   for (entry = nacl_fs; NULL != entry; entry = entry->next) {
     if (!strcmp(pathname, entry->filename)) {

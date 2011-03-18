@@ -146,13 +146,13 @@ let isCall = 1 in
     def CALLpcrel32 : Ii32PCRel<0xE8, RawFrm,
                            (outs), (ins i32imm_pcrel:$dst,variable_ops),
                            "call{l}\t$dst", []>,
-                      Requires<[In32BitMode, NotNaCl]>;
+                      Requires<[In32BitMode]>;
     def CALL32r     : I<0xFF, MRM2r, (outs), (ins GR32:$dst, variable_ops),
-                        "call{l}\t{*}$dst", [(X86call GR32:$dst)]>,
-                         Requires<[In32BitMode, NotNaCl]>;
+                        "call{l}\t{*}$dst", []>, // @LOCALMOD
+                         Requires<[In32BitMode]>;
     def CALL32m     : I<0xFF, MRM2m, (outs), (ins i32mem:$dst, variable_ops),
-                        "call{l}\t{*}$dst", [(X86call (loadi32 addr:$dst))]>,
-                        Requires<[In32BitMode, NotNaCl]>;
+                        "call{l}\t{*}$dst", []>, // @LOCALMOD
+                        Requires<[In32BitMode]>;
   
     def FARCALL16i  : Iseg16<0x9A, RawFrmImm16, (outs), 
                              (ins i16imm:$off, i16imm:$seg),
@@ -174,6 +174,16 @@ let isCall = 1 in
                        Requires<[NotNaCl]>; // @LOCALMOD
   }
 
+// @LOCALMOD-BEGIN
+// These CodeGen patterns are normally part of the declaration above.
+// However, we need to be able to disable these patterns for NaCl
+// without disabling the the instruction itself. (so we can use the
+// instruction in assembly input)
+def : Pat<(X86call GR32:$dst),
+          (CALL32r GR32:$dst)>, Requires<[NotNaCl]>;
+def : Pat<(X86call (loadi32 addr:$dst)),
+          (CALL32m addr:$dst)>, Requires<[NotNaCl]>;
+// @LOCALMOD-END
 
 // Tail call stuff.
 
