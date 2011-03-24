@@ -232,8 +232,9 @@ namespace {
     inline void getAddressOperands(X86ISelAddressMode &AM, SDValue &Base, 
                                    SDValue &Scale, SDValue &Index,
                                    SDValue &Disp, SDValue &Segment) {
+      EVT MemOpVT = Subtarget->is64Bit() ? MVT::i64 : MVT::i32;  // @LOCALMOD
       Base  = (AM.BaseType == X86ISelAddressMode::FrameIndexBase) ?
-        CurDAG->getTargetFrameIndex(AM.Base_FrameIndex, TLI.getPointerTy()) :
+        CurDAG->getTargetFrameIndex(AM.Base_FrameIndex, MemOpVT) : // @LOCALMOD
         AM.Base_Reg;
       Scale = getI8Imm(AM.Scale);
       Index = AM.IndexReg;
@@ -1202,8 +1203,6 @@ bool X86DAGToDAGISel::SelectAddr(SDNode *Parent, SDValue N, SDValue &Base,
   if (MatchAddress(N, AM))
     return false;
 
-  EVT VT = N.getValueType();
-
   // @LOCALMOD-START
   if (Subtarget->isTargetNaCl64()) {
     // NaCl needs to zero the top 32-bits of the index, so we can't
@@ -1211,7 +1210,9 @@ bool X86DAGToDAGISel::SelectAddr(SDNode *Parent, SDValue N, SDValue &Base,
     LegalizeIndexForNaCl(N, AM);
   }
   // @LOCALMOD-END
-  
+
+  EVT VT = Subtarget->is64Bit() ? MVT::i64 : MVT::i32; // @LOCALMOD
+
   if (AM.BaseType == X86ISelAddressMode::RegBase) {
     if (!AM.Base_Reg.getNode())
       AM.Base_Reg = CurDAG->getRegister(0, VT);
@@ -1221,6 +1222,31 @@ bool X86DAGToDAGISel::SelectAddr(SDNode *Parent, SDValue N, SDValue &Base,
     AM.IndexReg = CurDAG->getRegister(0, VT);
 
   getAddressOperands(AM, Base, Scale, Index, Disp, Segment);
+
+  // @LOCALMOD-BEGIN
+  // For Native Client 64-bit, zero-extend 32-bit pointers
+  // to 64-bits for memory operations.  Most of the time, this
+  // won't generate any additional instructions because the backend
+  // knows that operations on 32-bit registers implicitly zero-extends.
+  // If we don't do this, there are a few corner cases where LLVM might
+  // assume the upper bits won't be modified or used, but since we
+  // always clear the upper bits, this is not a good assumption.
+  // http://code.google.com/p/nativeclient/issues/detail?id=1564
+  if (Subtarget->isTargetNaCl64()) {
+    assert(Base.getValueType() == MVT::i64 && "Unexpected base operand size");
+
+    if (Index.getValueType() != MVT::i64) {
+      Index = CurDAG->getZExtOrTrunc(Index, Index.getDebugLoc(), MVT::i64);
+      // Insert the new node into the topological ordering.
+      if (Index->getNodeId() == -1 ||
+          Index->getNodeId() > N.getNode()->getNodeId()) {
+        CurDAG->RepositionNode(N.getNode(), Index.getNode());
+        Index->setNodeId(N.getNode()->getNodeId());
+      }
+    }
+  }
+  // @LOCALMOD-END
+
   return true;
 }
 
