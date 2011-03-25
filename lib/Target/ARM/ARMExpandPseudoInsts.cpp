@@ -856,30 +856,26 @@ bool ARMExpandPseudo::ExpandMI(MachineBasicBlock &MBB,
       static const unsigned kNaClPageShift = 12;
       static const unsigned kNaClTlsBaseOffset = 16;
       // mov r0, r9, lsr #NACL_PAGESHIFT
-      MachineInstrBuilder MIB1 =
-        AddDefaultPred(BuildMI(MBB, MBBI, MI.getDebugLoc(), TII->get(ARM::MOVs),
-                               ARM::R0)
-                               .addReg(ARM::R9)
-                               .addReg(0)
-                               .addImm(ARM_AM::getSORegOpc(ARM_AM::lsr,
-                                                           kNaClPageShift)))
+      AddDefaultPred(BuildMI(MBB, MBBI, MI.getDebugLoc(), TII->get(ARM::MOVs),
+                             ARM::R0)
+                       .addReg(ARM::R9)
+                       .addReg(0)
+                       .addImm(ARM_AM::getSORegOpc(ARM_AM::lsr,
+                                                   kNaClPageShift)))
         .addReg(0);
       // lsl r0, r0, #NACL_PAGESHIFT
-      MachineInstrBuilder MIB2 =
-        AddDefaultPred(BuildMI(MBB, MBBI, MI.getDebugLoc(), TII->get(ARM::MOVs),
-                               ARM::R0)
-                               .addReg(ARM::R0)
-                               .addReg(0)
-                               .addImm(ARM_AM::getSORegOpc(ARM_AM::lsl,
-                                                           kNaClPageShift)))
+      AddDefaultPred(BuildMI(MBB, MBBI, MI.getDebugLoc(), TII->get(ARM::MOVs),
+                             ARM::R0)
+                       .addReg(ARM::R0, RegState::Kill)
+                       .addReg(0)
+                       .addImm(ARM_AM::getSORegOpc(ARM_AM::lsl,
+                                                   kNaClPageShift)))
         .addReg(0);
       // sub r0, r0, #16
-      MachineInstrBuilder MIB3 =
-        AddDefaultPred(BuildMI(MBB, MBBI, MI.getDebugLoc(),
-                               TII->get(ARM::SUBri),
-                               ARM::R0)
-                .addReg(ARM::R0)
-                .addImm(kNaClTlsBaseOffset))
+      AddDefaultPred(BuildMI(MBB, MBBI, MI.getDebugLoc(), TII->get(ARM::SUBri),
+                             ARM::R0)
+                       .addReg(ARM::R0, RegState::Kill)
+                       .addImm(kNaClTlsBaseOffset))
         .addReg(0);
       MI.eraseFromParent();
       // @LOCALMOD-END
