@@ -310,18 +310,14 @@ X86RegisterInfo::getMatchingSuperRegClass(const TargetRegisterClass *A,
 
 const TargetRegisterClass *
 X86RegisterInfo::getPointerRegClass(unsigned Kind) const {
-  // @LOCALMOD-BEGIN
-  bool isPTR64Bit = TM.getSubtarget<X86Subtarget>().has64BitPointers();
-  // @LOCALMOD-END
-
   switch (Kind) {
   default: llvm_unreachable("Unexpected Kind in getPointerRegClass!");
   case 0: // Normal GPRs.
-    if (isPTR64Bit)   // @LOCALMOD
+    if (TM.getSubtarget<X86Subtarget>().is64Bit())
       return &X86::GR64RegClass;
     return &X86::GR32RegClass;
   case 1: // Normal GRPs except the stack pointer (for encoding reasons).
-    if (isPTR64Bit)   // @LOCALMOD
+    if (TM.getSubtarget<X86Subtarget>().is64Bit())
       return &X86::GR64_NOSPRegClass;
     return &X86::GR32_NOSPRegClass;
   }
