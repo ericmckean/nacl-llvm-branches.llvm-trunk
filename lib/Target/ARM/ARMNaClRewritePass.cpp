@@ -42,16 +42,17 @@ cl::opt<bool>
 FlagSfiZeroMask("sfi-zero-mask");
 
 cl::opt<bool>
-FlagSfiData("sfi-data", cl::desc("use illegal at data bundle beginning"));
+FlagSfiDisableData("sfi-data", cl::desc("disable using illegal at data bundle "
+                                        "beginning"));
 
 cl::opt<bool>
-FlagSfiStore("sfi-store", cl::desc("enable sandboxing for stores"));
+FlagSfiDisableStore("sfi-store", cl::desc("disable sandboxing for stores"));
 
 cl::opt<bool> 
-FlagSfiStack("sfi-stack", cl::desc("enable sandboxing for stack changes"));
+FlagSfiDisableStack("sfi-stack", cl::desc("disable sandboxing for stack changes"));
 
 cl::opt<bool>
-FlagSfiBranch("sfi-branch", cl::desc("enable sandboxing for branches"));
+FlagSfiDisableBranch("sfi-branch", cl::desc("disable sandboxing for branches"));
 
 }
 
@@ -630,9 +631,9 @@ bool ARMNaClRewritePass::runOnMachineFunction(MachineFunction &MF) {
        ++MFI) {
     MachineBasicBlock &MBB = *MFI;
 
-    if (FlagSfiStore)  Modified |= SandboxStoresInBlock(MBB);
-    if (FlagSfiBranch) Modified |= SandboxBranchesInBlock(MBB);
-    if (FlagSfiStack)  Modified |= SandboxStackChangesInBlock(MBB);
+    if (!FlagSfiDisableStore)  Modified |= SandboxStoresInBlock(MBB);
+    if (!FlagSfiDisableBranch) Modified |= SandboxBranchesInBlock(MBB);
+    if (!FlagSfiDisableStack)  Modified |= SandboxStackChangesInBlock(MBB);
   }
   DEBUG(LightweightVerify(MF));
   return Modified;

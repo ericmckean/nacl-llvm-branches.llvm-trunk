@@ -319,7 +319,6 @@ FunctionPass *llvm::createARMConstantIslandPass() {
 }
 
 bool ARMConstantIslands::runOnMachineFunction(MachineFunction &MF) {
-  if (FlagSfiDisableCP) return false;   // @LOCALMOD
   MachineConstantPool &MCP = *MF.getConstantPool();
 
   TII = (const ARMInstrInfo*)MF.getTarget().getInstrInfo();
@@ -327,6 +326,9 @@ bool ARMConstantIslands::runOnMachineFunction(MachineFunction &MF) {
   AFI = MF.getInfo<ARMFunctionInfo>();
   STI = &MF.getTarget().getSubtarget<ARMSubtarget>();
 
+  if (STI->isTargetNaCl() && (!FlagSfiEnableCP)) // @LOCALMOD
+    return false;   // @LOCALMOD
+  
   isThumb = AFI->isThumbFunction();
   isThumb1 = AFI->isThumb1OnlyFunction();
   isThumb2 = AFI->isThumb2Function();
@@ -615,7 +617,7 @@ unsigned ARMConstantIslands::GetFudge(const MachineInstr* I,
 }
 
 static void UpdateJumpTargetAlignment(MachineFunction &MF) {
-  if (!FlagSfiBranch) return;
+  if (FlagSfiDisableBranch) return;
 
   // JUMP TABLE TARGETS
   MachineJumpTableInfo *jt_info = MF.getJumpTableInfo();

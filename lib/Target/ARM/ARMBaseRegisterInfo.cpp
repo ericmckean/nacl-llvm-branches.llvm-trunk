@@ -828,7 +828,7 @@ emitLoadConstPool(MachineBasicBlock &MBB,
   // Sadly, the ARM backend is not very consistent about using this
   // pseudo instr. and hence checking this is not sufficient.
   // But, it should help detect some regressions early.
-  assert(!FlagSfiDisableCP && "unexpected call to emitLoadConstPool");
+  assert ((!STI.isTargetNaCl()) && "unexpected call to emitLoadConstPool");
   // @LOCALMOD-END
   MachineFunction &MF = *MBB.getParent();
   MachineConstantPool *ConstantPool = MF.getConstantPool();

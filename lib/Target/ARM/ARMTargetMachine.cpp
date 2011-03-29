@@ -26,8 +26,15 @@ static cl::opt<bool>ExpandMLx("expand-fp-mlx", cl::init(false), cl::Hidden);
 
 // @LOCALMOD-START
 namespace llvm {
-cl::opt<bool> FlagSfiDisableCP("sfi-disable-cp",
-                               cl::desc("disable arm constant island pools"));
+cl::opt<bool> FlagSfiEnableCP("sfi-enable-cp", cl::init(false), cl::Hidden,
+                              cl::desc("enable constant island pools in "
+                                       "text seg for NaCl (NaCl default "
+                                       "for constants is rodata)"));
+
+extern cl::opt<bool> FlagSfiDisableData;
+extern cl::opt<bool> FlagSfiDisableStore;
+extern cl::opt<bool> FlagSfiDisableStack;
+extern cl::opt<bool> FlagSfiDisableBranch;
 }
 // @LOCALMOD-END
 
@@ -194,19 +201,30 @@ bool ARMBaseTargetMachine::addPreEmitPass(PassManagerBase &PM,
     PM.add(createThumb2SizeReductionPass());
 
   // @LOCALMOD-START
-  // Note with FlagSfiDisableCP we effectively disable the
+  // Note with isTargetNaCl() we effectively disable the
   // ARMConstantIslandPass and rely on movt/movw to eliminate the need
   // for constant islands
-  if (FlagSfiDisableCP) {
-    assert(Subtarget.useMovt());
+  if (Subtarget.isTargetNaCl()) {
+    assert(Subtarget.useMovt() && "ARM/NaCl requires movw/movt instruction");
   }
+
+  /// FlagSfi* TRUE implies isTargetNaCl() TRUE
+  assert(((!FlagSfiDisableStore) || Subtarget.isTargetNaCl()) &&
+         "FlagSfiDisableStore can only be true in NaCl");
+  assert(((!FlagSfiDisableData) || Subtarget.isTargetNaCl()) &&
+         "FlagSfiDisableData can only be true in NaCl");
+  assert(((!FlagSfiDisableStack) || Subtarget.isTargetNaCl()) &&
+         "FlagSfiDisableStack can only be true in NaCl");
+  assert(((!FlagSfiDisableBranch) || Subtarget.isTargetNaCl()) &&
+         "FlagSfiDisableStack can only be true in NaCl");
   // @LOCALMOD-END
 
   PM.add(createARMConstantIslandPass());
   
   // @LOCALMOD-START
-  // This pass does all the heavy sfi lifting. 
-  PM.add(createARMNaClRewritePass());
+  // This pass does all the heavy sfi lifting for ARM/SFI
+  if (Subtarget.isTargetNaCl())
+    PM.add(createARMNaClRewritePass());
   // @LOCALMOD-END
  
   return true;

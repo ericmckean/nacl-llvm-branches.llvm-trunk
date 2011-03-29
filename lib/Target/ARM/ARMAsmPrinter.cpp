@@ -58,8 +58,8 @@ using namespace llvm;
 
 // @LOCALMOD-START
 namespace llvm {
-  extern cl::opt<bool> FlagSfiBranch;
-  extern cl::opt<bool> FlagSfiData;
+  extern cl::opt<bool> FlagSfiDisableBranch;
+  extern cl::opt<bool> FlagSfiDisableData;
 }
 // @LOCALMOD-END
 
@@ -259,7 +259,7 @@ bool ARMAsmPrinter::runOnMachineFunction(MachineFunction &MF) {
   MCP = MF.getConstantPool();
 
   // @LOCALMOD-START
-  if (FlagSfiBranch) {
+  if (Subtarget->isTargetNaCl() && (!FlagSfiDisableBranch)) {
     NaclAlignAllJumpTargetsAndConstantPools(MF);
   }
   // @LOCALMOD-END
@@ -1202,7 +1202,7 @@ void ARMAsmPrinter::EmitInstruction(const MachineInstr *MI) {
         OutStreamer.EmitRawText(StringRef("sfi_nop_if_at_bundle_end\n"));
       }
 
-      if (FlagSfiData) {
+      if (!FlagSfiDisableData) {
         SmallString<128> Str;
         raw_svector_ostream OS(Str);
         OS << "sfi_illegal_if_at_bundle_begining  @ ========== SFI (" << 
