@@ -33,6 +33,7 @@ add_llvm_target(ARMCodeGen
   ARMISelDAGToDAG.cpp
   ARMISelLowering.cpp
   ARMInstrInfo.cpp
+  ARMInstrNaCl.cpp
   ARMJITInfo.cpp
   ARMMCCodeEmitter.cpp
   ARMMCExpr.cpp

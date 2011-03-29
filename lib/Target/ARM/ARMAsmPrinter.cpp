@@ -243,7 +243,9 @@ void ARMAsmPrinter::EmitFunctionEntryLabel() {
   int alignment = MF->getAlignment();
   if (alignment < 4) alignment = 4;
   EmitAlignment(alignment);
-  OutStreamer.EmitRawText(StringRef("\t.set XmagicX, .\n"));
+  if (Subtarget->isTargetNaCl() && OutStreamer.hasRawTextSupport()) {
+    OutStreamer.EmitRawText(StringRef("\t.set XmagicX, .\n"));
+  }
   // @LOCALMOD-END
  
   OutStreamer.EmitLabel(CurrentFnSym);
@@ -454,7 +456,7 @@ void ARMAsmPrinter::EmitStartOfAsmFile(Module &M) {
   }
 
   // @LOCALMOD-BEGIN
-  if (/*IsNaCl?*/ true) {
+  if (Subtarget->isTargetNaCl() && OutStreamer.hasRawTextSupport()) {
     std::string str;
     raw_string_ostream OS(str);
     EmitSFIHeaders(OS);
@@ -530,6 +532,16 @@ void ARMAsmPrinter::EmitEndOfAsmFile(Module &M) {
     OutStreamer.EmitAssemblerFlag(MCAF_SubsectionsViaSymbols);
   }
 }
+
+// @LOCALMOD-START
+void ARMAsmPrinter::EmitFunctionBodyEnd() {
+  if (Subtarget->isTargetNaCl()) {
+    // FIXME! Get this value from ARMAsmBackend!
+    EmitAlignment(4);
+  }
+}
+// @LOCALMOD-END
+
 
 //===----------------------------------------------------------------------===//
 // Helper routines for EmitStartOfAsmFile() and EmitEndOfAsmFile()
@@ -1182,19 +1194,21 @@ void ARMAsmPrinter::EmitInstruction(const MachineInstr *MI) {
     // NOTE: we also should make sure that the first data item
     // is not in a code bundle
     // NOTE: there may be issues with alignment constraints
-    const unsigned size = MI->getOperand(2).getImm();
-    //assert(size == 4 || size == 8 && "Unsupported data item size");
-    if (size == 8) {
-      // we cannot generate a size 8 constant at offset 12 (mod 16)
-      OutStreamer.EmitRawText(StringRef("sfi_nop_if_at_bundle_end\n"));
-    }
+    if (Subtarget->isTargetNaCl() && OutStreamer.hasRawTextSupport()) {
+      const unsigned size = MI->getOperand(2).getImm();
+      //assert(size == 4 || size == 8 && "Unsupported data item size");
+      if (size == 8) {
+        // we cannot generate a size 8 constant at offset 12 (mod 16)
+        OutStreamer.EmitRawText(StringRef("sfi_nop_if_at_bundle_end\n"));
+      }
 
-    if (FlagSfiData) {
-      SmallString<128> Str;
-      raw_svector_ostream OS(Str);
-      OS << "sfi_illegal_if_at_bundle_begining  @ ========== SFI (" << 
-            size << ")\n";
-      OutStreamer.EmitRawText(OS.str());
+      if (FlagSfiData) {
+        SmallString<128> Str;
+        raw_svector_ostream OS(Str);
+        OS << "sfi_illegal_if_at_bundle_begining  @ ========== SFI (" << 
+          size << ")\n";
+        OutStreamer.EmitRawText(OS.str());
+      }
     }
     // @LOCALMOD-END
     OutStreamer.EmitLabel(GetCPISymbol(LabelId));

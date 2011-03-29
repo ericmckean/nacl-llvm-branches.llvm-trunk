@@ -190,6 +190,8 @@ def DontUseMovt      : Predicate<"!Subtarget->useMovt()">;
 def UseFPVMLx        : Predicate<"Subtarget->useFPVMLx()">;
 
 // @LOCALMOD-BEGIN
+// FIXME: Lift IsNaCl to share with X86
+def IsNaCl       : Predicate<"Subtarget->isTargetNaCl()">, AssemblerPredicate;
 def UseConstPool : Predicate<"Subtarget->useConstPool()">;
 def DontUseConstPool : Predicate<"!Subtarget->useConstPool()">;
 // @LOCALMOD-END
@@ -1014,6 +1016,11 @@ multiclass AI_str1<bit isByte, string opc, InstrItinClass iii,
 //===----------------------------------------------------------------------===//
 
 // @LOCALMOD-START
+
+// New ARM SFI Model
+include "ARMInstrNaCl.td"
+
+// Older Macro base SFI Model
 def SFI_GUARD_STORE :
 PseudoInst<(outs GPR:$dst), (ins GPR:$a, pred:$p), NoItinerary, []>;
 

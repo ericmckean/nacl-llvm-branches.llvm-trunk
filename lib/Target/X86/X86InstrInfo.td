@@ -443,6 +443,7 @@ def In64BitMode  : Predicate<"Subtarget->is64Bit()">, AssemblerPredicate;
 def IsWin64      : Predicate<"Subtarget->isTargetWin64()">;
 def NotWin64     : Predicate<"!Subtarget->isTargetWin64()">;
 // @LOCALMOD-BEGIN
+// FIXME: Lift IsNaCl to share with ARM
 def IsNaCl       : Predicate<"Subtarget->isTargetNaCl()">, AssemblerPredicate;
 def IsNaCl32     : Predicate<"Subtarget->isTargetNaCl32()">, AssemblerPredicate;
 def IsNaCl64     : Predicate<"Subtarget->isTargetNaCl64()">, AssemblerPredicate;

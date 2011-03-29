@@ -222,6 +222,9 @@ protected:
   // @LOCALMOD
   bool useConstPool() const { return !FlagSfiDisableCP; }
 
+  // @LOCALMOD
+  bool isTargetNaCl() const { return TargetTriple.getOS() == Triple::NativeClient; }
+
   bool allowsUnalignedMem() const { return AllowsUnalignedMem; }
 
   const std::string & getCPUString() const { return CPUString; }

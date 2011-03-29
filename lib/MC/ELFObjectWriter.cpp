@@ -1535,7 +1535,7 @@ void ARMELFObjectWriter::WriteEFlags() {
   unsigned e_flag = ELF::EF_ARM_EABIMASK & DefaultEABIVersion;
   switch (TargetObjectWriter->getOSType()) {
   case Triple::NativeClient:
-    e_flag |= ELF::EF_NACL_ALIGN_32;
+    e_flag |= ELF::EF_NACL_ALIGN_16;
     break;
   default: break;
   }

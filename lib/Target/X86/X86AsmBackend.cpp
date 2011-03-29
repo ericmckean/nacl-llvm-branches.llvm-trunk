@@ -302,13 +302,14 @@ public:
   }
 
   // @LOCALMOD-BEGIN
+  // FIXME! NaCl should inherit from ELFX86AsmBackend!
   unsigned getBundleSize() const {
     return OSType == Triple::NativeClient ? 32 : 0;
   }
 
   bool CustomExpandInst(const MCInst &Inst, MCStreamer &Out) const {
     if (OSType == Triple::NativeClient) {
-      return CustomExpandInstNaCl(Inst, Out);
+      return CustomExpandInstNaClX86(Inst, Out);
     }
     return false;
   }

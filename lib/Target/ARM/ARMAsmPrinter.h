@@ -81,6 +81,8 @@ public:
   void EmitStartOfAsmFile(Module &M);
   void EmitEndOfAsmFile(Module &M);
 
+  virtual void EmitFunctionBodyEnd(); // @LOCALMOD
+
   // @LOCALMOD-START
   virtual bool UseReadOnlyJumpTables() const {
     return true; // should be IsNaCl
