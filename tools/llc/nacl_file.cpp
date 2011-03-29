@@ -124,7 +124,11 @@ int NaClFile_fd(char *pathname, int fd,
   }
   entry->real_fd = fd;
   if (has_real_size) {
-    entry->size = real_size_opt;
+    // Let "size" be the value reported by stat. This may end up
+    // being a 64KB aligned value (for shm), but "size" should just
+    // represent how much was allocated. "real_size" will keep track
+    // of that actual end of file.
+    entry->size = stb.st_size;
     entry->real_size = real_size_opt;
   } else {
     entry->size = stb.st_size;
@@ -160,7 +164,7 @@ int NaClFile_new(char *pathname) {
     printerr("nacl_file: imc_mem_obj_create failed %d\n", fd);
     return -1;
   }
-  return NaClFile_fd(pathname, fd, 0, 0);
+  return NaClFile_fd(pathname, fd, 1, 0);
 }
 
 int get_real_fd(int dd) {
@@ -655,9 +659,8 @@ translate(NaClSrpcRpc *rpc,
           NaClSrpcArg **in_args,
           NaClSrpcArg **out_args,
           NaClSrpcClosure *done) {
-  /* Input bitcode file.
-   * Supplied by urlAsNaClDesc, which should get the right
-   * size from fstat(). */
+  /* Input bitcode file. This is supplied by urlAsNaClDesc,
+   * which should get the right size from fstat(). */
   int bitcode_fd = in_args[0]->u.hval;
   NaClFile_fd("bitcode_combined", bitcode_fd, 0, 0);
 

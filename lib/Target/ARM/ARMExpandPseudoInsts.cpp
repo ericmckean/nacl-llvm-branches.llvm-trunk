@@ -853,17 +853,32 @@ bool ARMExpandPseudo::ExpandMI(MachineBasicBlock &MBB,
     }
     case ARM::TPsoft: {
       // @LOCALMOD-BEGIN
-      // Don't add implicit uses/defs for this call, otherwise
-      // liveness analysis passes get confused.
-      // @LOCALMOD-END
-      MachineInstrBuilder MIB = 
-        BuildMI_NoImp(MBB, MBBI, MI.getDebugLoc(), // @LOCALMOD
-                TII->get(ARM::BL))
-        .addExternalSymbol("__aeabi_read_tp", 0);
-
-      (*MIB).setMemRefs(MI.memoperands_begin(), MI.memoperands_end());
-      TransferImpOps(MI, MIB, MIB);
+      static const unsigned kNaClPageShift = 12;
+      static const unsigned kNaClTlsBaseOffset = 16;
+      // mov r0, r9, lsr #NACL_PAGESHIFT
+      AddDefaultPred(BuildMI(MBB, MBBI, MI.getDebugLoc(), TII->get(ARM::MOVs),
+                             ARM::R0)
+                       .addReg(ARM::R9)
+                       .addReg(0)
+                       .addImm(ARM_AM::getSORegOpc(ARM_AM::lsr,
+                                                   kNaClPageShift)))
+        .addReg(0);
+      // lsl r0, r0, #NACL_PAGESHIFT
+      AddDefaultPred(BuildMI(MBB, MBBI, MI.getDebugLoc(), TII->get(ARM::MOVs),
+                             ARM::R0)
+                       .addReg(ARM::R0, RegState::Kill)
+                       .addReg(0)
+                       .addImm(ARM_AM::getSORegOpc(ARM_AM::lsl,
+                                                   kNaClPageShift)))
+        .addReg(0);
+      // sub r0, r0, #16
+      AddDefaultPred(BuildMI(MBB, MBBI, MI.getDebugLoc(), TII->get(ARM::SUBri),
+                             ARM::R0)
+                       .addReg(ARM::R0, RegState::Kill)
+                       .addImm(kNaClTlsBaseOffset))
+        .addReg(0);
       MI.eraseFromParent();
+      // @LOCALMOD-END
       return true;
     }
     case ARM::t2LDRHpci:
