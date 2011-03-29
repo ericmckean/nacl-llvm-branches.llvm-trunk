@@ -1,4 +1,4 @@
-//===-- X86InstrNaCl.h - Prototype for CustomExpandInstNaClX86 ---*- C++ -*-===//
+//===-- ARMInstrNaCl.h - Prototype for CustomExpandInstNaClARM ---*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -7,13 +7,13 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef X86_INSTRNACL_H
-#define X86_INSTRNACL_H
+#ifndef ARM_INSTRNACL_H
+#define ARM_INSTRNACL_H
 
 namespace llvm {
   class MCInst;
   class MCStreamer;
-  bool CustomExpandInstNaClX86(const MCInst &Inst, MCStreamer &Out);
+  bool CustomExpandInstNaClARM(const MCInst &Inst, MCStreamer &Out);
 }
 
 #endif

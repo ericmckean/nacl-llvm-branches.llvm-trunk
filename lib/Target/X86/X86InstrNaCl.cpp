@@ -104,7 +104,7 @@ static void EmitRet(const MCOperand *AmtOp, bool Is64Bit, MCStreamer &Out) {
   Out.EmitInstruction(JMPInst);
 }
 
-void EmitTrap(bool Is64Bit, MCStreamer &Out) {
+static void EmitTrap(bool Is64Bit, MCStreamer &Out) {
   // Rewrite to:
   //    X86-32:  mov $0, 0
   //    X86-64:  mov $0, (%r15)
@@ -485,7 +485,7 @@ static void EmitLongjmp(bool Is64Bit, MCStreamer &Out) {
 }
 
 namespace llvm {
-// CustomExpandInstNaCl -
+// CustomExpandInstNaClX86 -
 //   If Inst is a NaCl pseudo instruction, emits the substitute
 //   expansion to the MCStreamer and returns true.
 //   Otherwise, returns false.
@@ -500,13 +500,13 @@ namespace llvm {
 //   instructions. Unfortunately, the assembly parser prefers to generate
 //   these instead of combined instructions. At this time, having only
 //   one explicit prefix is supported.
-bool CustomExpandInstNaCl(const MCInst &Inst, MCStreamer &Out) {
+bool CustomExpandInstNaClX86(const MCInst &Inst, MCStreamer &Out) {
   // If we are emitting to .s, just emit all pseudo-instructions directly.
   if (Out.hasRawTextSupport()) {
     return false;
   }
   unsigned Opc = Inst.getOpcode();
-  DEBUG(dbgs() << "CustomExpandInstNaCl("; Inst.dump(); dbgs() << ")\n");
+  DEBUG(dbgs() << "CustomExpandInstNaClX86("; Inst.dump(); dbgs() << ")\n");
   switch (Opc) {
   case X86::LOCK_PREFIX:
   case X86::REP_PREFIX:

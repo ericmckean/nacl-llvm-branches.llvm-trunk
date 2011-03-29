@@ -10,6 +10,7 @@
 #include "ARM.h"
 #include "ARMAddressingModes.h"
 #include "ARMFixupKinds.h"
+#include "ARMInstrNaCl.h" // @LOCALMOD
 #include "llvm/ADT/Twine.h"
 #include "llvm/MC/MCAssembler.h"
 #include "llvm/MC/MCDirectives.h"
@@ -391,9 +392,19 @@ public:
                   uint64_t Value) const;
 
   // @LOCALMOD-BEGIN
+  // FIXME! NaCl should INHERIT from ELFARMAsmBackend, not
+  // add to it.
   unsigned getBundleSize() const {
     return (OSType == Triple::NativeClient) ? 16 : 0;
   }
+
+  bool CustomExpandInst(const MCInst &Inst, MCStreamer &Out) const {
+    if (OSType == Triple::NativeClient) {
+      return CustomExpandInstNaClARM(Inst, Out);
+    }
+    return false;
+  }
+
  // @LOCALMOD-END
 
   MCObjectWriter *createObjectWriter(raw_ostream &OS) const {
