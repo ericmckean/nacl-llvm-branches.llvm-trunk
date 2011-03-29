@@ -23,7 +23,7 @@
 // @LOCALMOD-BEGIN
 #include "llvm/Support/CommandLine.h"
 namespace llvm {
-  extern cl::opt<bool> FlagSfiDisableCP;
+  extern cl::opt<bool> FlagSfiEnableCP;
 }
 // @LOCALMOD-END
 
@@ -219,11 +219,13 @@ protected:
 
   bool useMovt() const { return UseMovt && hasV6T2Ops(); }
 
-  // @LOCALMOD
-  bool useConstPool() const { return !FlagSfiDisableCP; }
+  // @LOCALMOD-START
+  bool isTargetNaCl() const {
+    return TargetTriple.getOS() == Triple::NativeClient;
+  }
 
-  // @LOCALMOD
-  bool isTargetNaCl() const { return TargetTriple.getOS() == Triple::NativeClient; }
+  bool useConstPool() const { return (!isTargetNaCl()) || FlagSfiEnableCP; }
+  // @LOCALMOD-END
 
   bool allowsUnalignedMem() const { return AllowsUnalignedMem; }
 
