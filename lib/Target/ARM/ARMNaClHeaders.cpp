@@ -20,10 +20,10 @@ using namespace llvm;
 
 void EmitSFIHeaders(raw_ostream &O) {
   O << " @ ========================================\n";
-  O << "@ Branch: " << !FlagSfiDisableBranch << "\n";
-  O << "@ Stack: " << !FlagSfiDisableStack << "\n";
-  O << "@ Store: " << !FlagSfiDisableStore << "\n";
-  O << "@ Data: " << !FlagSfiDisableData << "\n";
+  O << "@ Branch: " << FlagSfiBranch << "\n";
+  O << "@ Stack: " << FlagSfiStack << "\n";
+  O << "@ Store: " << FlagSfiStore << "\n";
+  O << "@ Data: " << FlagSfiData << "\n";
 
   O << " @ ========================================\n";
   // NOTE: this macro does bundle alignment as follows
@@ -111,7 +111,7 @@ void EmitSFIHeaders(raw_ostream &O) {
   }
 
   O << " @ ========================================\n";
-  if (!FlagSfiDisableBranch) {
+  if (FlagSfiBranch) {
     O <<
       "\t.macro sfi_call_preamble cond=\n"
       "\tsfi_nops_to_force_slot3\n"
@@ -143,7 +143,7 @@ void EmitSFIHeaders(raw_ostream &O) {
 
   }
 
-  if (!FlagSfiDisableStore) {
+  if (FlagSfiStore) {
     O << " @ ========================================\n";
 
     O <<

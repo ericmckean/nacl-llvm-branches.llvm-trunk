@@ -38,7 +38,7 @@
 // @LOCALMOD-START
 #include "llvm/Support/CommandLine.h"
 namespace llvm {
-  extern cl::opt<bool> FlagSfiDisableStore;
+  extern cl::opt<bool> FlagSfiStore;
 }
 // @LOCALMOD-END
 
@@ -433,7 +433,7 @@ static bool ShouldOperandBeUnwrappedForUseAsBaseAddress(
   SDValue& N, const ARMSubtarget* Subtarget) {
   assert (N.getOpcode() == ARMISD::Wrapper);
   // Never use this transformation if constant island pools are disallowed 
-  if (Subtarget->isTargetNaCl() && (!FlagSfiEnableCP)) return false;
+  if (FlagSfiDisableCP) return false;
 
   // always apply this when we do not have movt/movw available
   // (if we do have movt/movw we be able to get rid of the
@@ -608,7 +608,7 @@ AddrMode2Type ARMDAGToDAGISel::SelectAddrMode2Worker(SDNode *Op,
   // @LOCALMOD-START
   // avoid two reg addressing mode for stores
   const bool is_store = (Op->getOpcode() == ISD::STORE);
-  if (FlagSfiDisableStore || !is_store ) {
+  if (!FlagSfiStore || !is_store ) {
   // @LOCALMOD-END
 
   if (N.getOpcode() == ISD::MUL &&
@@ -689,7 +689,7 @@ AddrMode2Type ARMDAGToDAGISel::SelectAddrMode2Worker(SDNode *Op,
   
   // @LOCALMOD-START
   // keep store addressing modes simple
-  if ((!FlagSfiDisableStore) && is_store) {
+  if (FlagSfiStore && is_store) {
     Base = N;
     if (N.getOpcode() == ISD::FrameIndex) {
       int FI = cast<FrameIndexSDNode>(N)->getIndex();
@@ -789,7 +789,7 @@ bool ARMDAGToDAGISel::SelectAddrMode2Offset(SDNode *Op, SDValue N,
 
     //if (ConstantSDNode *Sh = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
     ConstantSDNode *Sh = dyn_cast<ConstantSDNode>(N.getOperand(1));
-    if ((FlagSfiDisableStore || !is_store) && Sh ) { // @LOCALMOD
+    if ((!FlagSfiStore || !is_store) && Sh ) { // @LOCALMOD
       ShAmt = Sh->getZExtValue();
       if (isShifterOpProfitable(N, ShOpcVal, ShAmt))
         Offset = N.getOperand(0);
@@ -813,7 +813,7 @@ bool ARMDAGToDAGISel::SelectAddrMode3(SDNode *Op, SDValue N,
                                       SDValue &Opc) {
   // @LOCALMOD-START
   const bool is_store = (Op->getOpcode() == ISD::STORE);
-  if (FlagSfiDisableStore ||!is_store) {
+  if (!FlagSfiStore ||!is_store) {
   // @LOCALMOD-END
   if (N.getOpcode() == ISD::SUB) {
 
@@ -857,7 +857,7 @@ bool ARMDAGToDAGISel::SelectAddrMode3(SDNode *Op, SDValue N,
   }
 
   // @LOCALMOD-START
-  if (!FlagSfiDisableStore && is_store) {
+  if (FlagSfiStore && is_store) {
     Base = N;
     Offset = CurDAG->getRegister(0, MVT::i32);
     Opc = CurDAG->getTargetConstant(ARM_AM::getAM3Opc(ARM_AM::add, 0),MVT::i32);
@@ -2239,8 +2239,7 @@ SDNode *ARMDAGToDAGISel::Select(SDNode *N) {
                  !ARM_AM::isSOImmTwoPartVal(Val));     // two instrs.
     }
 
-    if (Subtarget->isTargetNaCl() && (!FlagSfiEnableCP)) 
-      UseCP = false; // @LOCALMOD
+    if (FlagSfiDisableCP) UseCP = false; // @LOCALMOD
 
     if (UseCP) {
       SDValue CPIdx =

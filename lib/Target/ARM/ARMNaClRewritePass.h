@@ -16,10 +16,10 @@
 
 namespace llvm {
   extern cl::opt<bool> FlagSfiZeroMask;
-  extern cl::opt<bool> FlagSfiDisableData;
-  extern cl::opt<bool> FlagSfiDisableStore;
-  extern cl::opt<bool> FlagSfiDisableStack;
-  extern cl::opt<bool> FlagSfiDisableBranch;
+  extern cl::opt<bool> FlagSfiData;
+  extern cl::opt<bool> FlagSfiStore;
+  extern cl::opt<bool> FlagSfiStack;
+  extern cl::opt<bool> FlagSfiBranch;
 }
 
 namespace ARM_SFI {

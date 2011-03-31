@@ -32,7 +32,7 @@
 // @LOCALMOD-START
 #include "llvm/Support/CommandLine.h"
 namespace llvm {
-   extern cl::opt<bool> FlagSfiEnableCP;
+   extern cl::opt<bool> FlagSfiDisableCP;
 }
 // @LOCALMOD-END
 

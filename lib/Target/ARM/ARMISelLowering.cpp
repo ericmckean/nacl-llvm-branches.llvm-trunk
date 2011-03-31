@@ -55,8 +55,8 @@
 // @LOCALMOD-START
 #include "llvm/Support/CommandLine.h"
 namespace llvm {
-  extern cl::opt<bool> FlagSfiDisableStore;
-  extern cl::opt<bool> FlagSfiEnableCP;
+  extern cl::opt<bool> FlagSfiStore;
+  extern cl::opt<bool> FlagSfiDisableCP;
 }
 // @LOCALMOD-END
 
@@ -1910,7 +1910,7 @@ ARMTargetLowering::LowerToTLSGeneralDynamicModel(GlobalAddressSDNode *GA,
   SDValue Chain;
   SDValue Argument;
 
-  if (Subtarget->isTargetNaCl() && (!FlagSfiEnableCP)) {
+  if (FlagSfiDisableCP) {
     // With constant pools "disabled" (moved to rodata), this constant pool
     // entry is no longer in text, and simultaneous PC relativeness
     // and CP Addr relativeness is no longer expressible.
@@ -2002,7 +2002,7 @@ ARMTargetLowering::LowerToTLSExecModels(GlobalAddressSDNode *GA,
     unsigned ARMPCLabelIndex = AFI->createPICLabelUId();
 
     // @LOCALMOD-BEGIN
-    if (Subtarget->isTargetNaCl() && (!FlagSfiEnableCP)) {
+    if (FlagSfiDisableCP) {
       // Similar to change to LowerToTLSGeneralDynamicModel, and
       // for the same reason.
       unsigned char PCAdj = 0;
@@ -2191,7 +2191,7 @@ SDValue ARMTargetLowering::LowerGLOBAL_OFFSET_TABLE(SDValue Op,
   DebugLoc dl = Op.getDebugLoc();
 
   // @LOCALMOD-BEGIN
-  if (Subtarget->isTargetNaCl() && !(FlagSfiEnableCP)) {
+  if (FlagSfiDisableCP) {
     // With constant pools "disabled" (moved to rodata), the constant pool
     // entry is no longer in text, and the PC relativeness is
     // no longer expressible.
@@ -6244,7 +6244,7 @@ ARMTargetLowering::getPreIndexedAddressParts(SDNode *N, SDValue &Base,
 
   // @LOCAMOD-START
   // NOTE: THIS IS A LITTLE DRASTIC
-  if (!FlagSfiDisableStore && N->getOpcode() == ISD::STORE) {
+  if (FlagSfiStore && N->getOpcode() == ISD::STORE) {
     return false;
   }
   // @LOCAMOD-END
@@ -6289,7 +6289,7 @@ bool ARMTargetLowering::getPostIndexedAddressParts(SDNode *N, SDNode *Op,
     return false;
    // @LOCALMOD-START
   // THIS IS A LITTLE DRASTIC
-  if ((!FlagSfiDisableStore) && N->getOpcode() == ISD::STORE) {
+  if (FlagSfiStore && N->getOpcode() == ISD::STORE) {
     return false;
   }
   // @LOCALMOD-END
