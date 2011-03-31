@@ -73,8 +73,7 @@ public:
   // For the sfi case we do not use the custom logic and fall back
   // to the default implementation.
   virtual void EmitConstantPool() {
-    if (Subtarget->isTargetNaCl() && (!FlagSfiEnableCP))
-      AsmPrinter::EmitConstantPool();
+    if (FlagSfiDisableCP) AsmPrinter::EmitConstantPool();
   }
   // @LOCALMOD-END
 

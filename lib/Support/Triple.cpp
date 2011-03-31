@@ -318,8 +318,8 @@ Triple::OSType Triple::ParseOS(StringRef OSName) {
     return FreeBSD;
   else if (OSName.startswith("linux"))
     // TODO(pdox): Fix this when we stop using target linux
-    return Linux;
-    //return NativeClient; // @LOCALMOD
+    //return Linux;
+    return NativeClient; // @LOCALMOD
   else if (OSName.startswith("lv2"))
     return Lv2;
   else if (OSName.startswith("mingw32"))

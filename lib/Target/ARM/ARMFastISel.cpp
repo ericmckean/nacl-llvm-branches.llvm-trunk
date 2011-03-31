@@ -546,8 +546,7 @@ unsigned ARMFastISel::TargetMaterializeConstant(const Constant *C) {
   // @LOCALMOD-START
   // In the sfi case we do not want to use the ARM custom cp handling.
   // This assert should help detect some regressions early.
-  assert((!Subtarget->isTargetNaCl() || FlagSfiEnableCP) && 
-         "unexpected call to TargetMaterializeConstant");
+  assert(!FlagSfiDisableCP && "unexpected call to TargetMaterializeConstant");
   // @LOCALMOD-END
   EVT VT = TLI.getValueType(C->getType(), true);
 
