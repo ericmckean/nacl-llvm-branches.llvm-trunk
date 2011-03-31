@@ -15,13 +15,10 @@ OPTIONAL_PARALLEL_DIRS := clang
 # NOTE: The tools are organized into five groups of four consisting of one
 # large and three small executables. This is done to minimize memory load
 # in parallel builds.  Please retain this ordering.
-# NOTE: In NaCl we avoid building llvm-ld, llvm-ar and llvm-ranlib.
-# These tools have big problems that have hurt us in the past.
-# See http://codereview.appspot.com/2151043/
 DIRS := llvm-config 
 PARALLEL_DIRS := opt llvm-as llvm-dis \
-                 llc llvm-nm \
-                 llvm-prof llvm-link \
+                 llc llvm-ranlib llvm-ar llvm-nm \
+                 llvm-ld llvm-prof llvm-link \
                  lli llvm-extract llvm-mc \
                  bugpoint llvm-bcanalyzer llvm-stub \
                  llvmc llvm-diff macho-dump llvm-objdump bc-wrap
