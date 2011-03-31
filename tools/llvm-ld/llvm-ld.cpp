@@ -40,6 +40,11 @@
 #include "llvm/Config/config.h"
 #include <memory>
 #include <cstring>
+// @LOCALMOD-BEGIN
+#include <fstream>
+#include <algorithm>
+#include <llvm/Support/raw_ostream.h>
+// @LOCALMOD-END
 using namespace llvm;
 
 // Rightly this should go in a header file but it just seems such a waste.
@@ -121,6 +126,21 @@ static cl::opt<bool> CO8("end-group", cl::Hidden,
 static cl::opt<std::string> CO9("m", cl::Hidden,
   cl::desc("Compatibility option: ignored"));
 
+// @LOCALMOD-BEGIN
+static cl::opt<bool> FlagOptimizePexe("optimize-pexe",
+  cl::desc("whole program optimize the resulting pexe"));
+
+static cl::opt<bool> FlagDumpUndefinedSymbols("dump-undefined-symbols",
+  cl::desc("dump undefined symbols before exiting"));
+
+static cl::opt<bool> FlagNaClAbiCheck("nacl-abi-check",
+  cl::desc("check nacl abi compliance"));
+
+static cl::opt<std::string> FlagNaClLegalUndefs("nacl-legal-undefs",
+  cl::init(""),
+  cl::desc("file with list of undefs resolved by llc or the linker"));
+// @LOCALMOD-END
+
 /// This is just for convenience so it doesn't have to be passed around
 /// everywhere.
 static std::string progname;
@@ -148,6 +168,107 @@ static void PrintCommand(const std::vector<const char*> &args) {
       errs() << "'" << *I << "'" << " ";
   errs() << "\n";
 }
+
+// @LOCALMOD-BEGIN
+static std::string Strip(std::string s) {
+  size_t start = s.find_first_not_of(" \t\n\r");
+  if (start == std::string::npos) return "";
+  if (s[start] == '#') return "";
+  size_t last = s.find_last_not_of(" \t\n\r");
+  return s.substr(start, 1 + last - start);
+}
+
+static int AddStringSetFromFile(std::string filename,
+                                std::set<std::string>* set) {
+  std::ifstream f(filename.c_str());
+  if (!f) {
+    return -1;
+  }
+
+  while (!f.eof()) {
+    std::string s;
+    getline(f, s);
+    std::string stripped = Strip(s);
+    if (stripped.size() == 0) continue;
+    set->insert(stripped);
+  }
+  f.close();
+  return 0;
+}
+
+// Here is a rough translation for GlobalValues to nm style attributes:
+// GV.isDeclaration()                                 'U'
+// GV.hasLinkOnceLinkage()                            'C'
+// GV.hasCommonLinkage()                              'C'
+// GV.hasWeakLinkage()                                'W'
+// isa<Function>(GV) && GV.hasInternalLinkage()       't'
+// isa<Function>(GV)                                  'T'
+// isa<GlobalVariable>(GV) && GV.hasInternalLinkage() 'd'
+// isa<GlobalVariable>(GV)                            'D'
+
+static size_t DumpUndefinedSymbols(Module* M) {
+  std::set<std::string> Referenced;
+  std::set<std::string> Defined;
+
+  for (Module::iterator I = M->begin(), E = M->end(); I != E; ++I)
+    if (I->hasName()) {
+      if (I->isDeclaration()) {
+        Referenced.insert(I->getName());
+      } else if (!I->hasLocalLinkage()) {
+        assert(!I->hasDLLImportLinkage()
+               && "Found dllimported non-external symbol!");
+        Defined.insert(I->getName());
+      }
+    }
+
+  for (Module::global_iterator I = M->global_begin(), E = M->global_end();
+       I != E; ++I)
+    if (I->hasName()) {
+      if (I->isDeclaration()) {
+        Referenced.insert(I->getName());
+      } else if (!I->hasLocalLinkage()) {
+        assert(!I->hasDLLImportLinkage()
+               && "Found dllimported non-external symbol!");
+        Defined.insert(I->getName());
+      }
+    }
+
+  for (Module::alias_iterator I = M->alias_begin(), E = M->alias_end();
+       I != E; ++I) {
+    if (I->hasName()) Defined.insert(I->getName());
+
+  }
+
+  // pretend those are defined
+  if (FlagNaClLegalUndefs.size() > 0) {
+    int ec = AddStringSetFromFile(FlagNaClLegalUndefs, &Defined);
+    if (ec) {
+      PrintAndExit("ERROR: cannot process file: " + FlagNaClLegalUndefs + "\n", M);
+    }
+  }
+
+  std::set<std::string> Undefined;
+  std::set_difference(Referenced.begin(), Referenced.end(),
+                      Defined.begin(), Defined.end(),
+                      std::inserter(Undefined, Undefined.end()));
+
+  if  (Undefined.size() > 0) {
+    outs() << "#List of undefined symbols:\n";
+  }
+
+  for (std::set<std::string>::iterator I = Undefined.begin();
+       I != Undefined.end();
+       ++I) {
+    outs() << *I << "\n";
+  }
+
+  if  (FlagNaClAbiCheck && Undefined.size() > 0) {
+    PrintAndExit("ERROR: This pexe is not abi compliant\n", M);
+  }
+
+  return Undefined.size();
+}
+// @LOCALMOD-END
 
 /// CopyEnv - This function takes an array of environment variables and makes a
 /// copy of it.  This copy can then be manipulated any way the caller likes
@@ -601,8 +722,16 @@ int main(int argc, char **argv, char **envp) {
   std::auto_ptr<Module> Composite(TheLinker.releaseModule());
 
   // Optimize the module
-  Optimize(Composite.get());
+  // @LOCALMOD-BEGIN
+  if (FlagOptimizePexe) {
+    Optimize(Composite.get());
+  }
 
+  if (FlagDumpUndefinedSymbols || FlagNaClAbiCheck) {
+    DumpUndefinedSymbols(Composite.get());
+  }
+
+  // @LOCALMOD-END
   // Generate the bitcode output.
   GenerateBitcode(Composite.get(), BitcodeOutputFilename);
 

@@ -40,6 +40,10 @@
 #include "llvm/Target/TargetSelect.h"
 #include <memory>
 
+
+volatile double d1 = 1.3433543;
+volatile double d2 = 100000.3433543;
+
 #if defined(__native_client__) && defined(NACL_SRPC)
 #include <fcntl.h>
 #include <sys/nacl_syscalls.h>
@@ -345,7 +349,8 @@ int llc_main(int argc, char **argv) {
   case '2': OLvl = CodeGenOpt::Default; break;
   case '3': OLvl = CodeGenOpt::Aggressive; break;
   }
-
+  
+  DEBUG(dbgs() << "@@@@@@@ Clusterify finished " << d1 << " " << d2 << '\n');
   // Build up all of the passes that we want to do to the module.
   PassManager PM;
 
