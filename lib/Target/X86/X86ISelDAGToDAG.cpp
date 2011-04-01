@@ -1238,10 +1238,11 @@ bool X86DAGToDAGISel::SelectAddr(SDNode *Parent, SDValue N, SDValue &Base,
     if (Index.getValueType() != MVT::i64) {
       Index = CurDAG->getZExtOrTrunc(Index, Index.getDebugLoc(), MVT::i64);
       // Insert the new node into the topological ordering.
-      if (Index->getNodeId() == -1 ||
-          Index->getNodeId() > N.getNode()->getNodeId()) {
-        CurDAG->RepositionNode(N.getNode(), Index.getNode());
-        Index->setNodeId(N.getNode()->getNodeId());
+      if (Parent &&
+          (Index->getNodeId() == -1 ||
+           Index->getNodeId() > Parent->getNodeId())) {
+        CurDAG->RepositionNode(Parent, Index.getNode());
+        Index->setNodeId(Parent->getNodeId());
       }
     }
   }
