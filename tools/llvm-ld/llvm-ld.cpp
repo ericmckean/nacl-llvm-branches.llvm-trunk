@@ -41,6 +41,7 @@
 #include <memory>
 #include <cstring>
 // @LOCALMOD-BEGIN
+#include <string>
 #include <fstream>
 #include <algorithm>
 #include <llvm/Support/raw_ostream.h>
@@ -132,6 +133,12 @@ static cl::opt<bool> FlagOptimizePexe("optimize-pexe",
 
 static cl::opt<bool> FlagDumpUndefinedSymbols("dump-undefined-symbols",
   cl::desc("dump undefined symbols before exiting"));
+
+static cl::opt<bool> FlagDumpSymbolsPreOpt("dump-symbols-preopt",
+  cl::desc("dump symbol summary at beginning"));
+
+static cl::opt<bool> FlagDumpSymbolsPostOpt("dump-symbols-postopt",
+  cl::desc("dump symbol summary at end"));
 
 static cl::opt<bool> FlagNaClAbiCheck("nacl-abi-check",
   cl::desc("check nacl abi compliance"));
@@ -268,6 +275,80 @@ static size_t DumpUndefinedSymbols(Module* M) {
 
   return Undefined.size();
 }
+
+
+std::string ValueLinkage(GlobalValue* gv) {
+  switch (gv->getLinkage()) {
+   default:
+    return "@@@ERROR";
+   case GlobalValue::ExternalLinkage:
+    return "EXTERNAL";
+   case GlobalValue::AvailableExternallyLinkage:
+    return "AVEXTERN";
+   case GlobalValue::LinkOnceAnyLinkage:
+    return "ONCE_ANY";
+   case GlobalValue::LinkOnceODRLinkage:
+    return "ONCE_ODR";
+   case GlobalValue::WeakAnyLinkage:
+    return "WEAK_ANY";
+   case GlobalValue::WeakODRLinkage:
+    return "WEAK_ODR";
+   case GlobalValue::AppendingLinkage:
+    return "APPEND__";
+   case GlobalValue::InternalLinkage:
+    return "INTERNAL";
+   case GlobalValue::PrivateLinkage:
+    return "PRIVATE_";
+   case GlobalValue::LinkerPrivateLinkage:
+    return "LD_PRIV_";
+   case GlobalValue::LinkerPrivateWeakLinkage:
+    return "LD_PR_WK";
+   case GlobalValue::LinkerPrivateWeakDefAutoLinkage:
+    return "LD_P_W_D";
+   case GlobalValue::ExternalWeakLinkage:
+    return "EXT_WEAK";
+   case GlobalValue::CommonLinkage:
+     return "COMMON_";
+  }
+}
+
+
+void DumpSymbolSummary(Module* M) {
+  // Functions
+  for (Module::iterator I = M->begin(), E = M->end(); I != E; ++I) {
+    const std::string name = I->getName();
+    const std::string linkage = ValueLinkage(I);
+    std::string extra;
+
+    if (I->hasAddressTaken()) {
+      extra = " ADDRESS_TAKEN";
+    }
+
+    outs() << "FUN-" << linkage << ": " << name << extra << "\n";
+  }
+
+  // Variables
+  for (Module::global_iterator I = M->global_begin(), E = M->global_end();
+       I != E; ++I) {
+    const std::string name = I->getName();
+    const std::string linkage = ValueLinkage(I);
+    std::string extra;
+
+    outs() << "VAR-" << linkage << ": " << name << extra << "\n";
+  }
+
+  // Mark all aliases that are not in the api as internal as well.
+  for (Module::alias_iterator I = M->alias_begin(), E = M->alias_end();
+       I != E; ++I) {
+    const std::string name = I->getName();
+    const std::string linkage = ValueLinkage(I);
+    std::string extra;
+
+    outs() << "ALS-" << linkage << ": " << name << extra << "\n";
+  }
+}
+
+
 // @LOCALMOD-END
 
 /// CopyEnv - This function takes an array of environment variables and makes a
@@ -723,12 +804,20 @@ int main(int argc, char **argv, char **envp) {
 
   // Optimize the module
   // @LOCALMOD-BEGIN
+  if (FlagDumpSymbolsPreOpt) {
+    DumpSymbolSummary(Composite.get());
+  }
+
   if (FlagOptimizePexe) {
     Optimize(Composite.get());
   }
 
   if (FlagDumpUndefinedSymbols || FlagNaClAbiCheck) {
     DumpUndefinedSymbols(Composite.get());
+  }
+
+  if (FlagDumpSymbolsPostOpt) {
+    DumpSymbolSummary(Composite.get());
   }
 
   // @LOCALMOD-END
