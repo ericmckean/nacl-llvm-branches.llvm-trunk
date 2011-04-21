@@ -144,8 +144,15 @@ bool ARMAsmBackend::WriteNopData(uint64_t Count, MCObjectWriter *OW) const {
   }
   // ARM mode
   uint64_t NumNops = Count / 4;
+  // @LOCALMOD-BEGIN-UPSTREAM
+  // FIXME: e1a00000 vs e320f000
+  //  e1a00000 is mov r0, r0 which may result in a stall
+  //  but the real nop instruction is not available on early hw....
+  //  Perhaps this really needs to be switched on the Subtarget??
+  //  GNU as likes to emit e320f000...
   for (uint64_t i = 0; i != NumNops; ++i)
-    OW->Write32(0xe1a00000);
+    OW->Write32(0xe320f000); // regular NOP
+  // @LOCALMOD-END
   switch (Count % 4) {
   default: break; // No leftover bytes to write
   case 1: OW->Write8(0); break;

@@ -45,25 +45,25 @@ void EmitSFIHeaders(raw_ostream &O) {
 
   O <<
     "\t.macro sfi_nop_if_at_bundle_end\n"
-    "\tsfi_long_based_on_pos 0 0 0 1 0xe1a00000\n"
+    "\tsfi_long_based_on_pos 0 0 0 1 0xe320f000\n"
     "\t.endm\n"
       "\n\n";
 
   O <<
     "\t.macro sfi_nops_to_force_slot3\n"
-    "\tsfi_long_based_on_pos 3 2 1 0 0xe1a00000\n"
+    "\tsfi_long_based_on_pos 3 2 1 0 0xe320f000\n"
     "\t.endm\n"
     "\n\n";
 
   O <<
     "\t.macro sfi_nops_to_force_slot2\n"
-    "\tsfi_long_based_on_pos 2 1 0 3 0xe1a00000\n"
+    "\tsfi_long_based_on_pos 2 1 0 3 0xe320f000\n"
     "\t.endm\n"
     "\n\n";
 
   O <<
     "\t.macro sfi_nops_to_force_slot1\n"
-    "\tsfi_long_based_on_pos 1 0 3 2 0xe1a00000\n"
+    "\tsfi_long_based_on_pos 1 0 3 2 0xe320f000\n"
     "\t.endm\n"
     "\n\n";
 
