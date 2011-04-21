@@ -31,12 +31,24 @@
 #include "llvm/Support/ELF.h"
 #include "llvm/Target/TargetAsmBackend.h"
 #include "llvm/ADT/StringSwitch.h"
-
+#include "llvm/Support/CommandLine.h"
 #include "../Target/X86/X86FixupKinds.h"
 #include "../Target/ARM/ARMFixupKinds.h"
 
 #include <vector>
 using namespace llvm;
+
+//@LOCALMOD-BEGIN-TO-BE-UPSTREAMED
+#undef  DEBUG_TYPE
+#define DEBUG_TYPE "reloc-info"
+
+// Emulate the wierd behavior of GNU-as for relocation types
+namespace llvm {
+cl::opt<bool>
+ForceARMElfPIC("arm-elf-force-pic", cl::Hidden, cl::init(false),
+               cl::desc("Force ELF emitter to emit PIC style relocations"));
+}
+//@LOCALMOD-END
 
 static unsigned GetType(const MCSymbolData &SD) {
   uint32_t Type = (SD.getFlags() & (0xf << ELF_STT_Shift)) >> ELF_STT_Shift;
@@ -185,19 +197,24 @@ namespace {
 
     unsigned ShstrtabIndex;
 
-
+    // @LOCALMOD-BEGIN-TO-BE-UPSTREAMED
+    virtual 
     const MCSymbol *SymbolToReloc(const MCAssembler &Asm,
                                   const MCValue &Target,
-                                  const MCFragment &F) const;
+                                  const MCFragment &F,
+                                  const MCFixup &Fixup,
+                                  bool IsPCRel) const;
 
     // For arch-specific emission of explicit reloc symbol
     virtual const MCSymbol *ExplicitRelSym(const MCAssembler &Asm,
                                            const MCValue &Target,
                                            const MCFragment &F,
-                                           bool IsBSS) const {
+                                           const MCFixup &Fixup,
+                                           bool IsPCRel) const { // @LOCALMOD
       return NULL;
     }
 
+    // @LOCALMOD-END
     bool is64Bit() const { return TargetObjectWriter->is64Bit(); }
     bool hasRelocationAddend() const {
       return TargetObjectWriter->hasRelocationAddend();
@@ -421,14 +438,20 @@ namespace {
 
     virtual void WriteEFlags();
   protected:
+    // @LOCALMOD-BEGIN-TO-BE-UPSTREAMED
     virtual const MCSymbol *ExplicitRelSym(const MCAssembler &Asm,
                                            const MCValue &Target,
                                            const MCFragment &F,
-                                           bool IsBSS) const;
+                                           const MCFixup &Fixup,
+                                           bool IsPCRel) const;  // @LOCALMOD
 
     virtual unsigned GetRelocType(const MCValue &Target, const MCFixup &Fixup,
                                   bool IsPCRel, bool IsRelocWithSymbol,
                                   int64_t Addend);
+  private:
+    unsigned GetRelocTypeInner(const MCValue &Target, const MCFixup &Fixup,
+                               bool IsPCRel) const ;
+    // @LOCALMOD-END-TO-BE-UPSTREAMED
   };
 
   //===- MBlazeELFObjectWriter -------------------------------------------===//
@@ -719,9 +742,12 @@ void ELFObjectWriter::WriteSymbolTable(MCDataFragment *SymtabF,
   }
 }
 
+// @LOCALMOD-BEGIN-TO-BE-UPSTREAMED
 const MCSymbol *ELFObjectWriter::SymbolToReloc(const MCAssembler &Asm,
                                                const MCValue &Target,
-                                               const MCFragment &F) const {
+                                               const MCFragment &F,
+                                               const MCFixup &Fixup,
+                                               bool IsPCRel) const {
   const MCSymbol &Symbol = Target.getSymA()->getSymbol();
   const MCSymbol &ASymbol = Symbol.AliasedSymbol();
   const MCSymbol *Renamed = Renames.lookup(&Symbol);
@@ -744,7 +770,7 @@ const MCSymbol *ELFObjectWriter::SymbolToReloc(const MCAssembler &Asm,
   const SectionKind secKind = Section.getKind();
 
   if (secKind.isBSS())
-    return ExplicitRelSym(Asm, Target, F, true);
+    return ExplicitRelSym(Asm, Target, F, Fixup, IsPCRel); //@LOCALMOD
 
   if (secKind.isThreadLocal()) {
     if (Renamed)
@@ -760,7 +786,7 @@ const MCSymbol *ELFObjectWriter::SymbolToReloc(const MCAssembler &Asm,
       (Kind == MCSymbolRefExpr::VK_PLT ||
        Kind == MCSymbolRefExpr::VK_GOTPCREL ||
        Kind == MCSymbolRefExpr::VK_GOTOFF ||
-  // @LOCALMOD-BEGIN
+  // @LOCALMOD-BEGIN-IS-UPSTREAM
   // Fixes an LLVM bug. This bug has already been fixed upstream
   // and should disappear on the next merge.
        Kind == MCSymbolRefExpr::VK_NTPOFF)) {
@@ -772,15 +798,16 @@ const MCSymbol *ELFObjectWriter::SymbolToReloc(const MCAssembler &Asm,
 
   if (Section.getFlags() & ELF::SHF_MERGE) {
     if (Target.getConstant() == 0)
-      return NULL;
+      return ExplicitRelSym(Asm, Target, F, Fixup, IsPCRel); //@LOCALMOD
     if (Renamed)
       return Renamed;
     return &Symbol;
   }
 
-  return ExplicitRelSym(Asm, Target, F, false);
+  return ExplicitRelSym(Asm, Target, F, Fixup, IsPCRel);  //@LOCALMOD
 }
 
+// @LOCALMOD-END-TO-BE-UPSTREAMED
 
 void ELFObjectWriter::RecordRelocation(const MCAssembler &Asm,
                                        const MCAsmLayout &Layout,
@@ -797,8 +824,9 @@ void ELFObjectWriter::RecordRelocation(const MCAssembler &Asm,
   if (!Target.isAbsolute()) {
     const MCSymbol &Symbol = Target.getSymA()->getSymbol();
     const MCSymbol &ASymbol = Symbol.AliasedSymbol();
-    RelocSymbol = SymbolToReloc(Asm, Target, *Fragment);
-
+    // @LOCALMOD-BEGIN-TO-BE-UPSTREAMED
+    RelocSymbol = SymbolToReloc(Asm, Target, *Fragment, Fixup, IsPCRel);
+    // @LOCALMOD-END
     if (const MCSymbolRefExpr *RefB = Target.getSymB()) {
       const MCSymbol &SymbolB = RefB->getSymbol();
       MCSymbolData &SDB = Asm.getSymbolData(SymbolB);
@@ -1546,36 +1574,113 @@ void ARMELFObjectWriter::WriteEFlags() {
 // In ARM, _MergedGlobals and other most symbols get emitted directly.
 // I.e. not as an offset to a section symbol.
 // This code is a first-cut approximation of what ARM/gcc does.
-
+int long RelCount=0, PCRelCount=0, NonPCRelCount=0;
 const MCSymbol *ARMELFObjectWriter::ExplicitRelSym(const MCAssembler &Asm,
                                                    const MCValue &Target,
                                                    const MCFragment &F,
-                                                   bool IsBSS) const {
+                                                   const MCFixup &Fixup,
+                                                   bool IsPCRel) const {
   const MCSymbol &Symbol = Target.getSymA()->getSymbol();
   bool EmitThisSym = false;
+  // @LOCALMOD-BEGIN-TODO-UPSTREAM
+  // Nearly the entire function need to be redone.
+  const MCSectionELF &Section =
+    static_cast<const MCSectionELF&>(Symbol.getSection());
+  const SectionKind secKind = Section.getKind();
+  const MCSymbolRefExpr::VariantKind Kind = Target.getSymA()->getKind();
+  MCSymbolRefExpr::VariantKind Kind2; 
+  Kind2 = Target.getSymB() ?  Target.getSymB()->getKind() :
+    MCSymbolRefExpr::VK_None;
+  bool InNormalSection = true;
+  unsigned RelocType = 0;
+  RelocType = GetRelocTypeInner(Target, Fixup, IsPCRel);
 
-  if (IsBSS) {
-    EmitThisSym = StringSwitch<bool>(Symbol.getName())
-      .Case("_MergedGlobals", true)
-      .Default(false);
+  DEBUG(dbgs() << "considering symbol "
+        << RelCount << "/"
+        << Section.getSectionName() << "/"
+        << Symbol.getName() << "/"
+        << " Rel:" << (unsigned)RelocType
+        << " Kind: " << (int)Kind << "/" << (int)Kind2
+        << " Tmp:"
+        << Symbol.isAbsolute() << "/" << Symbol.isDefined() << "/"
+        << Symbol.isVariable() << "/" << Symbol.isTemporary()
+        << " Counts:" << PCRelCount << "/" << NonPCRelCount << "\n";
+        ++RelCount);
+
+  if (IsPCRel || ForceARMElfPIC) { ++PCRelCount;
+    switch (RelocType) {
+    default:
+      // Most relocation types are emitted as explicit symbols
+      InNormalSection =
+        StringSwitch<bool>(Section.getSectionName())
+        .Case(".data.rel.ro.local", false)
+        .Case(".data.rel", false)
+        .Case(".bss", false)
+        .Default(true);
+      EmitThisSym = true;
+      break;
+    case ELF::R_ARM_ABS32:
+      // But things get strange with R_ARM_ABS32
+      // In this case, most things that go in .rodata show up 
+      // as section relative relocations
+      InNormalSection =
+        StringSwitch<bool>(Section.getSectionName())
+        .Case(".data.rel.ro.local", false)
+        .Case(".data.rel", false)
+        .Case(".rodata", false)
+        .Case(".bss", false)
+        .Default(true);
+      EmitThisSym = false;
+      break;
+    }
   } else {
-    EmitThisSym = StringSwitch<bool>(Symbol.getName())
-      .Case("_MergedGlobals", true)
-      .StartsWith(".L.str", true)
-      .Default(false);
+    NonPCRelCount++;
+    InNormalSection =
+      StringSwitch<bool>(Section.getSectionName())
+      .Case(".data.rel.ro.local", false)
+      .Case(".rodata", false)
+      .Case(".data.rel", false)
+      .Case(".bss", false)
+      .Default(true);
+
+    switch (RelocType) {
+    default: EmitThisSym = true; break;
+    case ELF::R_ARM_ABS32: EmitThisSym = false; break;
+    }
   }
+
   if (EmitThisSym)
     return &Symbol;
-  if (! Symbol.isTemporary())
+  if (! Symbol.isTemporary() && InNormalSection) {
     return &Symbol;
+  }
+  // @LOCALMOD-END
   return NULL;
 }
 
+// @LOCALMOD-BEGIN-TO-BE-UPSTREAMED
+// Need to examine the Fixup when determining whether to 
+// emit the relocation as an explicit symbol or as a section relative
+// offset
 unsigned ARMELFObjectWriter::GetRelocType(const MCValue &Target,
                                           const MCFixup &Fixup,
                                           bool IsPCRel,
                                           bool IsRelocWithSymbol,
                                           int64_t Addend) {
+  MCSymbolRefExpr::VariantKind Modifier = Target.isAbsolute() ?
+    MCSymbolRefExpr::VK_None : Target.getSymA()->getKind();
+
+  unsigned Type = GetRelocTypeInner(Target, Fixup, IsPCRel);
+
+  if (RelocNeedsGOT(Modifier))
+    NeedsGOT = true;
+  
+  return Type;
+}
+
+unsigned ARMELFObjectWriter::GetRelocTypeInner(const MCValue &Target,
+                                               const MCFixup &Fixup,
+                                               bool IsPCRel) const {
   MCSymbolRefExpr::VariantKind Modifier = Target.isAbsolute() ?
     MCSymbolRefExpr::VK_None : Target.getSymA()->getKind();
 
@@ -1587,7 +1692,7 @@ unsigned ARMELFObjectWriter::GetRelocType(const MCValue &Target,
       switch (Modifier) {
       default: llvm_unreachable("Unsupported Modifier");
       case MCSymbolRefExpr::VK_None:
-        Type = ELF::R_ARM_BASE_PREL;
+        Type = ELF::R_ARM_REL32; // @LOCALMOD
         break;
       case MCSymbolRefExpr::VK_ARM_TLSGD:
         assert(0 && "unimplemented");
@@ -1608,7 +1713,15 @@ unsigned ARMELFObjectWriter::GetRelocType(const MCValue &Target,
       }
       break;
     case ARM::fixup_arm_condbranch:
-      Type = ELF::R_ARM_JUMP24;
+      // @LOCALMOD-UPSTREAM-TODO
+      switch (Modifier) {
+      case MCSymbolRefExpr::VK_ARM_PLT:
+        Type = ELF::R_ARM_PLT32;
+        break;
+      default:
+        Type = ELF::R_ARM_JUMP24;
+        break;
+      } // @LOCALMOD-END
       break;
     case ARM::fixup_arm_movt_hi16:
     case ARM::fixup_arm_movt_hi16_pcrel:
@@ -1683,11 +1796,9 @@ unsigned ARMELFObjectWriter::GetRelocType(const MCValue &Target,
     }
   }
 
-  if (RelocNeedsGOT(Modifier))
-    NeedsGOT = true;
-  
   return Type;
 }
+// @LOCALMOD-END-TO-BE-UPSTREAMED
 
 //===- MBlazeELFObjectWriter -------------------------------------------===//
 
