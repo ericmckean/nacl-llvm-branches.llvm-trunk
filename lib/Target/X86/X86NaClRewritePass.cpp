@@ -556,6 +556,17 @@ bool X86NaClRewritePass::ApplyRewrites(MachineBasicBlock &MBB,
     return true;
   }
 
+  // TODO(jvoung): when we add a switch for x86-32 to go through __nacl_read_tp
+  // handle that here too...
+  if (Opc == X86::NACL_CG_TLS_readtp64) {
+    // Rewrite to:
+    //   naclcall\t___nacl_read_tp
+    BuildMI(MBB, MBBI, DL, TII->get(X86::NACL_CALL64d))
+      .addExternalSymbol("__nacl_read_tp");
+    MI.eraseFromParent();
+    return true;
+  }
+
   if (Opc == X86::NACL_CG_TLS_addr32) {
     // Rewrite to:
     //   .bundle_align_end
@@ -578,15 +589,23 @@ bool X86NaClRewritePass::ApplyRewrites(MachineBasicBlock &MBB,
     return true;
   }
 
+  // TODO(jvoung): Once the nacl-gcc folks have ironed out how to handle
+  // general dynamic TLS access, update this.
+  // For now, we are using the old local exec model.
+  // http://code.google.com/p/nativeclient/issues/detail?id=1685
   if (Opc == X86::NACL_CG_TLS_addr64) {
     // Rewrite to:
-    //   movq $sym, %rdi
-    //   call __tls_get_addr@PLT   // sandbox separately
-    BuildMI(MBB, MBBI, DL, TII->get(X86::MOV64ri32), X86::RDI)
-      .addGlobalAddress(MI.getOperand(3).getGlobal(), 0,
-                        MI.getOperand(3).getTargetFlags());
+    //   naclcall __nacl_read_tp@PLT
+    //   leaq $sym@flag(,%rax), %rax
     BuildMI(MBB, MBBI, DL, TII->get(X86::NACL_CALL64d))
-      .addExternalSymbol("__tls_get_addr", X86II::MO_PLT);
+        .addExternalSymbol("__nacl_read_tp", X86II::MO_PLT);
+    BuildMI(MBB, MBBI, DL, TII->get(X86::LEA64r), X86::RAX)
+        .addReg(0) // Base
+        .addImm(1) // Scale
+        .addReg(X86::RAX) // Index
+        .addGlobalAddress(MI.getOperand(3).getGlobal(), 0,
+                          MI.getOperand(3).getTargetFlags())
+        .addReg(0); // Segment
     MI.eraseFromParent();
     return true;
   }
