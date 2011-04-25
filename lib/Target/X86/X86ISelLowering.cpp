@@ -6110,11 +6110,18 @@ LowerToTLSGeneralDynamicModel64(GlobalAddressSDNode *GA, SelectionDAG &DAG,
 }
 
 // @LOCALMOD-START
+// Lower ISD::GlobalTLSAddress using the "general dynamic" model, NaCl 64 bit.
 static SDValue
-LowerToTLSNaClModel64(GlobalAddressSDNode *GA, SelectionDAG &DAG,
-                                const EVT PtrVT) {
+LowerToTLSGeneralDynamicModelNaCl64(GlobalAddressSDNode *GA, SelectionDAG &DAG,
+                                    const EVT PtrVT) {
+  // TODO(jvoung): Update this when 64-bit general dynamic TLS is ironed out.
+  // e.g., one issue:
+  // http://code.google.com/p/nativeclient/issues/detail?id=1685
+  // We also need to hook up to glibc to get at __tls_get_addr
   return GetTLSADDR(DAG, DAG.getEntryNode(), GA, NULL, PtrVT,
-                    X86::EAX, X86II::MO_TPOFF);
+                    X86::EAX, // PtrVT is 32-bit.
+                    X86II::MO_TPOFF); // Faking General Dynamic with Exec.
+                                      // Should be X86II::MO_TLSGD
 }
 // @LOCALMOD-END
 
@@ -6122,16 +6129,38 @@ LowerToTLSNaClModel64(GlobalAddressSDNode *GA, SelectionDAG &DAG,
 // "local exec" model.
 static SDValue LowerToTLSExecModel(GlobalAddressSDNode *GA, SelectionDAG &DAG,
                                    const EVT PtrVT, TLSModel::Model model,
-                                   bool is64Bit) {
+                                   bool is64Bit,
+                                   bool isNaCl) { // @LOCALMOD
   DebugLoc dl = GA->getDebugLoc();
 
-  // Get the Thread Pointer, which is %gs:0 (32-bit) or %fs:0 (64-bit).
-  Value *Ptr = Constant::getNullValue(Type::getInt8PtrTy(*DAG.getContext(),
-                                                         is64Bit ? 257 : 256));
+  // @LOCALMOD-START
+  // Get the Thread Pointer which is %gs:0 (32-bit) or %fs:0 (64-bit),
+  // or returned by a call to __nacl_read_tp for Native Client 64-bit.
+  // TODO(jvoung): add an option to do this for Native Client 32-bit as well.
+  SDValue ThreadPointer;
+  if (isNaCl && is64Bit) {
+    SDValue Flag;
+    SDVTList NodeTys = DAG.getVTList(MVT::Other, MVT::Glue);
+    ThreadPointer = DAG.getNode(X86ISD::NACLREADTP, dl,
+                                NodeTys, DAG.getEntryNode());
+    Flag = ThreadPointer.getValue(1);
 
-  SDValue ThreadPointer = DAG.getLoad(PtrVT, dl, DAG.getEntryNode(),
-                                      DAG.getIntPtrConstant(0),
-                                      MachinePointerInfo(Ptr), false, false, 0);
+    // This will be codegen'ed as a call. Inform MFI that function has calls.
+    MachineFrameInfo *MFI = DAG.getMachineFunction().getFrameInfo();
+    MFI->setAdjustsStack(true);
+
+    ThreadPointer = DAG.getCopyFromReg(ThreadPointer,
+                                       dl, X86::EAX, PtrVT, Flag);
+  } else {
+    Value *Ptr = Constant::getNullValue(Type::getInt8PtrTy(*DAG.getContext(),
+                                                           is64Bit ?
+                                                           257 : 256));
+
+    ThreadPointer = DAG.getLoad(PtrVT, dl, DAG.getEntryNode(),
+                                DAG.getIntPtrConstant(0),
+                                MachinePointerInfo(Ptr), false, false, 0);
+  }
+  // @LOCALMOD-END
 
   unsigned char OperandFlags = 0;
   // Most TLS accesses are not RIP relative, even on x86-64.  One exception is
@@ -6182,14 +6211,14 @@ X86TargetLowering::LowerGlobalTLSAddress(SDValue Op, SelectionDAG &DAG) const {
     TLSModel::Model model
       = getTLSModel(GV, getTargetMachine().getRelocationModel());
 
-    // @LOCAMOD-START
-    if (Subtarget->isTargetNaCl64())
-      return LowerToTLSNaClModel64(GA, DAG, getPointerTy());
-    // @LOCALMOD-END
-
     switch (model) {
       case TLSModel::GeneralDynamic:
       case TLSModel::LocalDynamic: // not implemented
+        // @LOCALMOD-START
+        if (Subtarget->isTargetNaCl64()) {
+          return LowerToTLSGeneralDynamicModelNaCl64(GA, DAG, getPointerTy());
+        }
+        // @LOCALMOD-END
         if (Subtarget->is64Bit())
           return LowerToTLSGeneralDynamicModel64(GA, DAG, getPointerTy());
         return LowerToTLSGeneralDynamicModel32(GA, DAG, getPointerTy());
@@ -6197,7 +6226,8 @@ X86TargetLowering::LowerGlobalTLSAddress(SDValue Op, SelectionDAG &DAG) const {
       case TLSModel::InitialExec:
       case TLSModel::LocalExec:
         return LowerToTLSExecModel(GA, DAG, getPointerTy(), model,
-                                   Subtarget->is64Bit());
+                                   Subtarget->is64Bit(),
+                                   Subtarget->isTargetNaCl()); // @LOCALMOD
     }
   } else if (Subtarget->isTargetDarwin()) {
     // Darwin only has one model of TLS.  Lower to that.
@@ -8974,6 +9004,7 @@ const char *X86TargetLowering::getTargetNodeName(unsigned Opcode) const {
   case X86ISD::FRCP:               return "X86ISD::FRCP";
   case X86ISD::TLSADDR:            return "X86ISD::TLSADDR";
   case X86ISD::TLSCALL:            return "X86ISD::TLSCALL";
+  case X86ISD::NACLREADTP:         return "X86ISD::NACLREADTP"; // @LOCALMOD
   case X86ISD::EH_RETURN:          return "X86ISD::EH_RETURN";
   case X86ISD::TC_RETURN:          return "X86ISD::TC_RETURN";
   case X86ISD::FNSTCW16m:          return "X86ISD::FNSTCW16m";

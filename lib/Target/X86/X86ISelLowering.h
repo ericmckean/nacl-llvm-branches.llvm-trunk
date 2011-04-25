@@ -185,6 +185,11 @@ namespace llvm {
       // thunk at the address from an earlier relocation.
       TLSCALL,
 
+      // @LOCALMOD-START
+      // NACLREADTP - Thread Local Storage. Read the thread pointer for NaCl.
+      NACLREADTP,
+      // @LOCALMOD-END
+
       // EH_RETURN - Exception Handling helpers.
       EH_RETURN,
 
