@@ -376,6 +376,14 @@ void LTOModule::addPotentialUndefinedSymbol(GlobalValue *decl,
   if (decl->getName().startswith("llvm."))
     return;
 
+  // @LOCALMOD-BEGIN
+  // Bitcode modules may have declarations for functions or globals
+  // which are unused. Ignore them here so that gold does not mistake
+  // them for undefined symbols.
+  if (decl->use_empty())
+    return;
+  // @LOCALMOD-END
+
   // ignore all aliases
   if (isa<GlobalAlias>(decl))
     return;
