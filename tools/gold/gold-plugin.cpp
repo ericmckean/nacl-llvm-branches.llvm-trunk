@@ -62,7 +62,6 @@ namespace {
   };
 
   lto_codegen_model output_type = LTO_CODEGEN_PIC_MODEL_STATIC;
-  bool output_type_override = false; // @LOCALMOD
   std::string output_name = "";
   std::list<claimed_file> Modules;
   std::vector<sys::Path> Cleanup;
@@ -92,14 +91,7 @@ namespace options {
       return;
     llvm::StringRef opt = opt_;
 
-    // @LOCALMOD-BEGIN
-    // The plugin generates non-PIC if targetting a static executable.
-    // This option overrides that behavior.
-    if (opt == "PIC") {
-      output_type = LTO_CODEGEN_PIC_MODEL_DYNAMIC;
-      output_type_override = true;
-    // @LOCALMOD-END
-    } else if (opt == "generate-api-file") {
+    if (opt == "generate-api-file") {
       generate_api_file = true;
     } else if (opt.startswith("mcpu=")) {
       mcpu = opt.substr(strlen("mcpu="));
@@ -167,10 +159,6 @@ ld_plugin_status onload(ld_plugin_tv *tv) {
         output_name = tv->tv_u.tv_string;
         break;
       case LDPT_LINKER_OUTPUT:
-        // @LOCALMOD-BEGIN
-        if (output_type_override)
-          break;
-        // @LOCALMOD-END
         switch (tv->tv_u.tv_val) {
           case LDPO_REL:  // .o
           case LDPO_DYN:  // .so
@@ -411,6 +399,39 @@ static ld_plugin_status all_symbols_read_hook(void) {
       }
     }
   }
+
+  // @LOCALMOD-BEGIN
+  // Preserve symbols which may be referenced due to the lowering
+  // of an intrinsic.
+  //
+  // This list includes the functions which are used in:
+  //   lib/CodeGen/IntrinsicLowering.cpp
+  //
+  // NaCl also produces calls to __nacl_read_tp in:
+  //   lib/Target/X86/X86NaClRewritePass.cpp
+  //
+  // TODO(pdox): It would be nice if there was a way to
+  //             avoid hard-coding this list here.
+  // See: http://code.google.com/p/nativeclient/issues/detail?id=821
+  const char *IntrinsicSymbols[] =
+    { "abort", "memcpy", "memset", "memmove",
+      "sqrtf", "sqrt", "sqrtl",
+      "sinf", "sin", "sinl",
+      "cosf", "cos", "cosl",
+      "powf", "pow", "powl",
+      "logf", "log", "logl",
+      "log2f", "log2", "log2l",
+      "log10f", "log10", "log10l",
+      "expf", "exp", "expl",
+      "exp2f", "exp2", "exp2l",
+      "__nacl_read_tp", NULL };
+  for (unsigned i = 0; IntrinsicSymbols[i] != NULL; ++i) {
+    lto_codegen_add_must_preserve_symbol(cg, IntrinsicSymbols[i]);
+    anySymbolsPreserved = true;
+    if (options::generate_api_file)
+      api_file << IntrinsicSymbols[i] << "\n";
+  }
+  // @LOCALMOD-END
 
   if (options::generate_api_file)
     api_file.close();
