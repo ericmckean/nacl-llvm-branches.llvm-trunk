@@ -92,8 +92,48 @@ static CallInst *ReplaceCallWith(const char *NewFn, CallInst *CI,
 #  define setjmp_undefined_for_msvc
 #endif
 
+// @LOCALMOD-BEGIN
+StringSet<> IntrinsicLowering::FuncNames;
+const StringSet<> &IntrinsicLowering::GetFuncNames() {
+  static const char *NamesRaw[] =
+    { "abort", "memcpy", "memset", "memmove",
+      "sqrtf", "sqrt", "sqrtl",
+      "sinf", "sin", "sinl",
+      "cosf", "cos", "cosl",
+      "powf", "pow", "powl",
+      "logf", "log", "logl",
+      "log2f", "log2", "log2l",
+      "log10f", "log10", "log10l",
+      "expf", "exp", "expl",
+      "exp2f", "exp2", "exp2l",
+      "__nacl_read_tp", NULL };
+
+  if (FuncNames.empty()) {
+    for (unsigned i=0; NamesRaw[i]; ++i)
+      FuncNames.insert(NamesRaw[i]);
+  }
+  return FuncNames;
+}
+
+bool IntrinsicLowering::IsCalledByIntrinsic(const StringRef &FuncName) {
+  return IntrinsicLowering::GetFuncNames().count(FuncName) > 0;
+}
+// @LOCALMOD-END
+
 void IntrinsicLowering::AddPrototypes(Module &M) {
   LLVMContext &Context = M.getContext();
+
+  // @LOCALMOD-BEGIN
+  // It's not easy to determine from the bitcode module exactly when
+  // __nacl_read_tp will be generated. To be safe, always
+  // assert that __nacl_read_tp exists.
+  // Insert a correctly-typed definition now.
+  {
+    const Type *RetTy = Type::getInt8PtrTy(M.getContext());
+    M.getOrInsertFunction("__nacl_read_tp", RetTy, (Type*)0);
+  }
+  // @LOCALMOD-END
+
   for (Module::iterator I = M.begin(), E = M.end(); I != E; ++I)
     if (I->isDeclaration() && !I->use_empty())
       switch (I->getIntrinsicID()) {

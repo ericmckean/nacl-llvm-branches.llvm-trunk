@@ -400,39 +400,6 @@ static ld_plugin_status all_symbols_read_hook(void) {
     }
   }
 
-  // @LOCALMOD-BEGIN
-  // Preserve symbols which may be referenced due to the lowering
-  // of an intrinsic.
-  //
-  // This list includes the functions which are used in:
-  //   lib/CodeGen/IntrinsicLowering.cpp
-  //
-  // NaCl also produces calls to __nacl_read_tp in:
-  //   lib/Target/X86/X86NaClRewritePass.cpp
-  //
-  // TODO(pdox): It would be nice if there was a way to
-  //             avoid hard-coding this list here.
-  // See: http://code.google.com/p/nativeclient/issues/detail?id=821
-  const char *IntrinsicSymbols[] =
-    { "abort", "memcpy", "memset", "memmove",
-      "sqrtf", "sqrt", "sqrtl",
-      "sinf", "sin", "sinl",
-      "cosf", "cos", "cosl",
-      "powf", "pow", "powl",
-      "logf", "log", "logl",
-      "log2f", "log2", "log2l",
-      "log10f", "log10", "log10l",
-      "expf", "exp", "expl",
-      "exp2f", "exp2", "exp2l",
-      "__nacl_read_tp", NULL };
-  for (unsigned i = 0; IntrinsicSymbols[i] != NULL; ++i) {
-    lto_codegen_add_must_preserve_symbol(cg, IntrinsicSymbols[i]);
-    anySymbolsPreserved = true;
-    if (options::generate_api_file)
-      api_file << IntrinsicSymbols[i] << "\n";
-  }
-  // @LOCALMOD-END
-
   if (options::generate_api_file)
     api_file.close();
 
