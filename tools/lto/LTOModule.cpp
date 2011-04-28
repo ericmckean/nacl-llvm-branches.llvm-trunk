@@ -34,6 +34,7 @@
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetRegistry.h"
 #include "llvm/Target/TargetSelect.h"
+#include "llvm/CodeGen/IntrinsicLowering.h" // @LOCALMOD
 
 using namespace llvm;
 
@@ -133,6 +134,13 @@ LTOModule *LTOModule::makeLTOModule(MemoryBuffer *buffer,
   Features.getDefaultSubtargetFeatures("" /* cpu */, llvm::Triple(Triple));
   std::string FeatureStr = Features.getString();
   TargetMachine *target = march->createTargetMachine(Triple, FeatureStr);
+
+  // @LOCALMOD-BEGIN
+  // Add declarations for functions which may be used by intrinsics.
+  IntrinsicLowering IL(*target->getTargetData());
+  IL.AddPrototypes(*m);
+  // @LOCALMOD-END
+
   return new LTOModule(m.take(), target);
 }
 
@@ -379,8 +387,10 @@ void LTOModule::addPotentialUndefinedSymbol(GlobalValue *decl,
   // @LOCALMOD-BEGIN
   // Bitcode modules may have declarations for functions or globals
   // which are unused. Ignore them here so that gold does not mistake
-  // them for undefined symbols.
-  if (decl->use_empty())
+  // them for undefined symbols. But don't ignore declarations for
+  // functions which are potentially used by intrinsics.
+  if (decl->use_empty() &&
+      !IntrinsicLowering::IsCalledByIntrinsic(decl->getName()))
     return;
   // @LOCALMOD-END
 

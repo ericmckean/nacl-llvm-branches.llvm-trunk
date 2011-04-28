@@ -25,6 +25,7 @@
 #include "llvm/ADT/Triple.h"
 #include "llvm/Analysis/Passes.h"
 #include "llvm/Bitcode/ReaderWriter.h"
+#include "llvm/CodeGen/IntrinsicLowering.h" // @LOCALMOD
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/Target/Mangler.h"
@@ -75,6 +76,16 @@ LTOCodeGenerator::LTOCodeGenerator()
 {
     InitializeAllTargets();
     InitializeAllAsmPrinters();
+
+    // @LOCALMOD-BEGIN
+    // Preserve symbols which may be referenced due to the lowering
+    // of an intrinsic.
+    const llvm::StringSet<> &IntrinsicSymbols = IntrinsicLowering::GetFuncNames();
+    for (llvm::StringSet<>::const_iterator it = IntrinsicSymbols.begin(),
+         ie = IntrinsicSymbols.end(); it != ie; ++it) {
+      _mustPreserveSymbols[it->getKey().str().c_str()] = 1;
+    }
+    // @LOCALMOD-END
 }
 
 LTOCodeGenerator::~LTOCodeGenerator()
