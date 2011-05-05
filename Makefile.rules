@@ -578,7 +578,7 @@ endif
 endif
 
 ifeq ($(NACL_SANDBOX),1)
-  LIBS += -lsrpc -lpthread -lplatform -lgio -lm -lnacl -lnosys
+  LIBS += -lsrpc -limc_syscalls -lpthread -lplatform -lgio -lm -lnacl -lnosys
 else
   LIBS +=
 endif
