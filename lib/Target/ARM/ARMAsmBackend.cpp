@@ -172,10 +172,10 @@ static unsigned adjustFixupValue(unsigned Kind, uint64_t Value) {
   case FK_Data_4:
     return Value;
   case ARM::fixup_arm_movt_hi16:
-  case ARM::fixup_arm_movt_hi16_pcrel:
     Value >>= 16;
     // Fallthrough
   case ARM::fixup_arm_movw_lo16:
+  case ARM::fixup_arm_movt_hi16_pcrel:
   case ARM::fixup_arm_movw_lo16_pcrel: {
     unsigned Hi4 = (Value & 0xF000) >> 12;
     unsigned Lo12 = Value & 0x0FFF;
@@ -185,10 +185,10 @@ static unsigned adjustFixupValue(unsigned Kind, uint64_t Value) {
     return Value;
   }
   case ARM::fixup_t2_movt_hi16:
-  case ARM::fixup_t2_movt_hi16_pcrel:
     Value >>= 16;
     // Fallthrough
   case ARM::fixup_t2_movw_lo16:
+  case ARM::fixup_t2_movt_hi16_pcrel:
   case ARM::fixup_t2_movw_lo16_pcrel: {
     unsigned Hi4 = (Value & 0xF000) >> 12;
     unsigned i = (Value & 0x800) >> 11;
