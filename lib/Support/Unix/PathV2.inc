@@ -94,7 +94,9 @@ namespace fs {
 
 error_code current_path(SmallVectorImpl<char> &result) {
   result.reserve(MAXPATHLEN);
-
+#ifdef __native_client__
+  llvm_unreachable("current_path() not implemented for Native Client");
+#else
   while (true) {
     if (::getcwd(result.data(), result.capacity()) == 0) {
       // See if there was a real error.
@@ -107,6 +109,7 @@ error_code current_path(SmallVectorImpl<char> &result) {
   }
 
   result.set_size(strlen(result.data()));
+#endif
   return success;
 }
 
@@ -170,6 +173,9 @@ error_code copy_file(const Twine &from, const Twine &to, copy_option copt) {
 }
 
 error_code create_directory(const Twine &path, bool &existed) {
+#ifdef __native_client__
+  llvm_unreachable("create_directory() not implemented for Native Client");
+#else
   SmallString<128> path_storage;
   StringRef p = path.toNullTerminatedStringRef(path_storage);
 
@@ -181,9 +187,13 @@ error_code create_directory(const Twine &path, bool &existed) {
     existed = false;
 
   return success;
+#endif
 }
 
 error_code create_hard_link(const Twine &to, const Twine &from) {
+#ifdef __native_client__
+  llvm_unreachable("create_hard_link() not implemented for Native Client");
+#else
   // Get arguments.
   SmallString<128> from_storage;
   SmallString<128> to_storage;
@@ -194,9 +204,13 @@ error_code create_hard_link(const Twine &to, const Twine &from) {
     return error_code(errno, system_category());
 
   return success;
+#endif
 }
 
 error_code create_symlink(const Twine &to, const Twine &from) {
+#ifdef __native_client__
+  llvm_unreachable("create_symlink() not implemented for Native Client");
+#else
   // Get arguments.
   SmallString<128> from_storage;
   SmallString<128> to_storage;
@@ -207,9 +221,13 @@ error_code create_symlink(const Twine &to, const Twine &from) {
     return error_code(errno, system_category());
 
   return success;
+#endif
 }
 
 error_code remove(const Twine &path, bool &existed) {
+#ifdef __native_client__
+  llvm_unreachable("remove() not implemented for Native Client");
+#else
   SmallString<128> path_storage;
   StringRef p = path.toNullTerminatedStringRef(path_storage);
 
@@ -219,11 +237,14 @@ error_code remove(const Twine &path, bool &existed) {
     existed = false;
   } else
     existed = true;
-
   return success;
+#endif
 }
 
 error_code rename(const Twine &from, const Twine &to) {
+#ifdef __native_client__
+  llvm_unreachable("rename() not implemented for Native Client");
+#else
   // Get arguments.
   SmallString<128> from_storage;
   SmallString<128> to_storage;
@@ -243,6 +264,7 @@ error_code rename(const Twine &from, const Twine &to) {
   }
 
   return success;
+#endif
 }
 
 error_code resize_file(const Twine &path, uint64_t size) {

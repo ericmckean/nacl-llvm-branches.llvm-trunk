@@ -785,9 +785,11 @@ Path::eraseFromDisk(bool remove_contents, std::string *ErrStr) const {
 
 bool
 Path::renamePathOnDisk(const Path& newName, std::string* ErrMsg) {
+#if !defined(__native_client__)
   if (0 != ::rename(path.c_str(), newName.c_str()))
     return MakeErrMsg(ErrMsg, std::string("can't rename '") + path + "' as '" +
                newName.str() + "'");
+#endif
   return false;
 }
 
