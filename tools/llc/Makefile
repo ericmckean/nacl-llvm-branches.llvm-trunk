@@ -17,9 +17,5 @@ include $(LEVEL)/Makefile.config
 
 LINK_COMPONENTS := $(TARGETS_TO_BUILD) bitreader asmparser
 
-ifeq ($(NACL_SRPC),1)
-  LDFLAGS += -Wl,--wrap=open,--wrap=read,--wrap=write,--wrap=close,--wrap=lseek
-endif
-
 include $(LLVM_SRC_ROOT)/Makefile.rules
 
