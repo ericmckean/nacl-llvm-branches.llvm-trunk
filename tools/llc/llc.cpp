@@ -40,17 +40,24 @@
 #include "llvm/Target/TargetSelect.h"
 #include <memory>
 
-
-volatile double d1 = 1.3433543;
-volatile double d2 = 100000.3433543;
-
-#if defined(__native_client__) && defined(NACL_SRPC)
-#include <fcntl.h>
-#include <sys/nacl_syscalls.h>
-extern size_t get_real_size_by_name(const char *name);
-#endif
-
 using namespace llvm;
+
+// @LOCALMOD-BEGIN
+// NOTE: this tool can be build as a "sandboxed" translator.
+//       There are two ways to build the translator
+//       SRPC-style:  no file operations are allowed
+//                    see nacl_file.cc for support code
+//       non-SRPC-style: some basic file operations are allowed
+//                       This can be useful for debugging but will
+//                       not be deployed.
+#if defined(__native_client__) && defined(NACL_SRPC)
+MemoryBuffer* NaClGetMemoryBufferForFile(const char* filename);
+void NaClOutputStringToFile(const char* filename, const std::string& data);
+#endif
+// @LOCALMOD-END
+
+
+
 
 // General options for llc.  Other pass-specific options are specified
 // within the corresponding llc passes, and target-specific options
@@ -225,28 +232,13 @@ int llc_main(int argc, char **argv) {
   SMDiagnostic Err;
   std::auto_ptr<Module> M;
 
-  // This code opens and passes the input file size to the
-  // MemoryBuffer::getOpenFile. This, along with changes in MemoryBuffer.cpp
-  // helps prevent llc from mmap'ing the input bitcode file contents itself.
+  // In the NACL_SRPC case, fake a memory mapped file
+  // TODO(jvoung): revert changes in MemoryBuffer.cpp which are no longer needed
 #if defined(__native_client__) && defined(NACL_SRPC)
-  std::string ErrMsg;
-  int OpenFlags = O_RDONLY;
-#ifdef O_BINARY
-  OpenFlags |= O_BINARY;  // Open input file in binary mode on win32.
-#endif
-  int FD = ::open(InputFilename.c_str(), OpenFlags);
-  int64_t f_size = get_real_size_by_name(InputFilename.c_str());
-  OwningPtr<MemoryBuffer> F;
-  error_code err = MemoryBuffer::getOpenFile(FD,
-                                             InputFilename.c_str(),
-                                             F,
-                                             f_size);
-  if (!F) {
-    Err = SMDiagnostic(InputFilename.c_str(),
-                       "Could not open input file: " + err.message());
-    return 0;
-  }
-  M.reset(ParseIR(F.take(), Err, Context));
+  M.reset(ParseIR(NaClGetMemoryBufferForFile(InputFilename.c_str()),
+                  Err,
+                  Context));
+  M->setModuleIdentifier(InputFilename);
 #else
   M.reset(ParseIRFile(InputFilename, Err, Context));
 #endif // defined(__native_client__) && defined(NACL_SRPC)
@@ -333,11 +325,13 @@ int llc_main(int argc, char **argv) {
     }
   }
 
+#if !defined(NACL_SRPC)
   // Figure out where we are going to send the output...
   OwningPtr<tool_output_file> Out
     (GetOutputStream(TheTarget->getName(), TheTriple.getOS(), argv[0]));
   if (!Out) return 1;
-
+#endif
+  
   CodeGenOpt::Level OLvl = CodeGenOpt::Default;
   switch (OptLevel) {
   default:
@@ -350,7 +344,6 @@ int llc_main(int argc, char **argv) {
   case '3': OLvl = CodeGenOpt::Aggressive; break;
   }
   
-  DEBUG(dbgs() << "@@@@@@@ Clusterify finished " << d1 << " " << d2 << '\n');
   // Build up all of the passes that we want to do to the module.
   PassManager PM;
 
@@ -371,6 +364,27 @@ int llc_main(int argc, char **argv) {
       Target.setMCRelaxAll(true);
   }
 
+
+  
+#if defined __native_client__ && defined(NACL_SRPC)
+  {
+    std::string s;
+    raw_string_ostream ROS(s);
+    formatted_raw_ostream FOS(ROS);
+    // Ask the target to add backend passes as necessary.
+    if (Target.addPassesToEmitFile(PM, FOS, FileType, OLvl, NoVerify)) {
+      errs() << argv[0] << ": target does not support generation of this"
+             << " file type!\n";
+      return 1;
+    }
+
+    PM.run(mod);
+    FOS.flush();
+    ROS.flush();
+    NaClOutputStringToFile(OutputFilename.c_str(), ROS.str());
+  }
+#else
+      
   {
     formatted_raw_ostream FOS(Out->os());
 
@@ -386,6 +400,7 @@ int llc_main(int argc, char **argv) {
 
   // Declare success.
   Out->keep();
+#endif
 
   return 0;
 }
