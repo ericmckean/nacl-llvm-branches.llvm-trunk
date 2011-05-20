@@ -7644,6 +7644,7 @@ SDValue X86TargetLowering::LowerVASTART(SDValue Op, SelectionDAG &DAG) const {
   //   fp_offset         (48 - 48 + 8 * 16)
   //   overflow_arg_area (point to parameters coming in memory).
   //   reg_save_area
+  unsigned PointerSize = TD->getPointerSize(); // @LOCALMOD
   SmallVector<SDValue, 8> MemOps;
   SDValue FIN = Op.getOperand(1);
   // Store gp_offset
@@ -7666,7 +7667,7 @@ SDValue X86TargetLowering::LowerVASTART(SDValue Op, SelectionDAG &DAG) const {
   FIN = DAG.getNode(ISD::ADD, DL, getPointerTy(),
                     FIN, DAG.getIntPtrConstant(4));
   SDValue OVFIN = DAG.getFrameIndex(FuncInfo->getVarArgsFrameIndex(),
-                                    MVT::i64);
+                                    getPointerTy()); // @LOCALMOD
   Store = DAG.getStore(Op.getOperand(0), DL, OVFIN, FIN,
                        MachinePointerInfo(SV, 8),
                        false, false, 0);
@@ -7674,11 +7675,12 @@ SDValue X86TargetLowering::LowerVASTART(SDValue Op, SelectionDAG &DAG) const {
 
   // Store ptr to reg_save_area.
   FIN = DAG.getNode(ISD::ADD, DL, getPointerTy(),
-                    FIN, DAG.getIntPtrConstant(8));
+                    FIN, DAG.getIntPtrConstant(PointerSize)); // @LOCALMOD
   SDValue RSFIN = DAG.getFrameIndex(FuncInfo->getRegSaveFrameIndex(),
-                                    MVT::i64);
+                                    getPointerTy()); // @LOCALMOD
   Store = DAG.getStore(Op.getOperand(0), DL, RSFIN, FIN,
-                       MachinePointerInfo(SV, 16), false, false, 0);
+                       MachinePointerInfo(SV, 8+PointerSize), // @LOCALMOD
+                       false, false, 0);
   MemOps.push_back(Store);
   return DAG.getNode(ISD::TokenFactor, DL, MVT::Other,
                      &MemOps[0], MemOps.size());
@@ -7762,7 +7764,9 @@ SDValue X86TargetLowering::LowerVACOPY(SDValue Op, SelectionDAG &DAG) const {
   DebugLoc DL = Op.getDebugLoc();
 
   return DAG.getMemcpy(Chain, DL, DstPtr, SrcPtr,
-                       DAG.getIntPtrConstant(24), 8, /*isVolatile*/false,
+                       DAG.getIntPtrConstant(8+2*TD->getPointerSize()), // @LM
+                       TD->getPointerABIAlignment(), // @LOCALMOD
+                       /*isVolatile*/false,
                        false,
                        MachinePointerInfo(DstSV), MachinePointerInfo(SrcSV));
 }
@@ -9708,9 +9712,11 @@ X86TargetLowering::EmitVAARG64WithCustomInserter(
   MachineInstr::mmo_iterator MMOEnd = MI->memoperands_end();
 
   // Machine Information
+  bool IsNaCl = Subtarget->isTargetNaCl(); // @LOCALMOD
   const TargetInstrInfo *TII = getTargetMachine().getInstrInfo();
   MachineRegisterInfo &MRI = MBB->getParent()->getRegInfo();
-  const TargetRegisterClass *AddrRegClass = getRegClassFor(MVT::i64);
+  const TargetRegisterClass *AddrRegClass =
+    getRegClassFor(getPointerTy()); // @LOCALMOD
   const TargetRegisterClass *OffsetRegClass = getRegClassFor(MVT::i32);
   DebugLoc DL = MI->getDebugLoc();
 
@@ -9739,15 +9745,6 @@ X86TargetLowering::EmitVAARG64WithCustomInserter(
   MachineBasicBlock *offsetMBB;
   MachineBasicBlock *endMBB;
   
-  // @LOCALMOD-BEGIN
-  unsigned RealDestReg = 0;
-  if (Subtarget->isTargetNaCl()) {
-    // Pretend pointers are 64-bit until the end
-    RealDestReg = DestReg;
-    DestReg = MRI.createVirtualRegister(AddrRegClass);
-  }
-  // @LOCALMOD-END
-
   unsigned OffsetDestReg = 0;    // Argument address computed by offsetMBB
   unsigned OverflowDestReg = 0;  // Argument address computed by overflowMBB
   unsigned OffsetReg = 0;
@@ -9828,29 +9825,39 @@ X86TargetLowering::EmitVAARG64WithCustomInserter(
   }
 
   // In offsetMBB, emit code to use the reg_save_area.
+  unsigned Opc; // @LOCALMOD
   if (offsetMBB) {
     assert(OffsetReg != 0);
 
     // Read the reg_save_area address.
     unsigned RegSaveReg = MRI.createVirtualRegister(AddrRegClass);
-    BuildMI(offsetMBB, DL, TII->get(X86::MOV64rm), RegSaveReg)
+    Opc = IsNaCl ? X86::MOV32rm : X86::MOV64rm; // @LOCALMOD
+    BuildMI(offsetMBB, DL, TII->get(Opc), RegSaveReg) // @LOCALMOD
       .addOperand(Base)
       .addOperand(Scale)
       .addOperand(Index)
-      .addDisp(Disp, 16)
+      .addDisp(Disp, 8+TD->getPointerSize()) // @LOCALMOD
       .addOperand(Segment)
       .setMemRefs(MMOBegin, MMOEnd);
 
     // Zero-extend the offset
-    unsigned OffsetReg64 = MRI.createVirtualRegister(AddrRegClass);
-      BuildMI(offsetMBB, DL, TII->get(X86::SUBREG_TO_REG), OffsetReg64)
-        .addImm(0)
-        .addReg(OffsetReg)
-        .addImm(X86::sub_32bit);
+    // @LOCALMOD-BEGIN
+    unsigned OffsetRegExt;
+    if (IsNaCl) {
+      OffsetRegExt = OffsetReg;
+    } else {
+      OffsetRegExt = MRI.createVirtualRegister(AddrRegClass);
+        BuildMI(offsetMBB, DL, TII->get(X86::SUBREG_TO_REG), OffsetRegExt)
+          .addImm(0)
+          .addReg(OffsetReg)
+          .addImm(X86::sub_32bit);
+    }
+    // @LOCALMOD-END
 
     // Add the offset to the reg_save_area to get the final address.
-    BuildMI(offsetMBB, DL, TII->get(X86::ADD64rr), OffsetDestReg)
-      .addReg(OffsetReg64)
+    Opc = IsNaCl ? X86::ADD32rr : X86::ADD64rr; // @LOCALMOD
+    BuildMI(offsetMBB, DL, TII->get(Opc), OffsetDestReg)
+      .addReg(OffsetRegExt) // @LOCALMOD
       .addReg(RegSaveReg);
 
     // Compute the offset for the next argument
@@ -9880,7 +9887,8 @@ X86TargetLowering::EmitVAARG64WithCustomInserter(
 
   // Load the overflow_area address into a register.
   unsigned OverflowAddrReg = MRI.createVirtualRegister(AddrRegClass);
-  BuildMI(overflowMBB, DL, TII->get(X86::MOV64rm), OverflowAddrReg)
+  Opc = IsNaCl ? X86::MOV32rm : X86::MOV64rm; // @LOCALMOD
+  BuildMI(overflowMBB, DL, TII->get(Opc), OverflowAddrReg)
     .addOperand(Base)
     .addOperand(Scale)
     .addOperand(Index)
@@ -9896,11 +9904,13 @@ X86TargetLowering::EmitVAARG64WithCustomInserter(
     unsigned TmpReg = MRI.createVirtualRegister(AddrRegClass);
 
     // aligned_addr = (addr + (align-1)) & ~(align-1)
-    BuildMI(overflowMBB, DL, TII->get(X86::ADD64ri32), TmpReg)
+    Opc = IsNaCl ? X86::ADD32ri : X86::ADD64ri32; // @LOCALMOD
+    BuildMI(overflowMBB, DL, TII->get(Opc), TmpReg)
       .addReg(OverflowAddrReg)
       .addImm(Align-1);
 
-    BuildMI(overflowMBB, DL, TII->get(X86::AND64ri32), OverflowDestReg)
+    Opc = IsNaCl ? X86::AND32ri : X86::AND64ri32; // @LOCALMOD
+    BuildMI(overflowMBB, DL, TII->get(Opc), OverflowDestReg)
       .addReg(TmpReg)
       .addImm(~(uint64_t)(Align-1));
   } else {
@@ -9911,12 +9921,14 @@ X86TargetLowering::EmitVAARG64WithCustomInserter(
   // Compute the next overflow address after this argument.
   // (the overflow address should be kept 8-byte aligned)
   unsigned NextAddrReg = MRI.createVirtualRegister(AddrRegClass);
-  BuildMI(overflowMBB, DL, TII->get(X86::ADD64ri32), NextAddrReg)
+  Opc = IsNaCl ? X86::ADD32ri : X86::ADD64ri32; // @LOCALMOD
+  BuildMI(overflowMBB, DL, TII->get(Opc), NextAddrReg)
     .addReg(OverflowDestReg)
     .addImm(ArgSizeA8);
 
   // Store the new overflow address.
-  BuildMI(overflowMBB, DL, TII->get(X86::MOV64mr))
+  Opc = IsNaCl ? X86::MOV32mr : X86::MOV64mr; // @LOCALMOD
+  BuildMI(overflowMBB, DL, TII->get(Opc))
     .addOperand(Base)
     .addOperand(Scale)
     .addOperand(Index)
@@ -9932,19 +9944,6 @@ X86TargetLowering::EmitVAARG64WithCustomInserter(
       .addReg(OffsetDestReg).addMBB(offsetMBB)
       .addReg(OverflowDestReg).addMBB(overflowMBB);
   }
-  
-  // @LOCALMOD-BEGIN
-  if (Subtarget->isTargetNaCl()) {
-    // Truncate the address to 32-bits
-    MachineBasicBlock::iterator I = endMBB->begin();
-    ++I;
-    MachineInstr *CopyMI =
-      BuildMI(*endMBB, I, DL,
-              TII->get(TargetOpcode::COPY), RealDestReg)
-        .addReg(DestReg);
-    CopyMI->getOperand(1).setSubReg(X86::sub_32bit);
-  }
-  // @LOCALMOD-END
 
   // Erase the pseudo instruction
   MI->eraseFromParent();
