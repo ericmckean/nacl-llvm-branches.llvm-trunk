@@ -129,8 +129,11 @@ void IntrinsicLowering::AddPrototypes(Module &M) {
   // assert that __nacl_read_tp exists.
   // Insert a correctly-typed definition now.
   {
-    const Type *RetTy = Type::getInt8PtrTy(M.getContext());
-    M.getOrInsertFunction("__nacl_read_tp", RetTy, (Type*)0);
+    // @TODO(pdox): Re-enable checking for __nacl_read_tp when we
+    //              build glibc ourselves.
+
+    //const Type *RetTy = Type::getInt8PtrTy(M.getContext());
+    //M.getOrInsertFunction("__nacl_read_tp", RetTy, (Type*)0);
   }
   // @LOCALMOD-END
 
