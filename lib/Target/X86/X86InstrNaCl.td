@@ -17,11 +17,6 @@
 // NaCl specific DAG Nodes.
 //
 
-// Abstraction for getting the thread pointer for NaCl TLS.
-def X86NaClReadTp : SDNode<"X86ISD::NACLREADTP", SDTX86Void,
-                         [SDNPHasChain, SDNPOptInGlue, SDNPOutGlue]>;
-
-
 //===----------------------------------------------------------------------===//
 //
 //                       Native Client Pseudo-Instructions
@@ -286,21 +281,6 @@ def : Pat<(X86tcret GR32_TC_64:$dst, imm:$off),
 
 // ELF TLS Support
 
-// For the "exec" TLS models, the NaCl loader cannot set the FS or GS
-// segmentation registers on Windows, so we must use a NaCl syscall.
-// TODO(jvoung): Add a version with the 32-bit register clobbers,
-// to abstract away access to the segment register for 32-bit NaCl.
-let Defs = [RAX, RCX, RDX, RSI, RDI, R8, R9, R10, R11,
-            FP0, FP1, FP2, FP3, FP4, FP5, FP6, ST0, ST1,
-            MM0, MM1, MM2, MM3, MM4, MM5, MM6, MM7,
-            XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
-            XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15, EFLAGS],
-    Uses = [RSP] in
-def NACL_CG_TLS_readtp64 : I<0, Pseudo, (outs), (ins),
-                         "naclcall\t__nacl_read_tp",
-                         [(X86NaClReadTp)]>,
-                         Requires<[IsNaCl64]>;
-
 // The linker expects this lea+call sequence to be directly adjacent.
 let Defs = [EAX, ECX, EDX, FP0, FP1, FP2, FP3, FP4, FP5, FP6, ST0,
             MM0, MM1, MM2, MM3, MM4, MM5, MM6, MM7,
@@ -316,29 +296,23 @@ def NACL_CG_TLS_addr32 : I<0, Pseudo, (outs), (ins i32mem:$sym),
                          [(X86tlsaddr tls32addr:$sym)]>,
                          Requires<[In32BitMode, IsNaCl32]>;
 
-// TODO(jvoung): Once the nacl-gcc folks have ironed out how to handle
-// general dynamic TLS access, update this.
-// http://code.google.com/p/nativeclient/issues/detail?id=1685
-//
-// The usual General Dynamic ABI sequence looks like:
-// .byte 0x66
-// leaq x@tlsgd(%rip), %rdi
-// .word 0x6666
-// rex64
-// call __tls_get_addr@plt
-//
-// We could add bundle_lock/unlock to keep them together w/out additional nops.
+// These are lowered in X86NaClRewritePass.
 let Defs = [RAX, RCX, RDX, RSI, RDI, R8, R9, R10, R11,
             FP0, FP1, FP2, FP3, FP4, FP5, FP6, ST0, ST1,
             MM0, MM1, MM2, MM3, MM4, MM5, MM6, MM7,
             XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
             XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15, EFLAGS],
-    Uses = [RSP] in
-def NACL_CG_TLS_addr64 : I<0, Pseudo, (outs), (ins i32mem:$sym),
-                         "naclcall\t__nacl_read_tp@PLT;"
-                         "leaq\t$$$sym(,%rax), %rax",
-                         [(X86tlsaddr tls32addr:$sym)]>,
-                         Requires<[IsNaCl64]>;
+    Uses = [RSP] in {
+def NACL_CG_GD_TLS_addr64 : I<0, Pseudo, (outs), (ins i32mem:$sym), "",
+                            [(X86tlsaddr tls32addr:$sym)]>,
+                            Requires<[IsNaCl64]>;
+def NACL_CG_LE_TLS_addr64 : I<0, Pseudo, (outs), (ins i32mem:$sym), "",
+                            [(X86tlsaddr_le tls32addr:$sym)]>,
+                            Requires<[IsNaCl64]>;
+def NACL_CG_IE_TLS_addr64 : I<0, Pseudo, (outs), (ins i32mem:$sym), "",
+                            [(X86tlsaddr_ie tls32addr:$sym)]>,
+                            Requires<[IsNaCl64]>;
+}
 
 let usesCustomInserter = 1, Defs = [EFLAGS] in
 def NACL_CG_VAARG_64 : I<0, Pseudo,

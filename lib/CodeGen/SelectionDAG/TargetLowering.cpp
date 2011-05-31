@@ -26,12 +26,21 @@
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/CommandLine.h" // @LOCALMOD
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
 #include <cctype>
 using namespace llvm;
 
 namespace llvm {
+
+// @LOCALMOD-BEGIN
+static cl::opt<bool>
+  ForceTLSNonPIC("force-tls-non-pic",
+                 cl::desc("Force TLS to use non-PIC models"),
+                 cl::init(false));
+// @LOCALMOD-END
+
 TLSModel::Model getTLSModel(const GlobalValue *GV, Reloc::Model reloc) {
   bool isLocal = GV->hasLocalLinkage();
   bool isDeclaration = GV->isDeclaration();
@@ -39,7 +48,7 @@ TLSModel::Model getTLSModel(const GlobalValue *GV, Reloc::Model reloc) {
   // For variables, is internal different from hidden?
   bool isHidden = GV->hasHiddenVisibility();
 
-  if (reloc == Reloc::PIC_) {
+  if (reloc == Reloc::PIC_ && !ForceTLSNonPIC) { // @LOCALMOD
     if (isLocal || isHidden)
       return TLSModel::LocalDynamic;
     else
