@@ -191,6 +191,14 @@ def X86WrapperRIP : SDNode<"X86ISD::WrapperRIP",  SDTX86Wrapper>;
 def X86tlsaddr : SDNode<"X86ISD::TLSADDR", SDT_X86TLSADDR,
                         [SDNPHasChain, SDNPOptInGlue, SDNPOutGlue]>;
 
+// @LOCALMOD-BEGIN
+def X86tlsaddr_le : SDNode<"X86ISD::TLSADDR_LE", SDT_X86TLSADDR,
+                           [SDNPHasChain, SDNPOptInGlue, SDNPOutGlue]>;
+
+def X86tlsaddr_ie : SDNode<"X86ISD::TLSADDR_IE", SDT_X86TLSADDR,
+                           [SDNPHasChain, SDNPOptInGlue, SDNPOutGlue]>;
+// @LOCALMOD-END
+
 def X86ehret : SDNode<"X86ISD::EH_RETURN", SDT_X86EHRET,
                         [SDNPHasChain]>;
 

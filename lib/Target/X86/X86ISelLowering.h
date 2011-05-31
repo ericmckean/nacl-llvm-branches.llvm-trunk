@@ -181,14 +181,17 @@ namespace llvm {
       // TLSADDR - Thread Local Storage.
       TLSADDR,
 
+      // @LOCALMOD-BEGIN
+      // TLSADDR_LE - Thread Local Storage. (Local Exec Model)
+      TLSADDR_LE,
+
+      // TLSADDR_IE - Thread Local Storage. (Initial Exec Model)
+      TLSADDR_IE,
+      // @LOCALMOD-END
+
       // TLSCALL - Thread Local Storage.  When calling to an OS provided
       // thunk at the address from an earlier relocation.
       TLSCALL,
-
-      // @LOCALMOD-START
-      // NACLREADTP - Thread Local Storage. Read the thread pointer for NaCl.
-      NACLREADTP,
-      // @LOCALMOD-END
 
       // EH_RETURN - Exception Handling helpers.
       EH_RETURN,

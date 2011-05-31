@@ -556,17 +556,6 @@ bool X86NaClRewritePass::ApplyRewrites(MachineBasicBlock &MBB,
     return true;
   }
 
-  // TODO(jvoung): when we add a switch for x86-32 to go through __nacl_read_tp
-  // handle that here too...
-  if (Opc == X86::NACL_CG_TLS_readtp64) {
-    // Rewrite to:
-    //   naclcall\t___nacl_read_tp
-    BuildMI(MBB, MBBI, DL, TII->get(X86::NACL_CALL64d))
-      .addExternalSymbol("__nacl_read_tp");
-    MI.eraseFromParent();
-    return true;
-  }
-
   if (Opc == X86::NACL_CG_TLS_addr32) {
     // Rewrite to:
     //   .bundle_align_end
@@ -589,11 +578,28 @@ bool X86NaClRewritePass::ApplyRewrites(MachineBasicBlock &MBB,
     return true;
   }
 
-  // TODO(jvoung): Once the nacl-gcc folks have ironed out how to handle
-  // general dynamic TLS access, update this.
-  // For now, we are using the old local exec model.
+  // General Dynamic NaCl TLS model
   // http://code.google.com/p/nativeclient/issues/detail?id=1685
-  if (Opc == X86::NACL_CG_TLS_addr64) {
+  if (Opc == X86::NACL_CG_GD_TLS_addr64) {
+
+    // Rewrite to:
+    //   leaq $sym@TLSGD(%rip), %rdi
+    //   naclcall __tls_get_addr@PLT
+    BuildMI(MBB, MBBI, DL, TII->get(X86::LEA64r), X86::RDI)
+        .addReg(X86::RIP) // Base
+        .addImm(1) // Scale
+        .addReg(0) // Index
+        .addGlobalAddress(MI.getOperand(3).getGlobal(), 0,
+                          MI.getOperand(3).getTargetFlags())
+        .addReg(0); // Segment
+    BuildMI(MBB, MBBI, DL, TII->get(X86::NACL_CALL64d))
+        .addExternalSymbol("__tls_get_addr", X86II::MO_PLT);
+    MI.eraseFromParent();
+    return true;
+  }
+
+  // Local Exec NaCl TLS Model
+  if (Opc == X86::NACL_CG_LE_TLS_addr64) {
     // Rewrite to:
     //   naclcall __nacl_read_tp@PLT
     //   leaq $sym@flag(,%rax), %rax
@@ -609,6 +615,26 @@ bool X86NaClRewritePass::ApplyRewrites(MachineBasicBlock &MBB,
     MI.eraseFromParent();
     return true;
   }
+
+  // Initial Exec NaCl TLS Model
+  if (Opc == X86::NACL_CG_IE_TLS_addr64) {
+    // Rewrite to:
+    //   naclcall __nacl_read_tp@PLT
+    //   addq sym@GOTTPOFF(%rip), %rax
+    BuildMI(MBB, MBBI, DL, TII->get(X86::NACL_CALL64d))
+        .addExternalSymbol("__nacl_read_tp", X86II::MO_PLT);
+    BuildMI(MBB, MBBI, DL, TII->get(X86::ADD64rm), X86::RAX)
+        .addReg(X86::RAX)
+        .addReg(X86::RIP) // Base
+        .addImm(1) // Scale
+        .addReg(0) // Index
+        .addGlobalAddress(MI.getOperand(3).getGlobal(), 0,
+                          MI.getOperand(3).getTargetFlags())
+        .addReg(0); // Segment
+    MI.eraseFromParent();
+    return true;
+  }
+
   return false;
 }
 
