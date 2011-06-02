@@ -15,6 +15,8 @@
 #include "llvm-c/lto.h"
 #include "llvm-c/Core.h"
 
+#include "llvm/Support/CommandLine.h" // @LOCALMOD
+
 #include "LTOModule.h"
 #include "LTOCodeGenerator.h"
 
@@ -23,7 +25,25 @@
 // *** not thread safe ***
 static std::string sLastErrorString;
 
+// @LOCALMOD-BEGIN
+static std::vector<const char*> lto_options;
 
+extern void lto_add_command_line_option(const char* opt)
+{
+  // ParseCommandLineOptions() expects argv[0] to be program name.
+  if (lto_options.empty())
+    lto_options.push_back("libLTO");
+
+  lto_options.push_back(strdup(opt));
+}
+
+extern void lto_parse_command_line_options()
+{
+  if ( !lto_options.empty() )
+      llvm::cl::ParseCommandLineOptions(lto_options.size(),
+                                        const_cast<char **>(&lto_options[0]));
+}
+// @LOCALMOD-END
 
 //
 // returns a printable string

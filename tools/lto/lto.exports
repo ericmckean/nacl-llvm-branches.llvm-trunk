@@ -1,3 +1,5 @@
+lto_add_command_line_option
+lto_parse_command_line_options
 lto_get_error_message
 lto_get_version
 lto_module_create
