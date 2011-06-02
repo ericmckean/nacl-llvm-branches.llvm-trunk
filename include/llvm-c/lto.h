@@ -63,6 +63,17 @@ typedef struct LTOCodeGenerator*  lto_code_gen_t;
 extern "C" {
 #endif
 
+
+/* @LOCALMOD-BEGIN */
+
+/* Add a command-line option */
+void lto_add_command_line_option(const char* opt);
+
+/* Parse command line options */
+void lto_parse_command_line_options();
+
+/* @LOCALMOD-END */
+
 /**
  * Returns a printable string.
  */

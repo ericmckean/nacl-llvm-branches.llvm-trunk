@@ -233,6 +233,24 @@ ld_plugin_status onload(ld_plugin_tv *tv) {
     return LDPS_ERR;
   }
 
+  // @LOCALMOD-BEGIN
+  // Parse extra command-line options
+  // Although lto_codegen provides a way to parse command-line arguments,
+  // we need the arguments to be parsed and applied before LTOModules are
+  // even created. In particular, this is needed because the
+  // "-add-nacl-read-tp-dependency" flag affects how modules are created.
+  if (!options::extra.empty()) {
+    for (std::vector<std::string>::iterator it = options::extra.begin();
+         it != options::extra.end(); ++it) {
+      lto_add_command_line_option((*it).c_str());
+    }
+    lto_parse_command_line_options();
+    // We clear the options so that they don't get parsed again in
+    // lto_codegen_debug_options.
+    options::extra.clear();
+  }
+  // @LOCALMOD-END
+
   return LDPS_OK;
 }
 
@@ -425,6 +443,11 @@ static ld_plugin_status all_symbols_read_hook(void) {
   }
   if (!options::mcpu.empty())
     lto_codegen_set_cpu(cg, options::mcpu.c_str());
+
+  // @LOCALMOD-BEGIN (COMMENT)
+  // "extra" will always be empty below, because we process the extra
+  // options earlier, at the end of onload().
+  // @LOCALMOD-END
 
   // Pass through extra options to the code generator.
   if (!options::extra.empty()) {
