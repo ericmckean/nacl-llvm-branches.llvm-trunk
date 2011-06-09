@@ -24,7 +24,6 @@
 #include "llvm/MC/MCAsmInfo.h"
 using namespace llvm;
 
-
 ARMInstrInfo::ARMInstrInfo(const ARMSubtarget &STI)
   : ARMBaseInstrInfo(STI), RI(*this, STI) {
 }
