@@ -56,6 +56,16 @@ using namespace dwarf;
 
 STATISTIC(NumTailCalls, "Number of tail calls");
 
+// @LOCALMOD-BEGIN
+// Generate a call for TLS TP reads, instead of using a segment register.
+namespace {
+cl::opt<bool>
+TLSUseCall("mtls-use-call",
+           cl::desc("Use a function to get the TP for TLS exec models"),
+           cl::init(false));
+}  // namespace
+// @LOCALMOD-END
+
 // Forward declarations.
 static SDValue getMOVL(SelectionDAG &DAG, DebugLoc dl, EVT VT, SDValue V1,
                        SDValue V2);
@@ -6064,7 +6074,8 @@ X86TargetLowering::LowerGlobalAddress(SDValue Op, SelectionDAG &DAG) const {
 static SDValue
 GetTLSADDR(SelectionDAG &DAG, SDValue Chain, GlobalAddressSDNode *GA,
            SDValue *InFlag, const EVT PtrVT, unsigned ReturnReg,
-           unsigned char OperandFlags, unsigned Opcode = 0) { // @LOCALMOD
+           unsigned char OperandFlags,
+           unsigned Opcode = X86ISD::TLSADDR) { // @LOCALMOD
   MachineFrameInfo *MFI = DAG.getMachineFunction().getFrameInfo();
   SDVTList NodeTys = DAG.getVTList(MVT::Other, MVT::Glue);
   DebugLoc dl = GA->getDebugLoc();
@@ -6072,10 +6083,6 @@ GetTLSADDR(SelectionDAG &DAG, SDValue Chain, GlobalAddressSDNode *GA,
                                            GA->getValueType(0),
                                            GA->getOffset(),
                                            OperandFlags);
-  // @LOCALMOD-BEGIN
-  if (Opcode == 0)
-    Opcode = X86ISD::TLSADDR;
-  // @LOCALMOD-END
   if (InFlag) {
     SDValue Ops[] = { Chain,  TGA, *InFlag };
     Chain = DAG.getNode(Opcode, dl, NodeTys, Ops, 3); // @LOCALMOD
@@ -6114,7 +6121,30 @@ LowerToTLSGeneralDynamicModel64(GlobalAddressSDNode *GA, SelectionDAG &DAG,
 }
 
 // @LOCALMOD-START
-// Lower ISD::GlobalTLSAddress using the "general dynamic" model, NaCl 64 bit.
+// Lower TLS accesses to a function call, rather than use segment registers.
+static SDValue
+LowerToTLSExecCall(GlobalAddressSDNode *GA, SelectionDAG &DAG,
+                   const EVT PtrVT, TLSModel::Model model, bool is64Bit) {
+
+  // See: http://code.google.com/p/nativeclient/issues/detail?id=1685
+  unsigned char TargetFlag;
+  unsigned Opcode;
+  if (model == TLSModel::LocalExec) {
+    TargetFlag = is64Bit ? X86II::MO_TPOFF : X86II::MO_NTPOFF;
+    Opcode = X86ISD::TLSADDR_LE;
+  } else if (model == TLSModel::InitialExec) {
+    TargetFlag = is64Bit ? X86II::MO_GOTTPOFF : X86II::MO_INDNTPOFF;
+    Opcode = X86ISD::TLSADDR_IE;
+  } else {
+    llvm_unreachable("Unknown TLS model");
+  }
+
+  return GetTLSADDR(DAG, DAG.getEntryNode(), GA, NULL, PtrVT,
+                    X86::EAX, // PtrVT is 32-bit.
+                    TargetFlag, Opcode);
+}
+
+// Lower ISD::GlobalTLSAddress for NaCl 64 bit.
 static SDValue
 LowerToTLSNaCl64(GlobalAddressSDNode *GA, SelectionDAG &DAG,
                  const EVT PtrVT, TLSModel::Model model) {
@@ -6125,14 +6155,8 @@ LowerToTLSNaCl64(GlobalAddressSDNode *GA, SelectionDAG &DAG,
   if (model == TLSModel::GeneralDynamic || model == TLSModel::LocalDynamic) {
     TargetFlag = X86II::MO_TLSGD;
     Opcode = X86ISD::TLSADDR;
-  } else if (model == TLSModel::LocalExec) {
-    TargetFlag = X86II::MO_TPOFF;
-    Opcode = X86ISD::TLSADDR_LE;
-  } else if (model == TLSModel::InitialExec) {
-    TargetFlag = X86II::MO_GOTTPOFF;
-    Opcode = X86ISD::TLSADDR_IE;
   } else {
-    llvm_unreachable("Unknown TLS model");
+    return LowerToTLSExecCall(GA, DAG, PtrVT, model, true);
   }
 
   return GetTLSADDR(DAG, DAG.getEntryNode(), GA, NULL, PtrVT,
@@ -6218,8 +6242,15 @@ X86TargetLowering::LowerGlobalTLSAddress(SDValue Op, SelectionDAG &DAG) const {
         return LowerToTLSGeneralDynamicModel32(GA, DAG, getPointerTy());
       case TLSModel::InitialExec:
       case TLSModel::LocalExec:
-        return LowerToTLSExecModel(GA, DAG, getPointerTy(), model,
-                                   Subtarget->is64Bit());
+        // @LOCALMOD-START
+        if (TLSUseCall) {
+          return LowerToTLSExecCall(GA, DAG, getPointerTy(), model,
+                                    Subtarget->is64Bit());
+        } else {
+          return LowerToTLSExecModel(GA, DAG, getPointerTy(), model,
+                                     Subtarget->is64Bit());
+        }
+        // @LOCALMOD-END
     }
   } else if (Subtarget->isTargetDarwin()) {
     // Darwin only has one model of TLS.  Lower to that.

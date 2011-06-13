@@ -599,16 +599,27 @@ bool X86NaClRewritePass::ApplyRewrites(MachineBasicBlock &MBB,
   }
 
   // Local Exec NaCl TLS Model
-  if (Opc == X86::NACL_CG_LE_TLS_addr64) {
+  if (Opc == X86::NACL_CG_LE_TLS_addr64 ||
+      Opc == X86::NACL_CG_LE_TLS_addr32) {
+    unsigned CallOpc, LeaOpc, Reg;
     // Rewrite to:
     //   naclcall __nacl_read_tp@PLT
-    //   leaq $sym@flag(,%rax), %rax
-    BuildMI(MBB, MBBI, DL, TII->get(X86::NACL_CALL64d))
+    //   lea $sym@flag(,%reg), %reg
+    if (Opc == X86::NACL_CG_LE_TLS_addr64) {
+      CallOpc = X86::NACL_CALL64d;
+      LeaOpc = X86::LEA64r;
+      Reg = X86::RAX;
+    } else {
+      CallOpc = X86::NACL_CALL32d;
+      LeaOpc = X86::LEA32r;
+      Reg = X86::EAX;
+    }
+    BuildMI(MBB, MBBI, DL, TII->get(CallOpc))
         .addExternalSymbol("__nacl_read_tp", X86II::MO_PLT);
-    BuildMI(MBB, MBBI, DL, TII->get(X86::LEA64r), X86::RAX)
+    BuildMI(MBB, MBBI, DL, TII->get(LeaOpc), Reg)
         .addReg(0) // Base
         .addImm(1) // Scale
-        .addReg(X86::RAX) // Index
+        .addReg(Reg) // Index
         .addGlobalAddress(MI.getOperand(3).getGlobal(), 0,
                           MI.getOperand(3).getTargetFlags())
         .addReg(0); // Segment
@@ -617,15 +628,29 @@ bool X86NaClRewritePass::ApplyRewrites(MachineBasicBlock &MBB,
   }
 
   // Initial Exec NaCl TLS Model
-  if (Opc == X86::NACL_CG_IE_TLS_addr64) {
+  if (Opc == X86::NACL_CG_IE_TLS_addr64 ||
+      Opc == X86::NACL_CG_IE_TLS_addr32) {
+    unsigned CallOpc, AddOpc, Base, Reg;
     // Rewrite to:
     //   naclcall __nacl_read_tp@PLT
-    //   addq sym@GOTTPOFF(%rip), %rax
-    BuildMI(MBB, MBBI, DL, TII->get(X86::NACL_CALL64d))
+    //   addq sym@flag(%base), %reg
+    if (Opc == X86::NACL_CG_IE_TLS_addr64) {
+      CallOpc = X86::NACL_CALL64d;
+      AddOpc = X86::ADD64rm;
+      Base = X86::RIP;
+      Reg = X86::RAX;
+    } else {
+      CallOpc = X86::NACL_CALL32d;
+      AddOpc = X86::ADD32rm;
+      Base = MI.getOperand(3).getTargetFlags() == X86II::MO_INDNTPOFF ?
+          0 : X86::EBX; // EBX for GOTNTPOFF.
+      Reg = X86::EAX;
+    }
+    BuildMI(MBB, MBBI, DL, TII->get(CallOpc))
         .addExternalSymbol("__nacl_read_tp", X86II::MO_PLT);
-    BuildMI(MBB, MBBI, DL, TII->get(X86::ADD64rm), X86::RAX)
-        .addReg(X86::RAX)
-        .addReg(X86::RIP) // Base
+    BuildMI(MBB, MBBI, DL, TII->get(AddOpc), Reg)
+        .addReg(Reg)
+        .addReg(Base)
         .addImm(1) // Scale
         .addReg(0) // Index
         .addGlobalAddress(MI.getOperand(3).getGlobal(), 0,

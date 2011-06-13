@@ -312,6 +312,13 @@ def NACL_CG_LE_TLS_addr64 : I<0, Pseudo, (outs), (ins i32mem:$sym), "",
 def NACL_CG_IE_TLS_addr64 : I<0, Pseudo, (outs), (ins i32mem:$sym), "",
                             [(X86tlsaddr_ie tls32addr:$sym)]>,
                             Requires<[IsNaCl64]>;
+// For mtls-use-call.
+def NACL_CG_LE_TLS_addr32 : I<0, Pseudo, (outs), (ins i32mem:$sym), "",
+                            [(X86tlsaddr_le tls32addr:$sym)]>,
+                            Requires<[IsNaCl32]>;
+def NACL_CG_IE_TLS_addr32 : I<0, Pseudo, (outs), (ins i32mem:$sym), "",
+                            [(X86tlsaddr_ie tls32addr:$sym)]>,
+                            Requires<[IsNaCl32]>;
 }
 
 let usesCustomInserter = 1, Defs = [EFLAGS] in
