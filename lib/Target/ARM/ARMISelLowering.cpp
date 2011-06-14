@@ -380,8 +380,11 @@ ARMTargetLowering::ARMTargetLowering(TargetMachine &TM)
     // Long long helper functions
     // RTABI chapter 4.2, Table 9
     setLibcallName(RTLIB::MUL_I64,  "__aeabi_lmul");
-    setLibcallName(RTLIB::SDIV_I64, "__aeabi_ldivmod");
-    setLibcallName(RTLIB::UDIV_I64, "__aeabi_uldivmod");
+    // @LOCALMOD-start
+    // use default names instead of the arm specific ones
+    //setLibcallName(RTLIB::SDIV_I64, "__aeabi_ldivmod");
+    //setLibcallName(RTLIB::UDIV_I64, "__aeabi_uldivmod");
+    // @LOCALMOD-end
     setLibcallName(RTLIB::SHL_I64, "__aeabi_llsl");
     setLibcallName(RTLIB::SRL_I64, "__aeabi_llsr");
     setLibcallName(RTLIB::SRA_I64, "__aeabi_lasr");
