@@ -254,8 +254,8 @@ ARMTargetLowering::ARMTargetLowering(TargetMachine &TM)
   setLibcallName(RTLIB::SHL_I128, 0);
   setLibcallName(RTLIB::SRL_I128, 0);
   setLibcallName(RTLIB::SRA_I128, 0);
-
-  if (Subtarget->isAAPCS_ABI()) {
+  // @LOCALMOD: use standard names and calling conventions for pnacl
+  if (!Subtarget->isTargetNaCl() && Subtarget->isAAPCS_ABI()) { 
     // Double-precision floating-point arithmetic helper functions
     // RTABI chapter 4.1.2, Table 2
     setLibcallName(RTLIB::ADD_F64, "__aeabi_dadd");
@@ -380,11 +380,8 @@ ARMTargetLowering::ARMTargetLowering(TargetMachine &TM)
     // Long long helper functions
     // RTABI chapter 4.2, Table 9
     setLibcallName(RTLIB::MUL_I64,  "__aeabi_lmul");
-    // @LOCALMOD-start
-    // use default names instead of the arm specific ones
-    //setLibcallName(RTLIB::SDIV_I64, "__aeabi_ldivmod");
-    //setLibcallName(RTLIB::UDIV_I64, "__aeabi_uldivmod");
-    // @LOCALMOD-end
+    setLibcallName(RTLIB::SDIV_I64, "__aeabi_ldivmod");
+    setLibcallName(RTLIB::UDIV_I64, "__aeabi_uldivmod");
     setLibcallName(RTLIB::SHL_I64, "__aeabi_llsl");
     setLibcallName(RTLIB::SRL_I64, "__aeabi_llsr");
     setLibcallName(RTLIB::SRA_I64, "__aeabi_lasr");
