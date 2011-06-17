@@ -1,0 +1,22 @@
+##===- lib/Makefile ----------------------------------------*- Makefile -*-===##
+#
+#                     The LLVM Compiler Infrastructure
+#
+# This file is distributed under the University of Illinois Open Source
+# License. See LICENSE.TXT for details.
+#
+##===----------------------------------------------------------------------===##
+LEVEL = ..
+
+include $(LEVEL)/Makefile.config
+
+PARALLEL_DIRS := VMCore AsmParser Bitcode Archive Analysis Transforms CodeGen \
+                Target ExecutionEngine Linker MC CompilerDriver Object Wrap
+
+ifeq ($(NACL_SANDBOX),1)
+  PARALLEL_DIRS := $(filter-out Archive ExecutionEngine Linker CompilerDriver, \
+                $(PARALLEL_DIRS))
+endif
+
+include $(LEVEL)/Makefile.common
+
