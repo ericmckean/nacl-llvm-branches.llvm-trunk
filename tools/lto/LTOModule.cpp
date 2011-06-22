@@ -27,6 +27,7 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/system_error.h"
+#include "llvm/Support/ErrorHandling.h" // @LOCALMOD
 #include "llvm/Target/Mangler.h"
 #include "llvm/Target/SubtargetFeature.h"
 #include "llvm/MC/MCAsmInfo.h"
@@ -152,6 +153,35 @@ const char *LTOModule::getTargetTriple() {
 void LTOModule::setTargetTriple(const char *triple) {
   _module->setTargetTriple(triple);
 }
+
+// @LOCALMOD-BEGIN
+
+lto_output_format LTOModule::getOutputFormat() {
+  Module::OutputFormat format = _module->getOutputFormat();
+  switch (format) {
+  case Module::ObjectOutputFormat: return LTO_OUTPUT_FORMAT_OBJECT;
+  case Module::SharedOutputFormat: return LTO_OUTPUT_FORMAT_SHARED;
+  case Module::ExecutableOutputFormat: return LTO_OUTPUT_FORMAT_EXEC;
+  }
+  llvm_unreachable("Unknown output format in LTOModule");
+}
+
+const char *LTOModule::getSOName() {
+  return _module->getSOName().c_str();
+}
+
+const char* LTOModule::getLibraryDep(uint32_t index) {
+  const Module::LibraryListType &Libs = _module->getLibraries();
+  if (index < Libs.size())
+    return Libs[index].c_str();
+  return NULL;
+}
+
+uint32_t LTOModule::getNumLibraryDeps() {
+  return _module->getLibraries().size();
+}
+
+// @LOCALMOD-END
 
 void LTOModule::addDefinedFunctionSymbol(Function *f, Mangler &mangler) {
   // add to list of defined symbols

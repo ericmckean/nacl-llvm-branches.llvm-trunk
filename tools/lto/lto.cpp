@@ -148,6 +148,44 @@ void lto_module_set_target_triple(lto_module_t mod, const char *triple)
     return mod->setTargetTriple(triple);
 }
 
+// @LOCALMOD-BEGIN
+
+//
+// Get the module format for this module
+//
+lto_output_format lto_module_get_output_format(lto_module_t mod)
+{
+  return mod->getOutputFormat();
+}
+
+//
+// Get the module soname
+//
+const char* lto_module_get_soname(lto_module_t mod)
+{
+  return mod->getSOName();
+}
+
+//
+// Get the i'th library dependency.
+// Returns NULL if i >= lto_module_get_num_library_deps()
+//
+const char *
+lto_module_get_library_dep(lto_module_t mod, unsigned int i)
+{
+  return mod->getLibraryDep(i);
+}
+
+//
+// Return the number of library dependencies of this module.
+//
+unsigned int
+lto_module_get_num_library_deps(lto_module_t mod)
+{
+  return mod->getNumLibraryDeps();
+}
+
+// @LOCALMOD-END
 
 //
 // returns the number of symbols in the object module
@@ -266,6 +304,35 @@ void lto_codegen_add_must_preserve_symbol(lto_code_gen_t cg, const char* symbol)
   cg->addMustPreserveSymbol(symbol);
 }
 
+// @LOCALMOD-BEGIN
+
+//
+// Set the module format for the merged module
+//
+void lto_codegen_set_merged_module_output_format(lto_code_gen_t cg,
+                                                 lto_output_format format)
+{
+  cg->setMergedModuleOutputFormat(format);
+}
+
+//
+// Set the module soname (for shared library bitcode)
+//
+void lto_codegen_set_merged_module_soname(lto_code_gen_t cg,
+                                          const char* soname)
+{
+  cg->setMergedModuleSOName(soname);
+}
+
+//
+// Add a library dependency to the linked bitcode module.
+//
+void lto_codegen_add_merged_module_library_dep(lto_code_gen_t cg,
+                                               const char* soname)
+{
+  cg->addLibraryDep(soname);
+}
+// @LOCALMOD-END
 
 //
 // writes a new file at the specified path that contains the
@@ -301,3 +368,4 @@ lto_codegen_debug_options(lto_code_gen_t cg, const char * opt)
 {
   cg->setCodeGenDebugOptions(opt);
 }
+

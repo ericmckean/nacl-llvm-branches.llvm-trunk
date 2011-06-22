@@ -56,6 +56,14 @@ struct LTOModule {
 
     const char*              getTargetTriple();
     void                     setTargetTriple(const char*);
+
+    // @LOCALMOD-BEGIN
+    lto_output_format        getOutputFormat();
+    const char*              getSOName();
+    const char*              getLibraryDep(uint32_t index);
+    uint32_t                 getNumLibraryDeps();
+    // @LOCALMOD-END
+
     uint32_t                 getSymbolCount();
     lto_symbol_attributes    getSymbolAttributes(uint32_t index);
     const char*              getSymbolName(uint32_t index);

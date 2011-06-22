@@ -40,6 +40,11 @@ struct LTOCodeGenerator {
     void                setAssemblerPath(const char* path);
     void                setAssemblerArgs(const char** args, int nargs);
     void                addMustPreserveSymbol(const char* sym);
+    // @LOCALMOD-BEGIN
+    void                setMergedModuleOutputFormat(lto_output_format format);
+    void                setMergedModuleSOName(const char *soname);
+    void                addLibraryDep(const char *lib);
+    // @LOCALMOD-END
     bool                writeMergedModules(const char* path, 
                                                            std::string& errMsg);
     const void*         compile(size_t* length, std::string& errMsg);

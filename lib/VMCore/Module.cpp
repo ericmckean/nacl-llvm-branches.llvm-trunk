@@ -21,6 +21,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/LeakDetector.h"
+#include "llvm/Support/ErrorHandling.h" // @LOCALMOD
 #include "SymbolTableListTraitsImpl.h"
 #include "llvm/TypeSymbolTable.h"
 #include <algorithm>
@@ -471,3 +472,69 @@ void Module::removeLibrary(StringRef Lib) {
       return;
     }
 }
+
+// @LOCALMOD-BEGIN
+
+// TODO(pdox):
+// If possible, use actual bitcode records instead of NamedMetadata.
+// This is contingent upon whether we can get these changes upstreamed
+// immediately, to avoid creating incompatibilities in the bitcode format.
+
+static std::string
+ModuleMetaGet(const Module *module, StringRef MetaName) {
+  NamedMDNode *node = module->getNamedMetadata(MetaName);
+  if (node == NULL)
+    return "";
+  assert(node->getNumOperands() == 1);
+  MDNode *subnode = node->getOperand(0);
+  assert(subnode->getNumOperands() == 1);
+  MDString *value = dyn_cast<MDString>(subnode->getOperand(0));
+  assert(value != NULL);
+  return value->getString();
+}
+
+static void
+ModuleMetaSet(Module *module, StringRef MetaName, StringRef ValueStr) {
+  NamedMDNode *node = module->getNamedMetadata(MetaName);
+  if (node)
+    module->eraseNamedMetadata(node);
+  node = module->getOrInsertNamedMetadata(MetaName);
+  MDString *value = MDString::get(module->getContext(), ValueStr);
+  Value *v[1] = { value };
+  node->addOperand(MDNode::get(module->getContext(), v, 1));
+}
+
+const std::string &Module::getSOName() const {
+  if (ModuleSOName == "")
+    ModuleSOName.assign(ModuleMetaGet(this, "SOName"));
+  return ModuleSOName;
+}
+
+void Module::setSOName(StringRef Name) {
+  ModuleMetaSet(this, "SOName", Name);
+  ModuleSOName = Name;
+}
+
+void Module::setOutputFormat(Module::OutputFormat F) {
+  const char *formatStr;
+  switch (F) {
+  case ObjectOutputFormat: formatStr = "object"; break;
+  case SharedOutputFormat: formatStr = "shared"; break;
+  case ExecutableOutputFormat: formatStr = "executable"; break;
+  default:
+    llvm_unreachable("Unrecognized output format in setOutputFormat()");
+  }
+  ModuleMetaSet(this, "OutputFormat", formatStr);
+}
+
+Module::OutputFormat Module::getOutputFormat() const {
+  std::string formatStr = ModuleMetaGet(this, "OutputFormat");
+  if (formatStr == "" || formatStr == "object")
+    return ObjectOutputFormat;
+  else if (formatStr == "shared")
+    return SharedOutputFormat;
+  else if (formatStr == "executable")
+    return ExecutableOutputFormat;
+  llvm_unreachable("Invalid module compile type in getOutputFormat()");
+}
+// @LOCALMOD-END

@@ -157,6 +157,37 @@ void LTOCodeGenerator::addMustPreserveSymbol(const char* sym)
     _mustPreserveSymbols[sym] = 1;
 }
 
+// @LOCALMOD-BEGIN
+void LTOCodeGenerator::setMergedModuleOutputFormat(lto_output_format format)
+{
+  Module::OutputFormat outputFormat;
+  switch (format) {
+  case LTO_OUTPUT_FORMAT_OBJECT:
+    outputFormat = Module::ObjectOutputFormat;
+    break;
+  case LTO_OUTPUT_FORMAT_SHARED:
+    outputFormat = Module::SharedOutputFormat;
+    break;
+  case LTO_OUTPUT_FORMAT_EXEC:
+    outputFormat = Module::ExecutableOutputFormat;
+    break;
+  }
+  Module *mergedModule = _linker.getModule();
+  mergedModule->setOutputFormat(outputFormat);
+}
+
+void LTOCodeGenerator::setMergedModuleSOName(const char *soname)
+{
+  Module *mergedModule = _linker.getModule();
+  mergedModule->setSOName(soname);
+}
+
+void LTOCodeGenerator::addLibraryDep(const char *lib)
+{
+  Module *mergedModule = _linker.getModule();
+  mergedModule->addLibrary(lib);
+}
+// @LOCALMOD-END
 
 bool LTOCodeGenerator::writeMergedModules(const char *path,
                                           std::string &errMsg) {
