@@ -989,6 +989,15 @@ X86TargetLowering::X86TargetLowering(X86TargetMachine &TM)
   if (Subtarget->is64Bit())
     setTargetDAGCombine(ISD::MUL);
 
+  // @LOCALMOD-BEGIN
+  if (Subtarget->isTargetNaCl()) {
+    setOperationAction(ISD::NACL_THREAD_STACK_PADDING, MVT::i32, Custom);
+    setOperationAction(ISD::NACL_TP_ALIGN,             MVT::i32, Custom);
+    setOperationAction(ISD::NACL_TP_TLS_OFFSET,        MVT::i32, Custom);
+    setOperationAction(ISD::NACL_TP_TDB_OFFSET,        MVT::i32, Custom);
+  }
+  // @LOCALMOD-END
+
   computeRegisterProperties();
 
   // On Darwin, -Os means optimize for size without hurting performance,
@@ -7794,6 +7803,49 @@ SDValue X86TargetLowering::LowerVACOPY(SDValue Op, SelectionDAG &DAG) const {
                        MachinePointerInfo(DstSV), MachinePointerInfo(SrcSV));
 }
 
+//////////////////////////////////////////////////////////////////////
+// NaCl TLS setup / layout intrinsics.
+// See: native_client/src/untrusted/stubs/tls_params.h
+SDValue X86TargetLowering::LowerNaClTpAlign(SDValue Op,
+                                            SelectionDAG &DAG) const {
+  // size_t __nacl_tp_alignment () {
+  //   return 64;
+  // }
+  return DAG.getConstant(64, Op.getValueType().getSimpleVT());
+}
+
+SDValue X86TargetLowering::LowerNaClTpTlsOffset(SDValue Op,
+                                                SelectionDAG &DAG) const {
+  // ssize_t __nacl_tp_tls_offset (size_t tls_size) {
+  //   return -tls_size;
+  // }
+  DebugLoc dl = Op.getDebugLoc();
+  return DAG.getNode(ISD::SUB, dl, Op.getValueType().getSimpleVT(),
+                     DAG.getConstant(0, Op.getValueType().getSimpleVT()),
+                     Op.getOperand(0));
+}
+
+SDValue X86TargetLowering::LowerNaClTpTdbOffset(SDValue Op,
+                                                SelectionDAG &DAG) const {
+  // ssize_t __nacl_tp_tdb_offset (size_t tdb_size) {
+  //   return 0;
+  // }
+  return DAG.getConstant(0, Op.getValueType().getSimpleVT());
+}
+
+SDValue
+X86TargetLowering::LowerNaClThreadStackPadding(SDValue Op,
+                                               SelectionDAG &DAG) const {
+  // size_t __nacl_thread_stack_padding () {
+  //   return reg_size;
+  // }
+  return DAG.getConstant(RegInfo->getSlotSize(),
+                         Op.getValueType().getSimpleVT());
+}
+
+//////////////////////////////////////////////////////////////////////
+
+
 SDValue
 X86TargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op, SelectionDAG &DAG) const {
   DebugLoc dl = Op.getDebugLoc();
@@ -8852,6 +8904,13 @@ SDValue X86TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   case ISD::ADDE:
   case ISD::SUBC:
   case ISD::SUBE:               return LowerADDC_ADDE_SUBC_SUBE(Op, DAG);
+  // @LOCALMOD-BEGIN
+  case ISD::NACL_THREAD_STACK_PADDING:
+    return LowerNaClThreadStackPadding(Op, DAG);
+  case ISD::NACL_TP_ALIGN:         return LowerNaClTpAlign(Op, DAG);
+  case ISD::NACL_TP_TLS_OFFSET:    return LowerNaClTpTlsOffset(Op, DAG);
+  case ISD::NACL_TP_TDB_OFFSET:    return LowerNaClTpTdbOffset(Op, DAG);
+  // @LOCALMOD-END
   }
 }
 

@@ -381,6 +381,10 @@ namespace llvm {
                                  bool InitialExec) const;
     SDValue LowerJumpTable(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerEH_RETURN(SDValue Op, SelectionDAG &DAG) const;
+    SDValue LowerNaClThreadStackPadding(SDValue Op, SelectionDAG &DAG) const;
+    SDValue LowerNaClTpAlign(SDValue Op, SelectionDAG &DAG) const;
+    SDValue LowerNaClTpTlsOffset(SDValue Op, SelectionDAG &DAG) const;
+    SDValue LowerNaClTpTdbOffset(SDValue Op, SelectionDAG &DAG) const;
     // @LOCALMOD-END
 
     SDValue LowerGLOBAL_OFFSET_TABLE(SDValue Op, SelectionDAG &DAG) const;

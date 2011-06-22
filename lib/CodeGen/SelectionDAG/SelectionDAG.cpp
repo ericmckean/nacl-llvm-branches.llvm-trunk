@@ -5885,6 +5885,14 @@ std::string SDNode::getOperationName(const SelectionDAG *G) const {
     case ISD::SETLE:   return "setle";
     case ISD::SETNE:   return "setne";
     }
+
+  // @LOCALMOD-BEGIN
+  // NaCl intrinsics for TLS setup
+  case ISD::NACL_THREAD_STACK_PADDING: return "nacl_thread_stack_padding";
+  case ISD::NACL_TP_ALIGN:             return "nacl_tp_alignment";
+  case ISD::NACL_TP_TLS_OFFSET:        return "nacl_tls_offset";
+  case ISD::NACL_TP_TDB_OFFSET:        return "nacl_tdb_offset";
+  // @LOCALMOD-END
   }
 }
 

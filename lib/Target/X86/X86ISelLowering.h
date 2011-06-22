@@ -800,6 +800,13 @@ namespace llvm {
     SDValue LowerREADCYCLECOUNTER(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerMEMBARRIER(SDValue Op, SelectionDAG &DAG) const;
 
+    // @LOCALMOD-BEGIN
+    SDValue LowerNaClThreadStackPadding(SDValue Op, SelectionDAG &DAG) const;
+    SDValue LowerNaClTpAlign(SDValue Op, SelectionDAG &DAG) const;
+    SDValue LowerNaClTpTlsOffset(SDValue Op, SelectionDAG &DAG) const;
+    SDValue LowerNaClTpTdbOffset(SDValue Op, SelectionDAG &DAG) const;
+    // @LOCALMOD-END
+
     // Utility functions to help LowerVECTOR_SHUFFLE
     SDValue LowerVECTOR_SHUFFLEv8i16(SDValue Op, SelectionDAG &DAG) const;
     

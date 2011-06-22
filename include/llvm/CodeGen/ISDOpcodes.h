@@ -602,6 +602,16 @@ namespace ISD {
     ATOMIC_LOAD_UMIN,
     ATOMIC_LOAD_UMAX,
 
+    // @LOCALMOD-BEGIN
+    // NACL_* - Native Client instrinsics for TLS.
+    // These correspond to functions in:
+    // native_client/src/untrusted/nacl/tls_params.h
+    NACL_THREAD_STACK_PADDING,
+    NACL_TP_ALIGN,
+    NACL_TP_TLS_OFFSET,
+    NACL_TP_TDB_OFFSET,
+    // @LOCALMOD-END
+
     /// BUILTIN_OP_END - This must be the last enum value in this list.
     /// The target-specific pre-isel opcode values start here.
     BUILTIN_OP_END
