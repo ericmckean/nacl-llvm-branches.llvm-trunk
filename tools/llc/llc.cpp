@@ -78,6 +78,21 @@ OptLevel("O",
          cl::ZeroOrMore,
          cl::init(' '));
 
+// @LOCALMOD-BEGIN
+
+// Specify a file to write bitcode metadata in human-readable format.
+// (includes output format, soname, and dependencies).
+static cl::opt<std::string>
+DumpMetadata("dump-metadata", cl::desc("Dump Bitcode Metadata to file"));
+
+// Stop immediately after writing bitcode metadata.
+// (The bitcode will not be compiled.)
+static cl::opt<bool>
+OnlyDumpMetadata("only-dump-metadata",
+    cl::desc("Stop after dumping bitcode metadata (don't compile)"));
+
+// @LOCALMOD-END
+
 static cl::opt<std::string>
 TargetTriple("mtriple", cl::desc("Override target triple for module"));
 
@@ -209,6 +224,44 @@ static tool_output_file *GetOutputStream(const char *TargetName,
   return FDOut;
 }
 
+bool WriteMetadata(const char *filename, const Module &mod) {
+  std::string s;
+  raw_string_ostream ROS(s);
+  formatted_raw_ostream FOS(ROS);
+
+  FOS << "OutputFormat: ";
+  switch (mod.getOutputFormat()) {
+    case Module::ObjectOutputFormat: FOS << "object"; break;
+    case Module::SharedOutputFormat: FOS << "shared"; break;
+    case Module::ExecutableOutputFormat: FOS << "executable"; break;
+  }
+  FOS << "\n";
+  FOS << "SOName: " << mod.getSOName() << "\n";
+  for (Module::lib_iterator L = mod.lib_begin(),
+                            E = mod.lib_end();
+       L != E; ++L) {
+    FOS << "NeedsLibrary: " << (*L) << "\n";
+  }
+  FOS.flush();
+  ROS.flush();
+
+#if defined(__native_client__)
+  NaClOutputStringToFile(filename, s);
+#else
+  std::string error;
+  tool_output_file *MetaOut = new tool_output_file(filename, error, 0);
+  if (!error.empty()) {
+    errs() << error << '\n';
+    delete MetaOut;
+    return false;
+  }
+  MetaOut->os() << s;
+  MetaOut->keep();
+  delete MetaOut;
+#endif
+  return true;
+}
+
 // main - Entry point for the llc compiler.
 //
 int llc_main(int argc, char **argv) {
@@ -247,6 +300,17 @@ int llc_main(int argc, char **argv) {
     return 1;
   }
   Module &mod = *M.get();
+
+  // @LOCALMOD-BEGIN
+  if (!DumpMetadata.empty()) {
+    bool success = WriteMetadata(DumpMetadata.c_str(), mod);
+    if (!success)
+      return 1;
+  }
+
+  if (OnlyDumpMetadata)
+    return 0;
+  // @LOCALMOD-END
 
   // If we are supposed to override the target triple, do so now.
   if (!TargetTriple.empty())

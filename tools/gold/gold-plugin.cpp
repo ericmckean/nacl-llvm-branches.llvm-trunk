@@ -51,6 +51,19 @@ namespace {
   ld_plugin_add_input_library add_input_library = NULL;
   ld_plugin_set_extra_library_path set_extra_library_path = NULL;
   ld_plugin_message message = discard_message;
+  // @LOCALMOD-BEGIN
+  // REL, DYN, or EXEC
+  ld_plugin_output_file_type linker_output;
+
+  // Callback for getting link soname from gold
+  ld_plugin_get_soname get_soname = NULL;
+
+  // Callback for getting needed libraries from gold
+  ld_plugin_get_needed get_needed = NULL;
+
+  // Callback for getting number of needed library from gold
+  ld_plugin_get_num_needed get_num_needed = NULL;
+  // @LOCALMOD-END
 
   int api_version = 0;
   int gold_version = 0;
@@ -159,6 +172,10 @@ ld_plugin_status onload(ld_plugin_tv *tv) {
         output_name = tv->tv_u.tv_string;
         break;
       case LDPT_LINKER_OUTPUT:
+        // @LOCALMOD-BEGIN
+        linker_output =
+          static_cast<ld_plugin_output_file_type>(tv->tv_u.tv_val);
+        // @LOCALMOD-END
         switch (tv->tv_u.tv_val) {
           case LDPO_REL:  // .o
           case LDPO_DYN:  // .so
@@ -216,6 +233,17 @@ ld_plugin_status onload(ld_plugin_tv *tv) {
       case LDPT_SET_EXTRA_LIBRARY_PATH:
         set_extra_library_path = tv->tv_u.tv_set_extra_library_path;
         break;
+      // @LOCALMOD-BEGIN
+      case LDPT_GET_SONAME:
+        get_soname = tv->tv_u.tv_get_soname;
+        break;
+      case LDPT_GET_NEEDED:
+        get_needed = tv->tv_u.tv_get_needed;
+        break;
+      case LDPT_GET_NUM_NEEDED:
+        get_num_needed = tv->tv_u.tv_get_num_needed;
+        break;
+      // @LOCALMOD-END
       case LDPT_MESSAGE:
         message = tv->tv_u.tv_message;
         break;
@@ -457,6 +485,43 @@ static ld_plugin_status all_symbols_read_hook(void) {
     }
   }
 
+  // @LOCALMOD-BEGIN
+  // Store the linker output format into the bitcode.
+  lto_output_format format;
+  switch (linker_output) {
+    case LDPO_REL:
+      format = LTO_OUTPUT_FORMAT_OBJECT;
+      break;
+    case LDPO_DYN:
+      format = LTO_OUTPUT_FORMAT_SHARED;
+      break;
+    case LDPO_EXEC:
+      format = LTO_OUTPUT_FORMAT_EXEC;
+      break;
+    default:
+      (*message)(LDPL_FATAL, "Unknown linker output format (gold-plugin)");
+      abort();
+      break;
+  }
+  lto_codegen_set_merged_module_output_format(cg, format);
+  // @LOCALMOD-END
+
+  // @LOCALMOD-BEGIN
+  // For -shared linking, store the soname into the bitcode.
+  if (linker_output == LDPO_DYN) {
+    const char *soname = (*get_soname)();
+    lto_codegen_set_merged_module_soname(cg, soname);
+  }
+  // @LOCALMOD-END
+
+  // @LOCALMOD-BEGIN
+  // Add the needed libraries to the bitcode.
+  unsigned int num_needed = (*get_num_needed)();
+  for (unsigned i=0; i < num_needed; ++i) {
+    const char *soname = (*get_needed)(i);
+    lto_codegen_add_merged_module_library_dep(cg, soname);
+  }
+  // @LOCALMOD-END
 
   if (options::generate_bc_file != options::BC_NO) {
     std::string path;
