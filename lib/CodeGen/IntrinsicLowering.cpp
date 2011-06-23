@@ -31,6 +31,11 @@ static cl::opt<bool>
                  cl::desc("Add __nacl_read_tp dependency to bitcode modules"),
                  cl::init(false));
 
+// We use this when we want to link libgcc as bitcode 
+static cl::opt<bool>
+  AddLibgccDeps("add-libgcc-dependencies",
+                 cl::desc("Add libgcc dependencies to bitcode modules"),
+                 cl::init(false));
 // @LOCALMOD-END
 
 template <class ArgIt>
@@ -102,24 +107,97 @@ static CallInst *ReplaceCallWith(const char *NewFn, CallInst *CI,
 #endif
 
 // @LOCALMOD-BEGIN
-StringSet<> IntrinsicLowering::FuncNames;
-const StringSet<> &IntrinsicLowering::GetFuncNames() {
-  static const char *NamesRaw[] =
-    { "abort", "memcpy", "memset", "memmove",
-      "sqrtf", "sqrt", "sqrtl",
-      "sinf", "sin", "sinl",
-      "cosf", "cos", "cosl",
-      "powf", "pow", "powl",
-      "logf", "log", "logl",
-      "log2f", "log2", "log2l",
-      "log10f", "log10", "log10l",
-      "expf", "exp", "expl",
-      "exp2f", "exp2", "exp2l",
-      "__nacl_read_tp", NULL };
+// NOTE: we are experimenting with the idea of providing libgcc
+// in a bitcode (derived) form. If this works out libgcc will not
+// differ between platforms anymore, and the list of symbols below will 
+// be what is guaranteed to be included with libgcc.
+// If for some reason a backend needs additional functions
+// it would have generated them itself.
+// NOTE: llvm bitcode does not preserve signedness of types so the type
+//       annotation below is simplified:
+//       s: i32
+//       d: i64
+//       f: f32
+//       F: f64
+// The first letter denotes the return type the remaining one the
+// parameter types.
+static const struct { const char* name; const char* types; }
+  LibgccIntrinsicNames[] = {
+  /* RTLIB::SDIV_I32 */ {"__divsi3",  "sss"},
+  /* RTLIB::SDIV_I64 */ {"__divdi3",  "ddd"},
 
+  /* RTLIB::UDIV_I32 */ {"__udivsi3", "sss"},
+  /* RTLIB::UDIV_I64 */ {"__udivdi3", "ddd"},
+
+  /* RTLIB::SREM_I32 */ {"__modsi3", "sss"},
+  /* RTLIB::SREM_I64 */ {"__moddi3", "ddd"},
+
+  /* RTLIB::UREM_I32 */ {"__umodsi3", "sss"},
+  /* RTLIB::UREM_I64 */ {"__umoddi3", "ddd"},
+
+  /* RTLIB::FPTOSINT_F32_I32 */ {"__fixsfsi", "sf"},
+  /* RTLIB::FPTOSINT_F32_I64 */ {"__fixsfdi", "df"},
+
+  /* RTLIB::FPTOSINT_F64_I32 */ {"__fixdfsi", "sF"},
+  /* RTLIB::FPTOSINT_F64_I64 */ {"__fixdfdi", "dF"},
+
+  /* RTLIB::FPTOUINT_F32_I32 */ {"__fixunssfsi", "sf"},
+  /* RTLIB::FPTOUINT_F32_I64 */ {"__fixunssfdi", "dF"},
+
+  /* RTLIB::FPTOUINT_F64_I32 */ {"__fixunsdfsi", "sF"},
+  /* RTLIB::FPTOUINT_F64_I64 */ {"__fixunsdfdi", "dF"},
+
+  /* RTLIB::SINTTOFP_I32_F32 */ {"__floatsisf", "fs"},
+  /* RTLIB::SINTTOFP_I32_F64 */ {"__floatsidf", "Fs"},
+
+  /* RTLIB::SINTTOFP_I64_F32 */ {"__floatdisf", "fd"},
+  /* RTLIB::SINTTOFP_I64_F64 */ {"__floatdidf", "Fd"},
+  
+  /* RTLIB::UINTTOFP_I32_F32 */ {"__floatunsisf", "fs"},
+  /* RTLIB::UINTTOFP_I32_F64 */ {"__floatunsidf", "Fs"},
+
+  /* RTLIB::UINTTOFP_I64_F32 */ {"__floatundisf", "fd"},
+  /* RTLIB::UINTTOFP_I64_F64 */ {"__floatundidf", "Fd"},
+
+  /* RTLIB::POWI_F32 */ {"__powisf2", "ffs"},
+  /* RTLIB::POWI_F64 */ {"__powidf2", "FFs"},
+  {NULL, NULL}
+};
+
+// Calls to these functions may materialize as part of a conversion
+// from an intrinsics, e.g. llvm.memset -> memset
+// So if these functions are available in bitcode form we need to:
+// * make sure they do not get discarded -- if there is a chance that
+//   a caller might materialize
+// * make sure they do not get specialized for a given callsite
+// Both problems are avoided by pretending there are unknown callers.
+// The function: IntrinsicLowering::AddPrototypes() below does just that.
+// TODO(robertm): elaborate some more
+static const char *MiscIntrinsicNames[] = {
+  "abort",
+  "memcpy", "memset", "memmove",
+  "sqrtf", "sqrt", "sqrtl",
+  "sinf", "sin", "sinl",
+  "cosf", "cos", "cosl",
+  "powf", "pow", "powl",
+  "logf", "log", "logl",
+  "log2f", "log2", "log2l",
+  "log10f", "log10", "log10l",
+  "expf", "exp", "expl",
+  "exp2f", "exp2", "exp2l",
+  "__nacl_read_tp",
+  NULL
+};
+
+StringSet<> IntrinsicLowering::FuncNames;
+
+const StringSet<> &IntrinsicLowering::GetFuncNames() {
   if (FuncNames.empty()) {
-    for (unsigned i=0; NamesRaw[i]; ++i)
-      FuncNames.insert(NamesRaw[i]);
+    for (unsigned i=0; MiscIntrinsicNames[i]; ++i)
+      FuncNames.insert(MiscIntrinsicNames[i]);
+
+    for (unsigned i=0; LibgccIntrinsicNames[i].name; ++i)
+      FuncNames.insert(LibgccIntrinsicNames[i].name);
   }
   return FuncNames;
 }
@@ -138,8 +216,39 @@ void IntrinsicLowering::AddPrototypes(Module &M) {
   // archive, it is necessary to add a dependency to it during
   // bitcode linking, so that it gets included in the link.
   if (AddNaClReadTPDep) {
-    const Type *RetTy = Type::getInt8PtrTy(M.getContext());
+    const Type *RetTy = Type::getInt8PtrTy(Context);
     M.getOrInsertFunction("__nacl_read_tp", RetTy, (Type*)0);
+  }
+
+  // If we link libgcc we need to add a dependency to all its functions
+  // during bitcode linking, so that they get included in the link.
+
+  if (AddLibgccDeps) {
+    const Type *CharToTypeMap[128];
+    for (unsigned i=0; i < 128; ++i) {
+      CharToTypeMap[i] = 0;
+    }
+    CharToTypeMap['f'] = Type::getFloatTy(Context);
+    CharToTypeMap['F'] = Type::getDoubleTy(Context);
+    CharToTypeMap['s'] = Type::getInt32Ty(Context);
+    CharToTypeMap['d'] = Type::getInt64Ty(Context);
+
+    for (unsigned i=0; LibgccIntrinsicNames[i].name; ++i) {
+      const Type *RetTy = 0;
+      std::vector<const Type *> ParamTys;
+      const char* name = LibgccIntrinsicNames[i].name;
+      const char* params = LibgccIntrinsicNames[i].types;
+      for (unsigned j=0; params[j]; ++j) {
+        const Type *Current = CharToTypeMap[params[j]];
+        assert (Current != 0);
+        if (j == 0) {
+          RetTy = Current;
+        } else {
+          ParamTys.push_back(Current);
+        }
+      }
+      M.getOrInsertFunction(name, FunctionType::get(RetTy, ParamTys, false));
+    }
   }
   // @LOCALMOD-END
 
