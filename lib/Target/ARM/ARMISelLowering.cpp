@@ -1914,9 +1914,9 @@ SDValue ARMTargetLowering::LowerJumpTable(SDValue Op, SelectionDAG &DAG) const {
 SDValue ARMTargetLowering::LowerNaClTpAlign(SDValue Op,
                                             SelectionDAG &DAG) const {
   // size_t __nacl_tp_alignment () {
-  //   return 1 << 12;
+  //   return 4;
   // }
-  return DAG.getConstant(4096, Op.getValueType().getSimpleVT());
+  return DAG.getConstant(4, Op.getValueType().getSimpleVT());
 }
 
 SDValue ARMTargetLowering::LowerNaClTpTlsOffset(SDValue Op,
@@ -1942,9 +1942,9 @@ SDValue
 ARMTargetLowering::LowerNaClThreadStackPadding(SDValue Op,
                                                SelectionDAG &DAG) const {
   // size_t __nacl_thread_stack_padding () {
-  //   return 4;
+  //   return 0;
   // }
-  return DAG.getConstant(4, Op.getValueType().getSimpleVT());
+  return DAG.getConstant(0, Op.getValueType().getSimpleVT());
 }
 
 //////////////////////////////////////////////////////////////////////
