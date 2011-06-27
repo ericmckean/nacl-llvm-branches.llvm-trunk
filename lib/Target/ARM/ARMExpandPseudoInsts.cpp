@@ -25,6 +25,7 @@
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/Target/TargetFrameLowering.h"
+#include "llvm/Target/TargetOptions.h" // @LOCALMOD for llvm::TLSUseCall
 #include "llvm/Target/TargetRegisterInfo.h"
 #include "llvm/Support/raw_ostream.h" // FIXME: for debug only. remove!
 using namespace llvm;
@@ -853,16 +854,26 @@ bool ARMExpandPseudo::ExpandMI(MachineBasicBlock &MBB,
     }
     case ARM::TPsoft: {
       // @LOCALMOD-BEGIN
-      // Don't add implicit uses/defs for this call, otherwise
-      // liveness analysis passes get confused.
-      // @LOCALMOD-END
-      MachineInstrBuilder MIB =
-        BuildMI_NoImp(MBB, MBBI, MI.getDebugLoc(), // @LOCALMOD
-                TII->get(ARM::BL))
-        .addExternalSymbol("__aeabi_read_tp", 0);
+      if (llvm::TLSUseCall) {
+        // Don't add implicit uses/defs for this call, otherwise
+        // liveness analysis passes get confused.
+        MachineInstrBuilder MIB =
+          BuildMI_NoImp(MBB, MBBI, MI.getDebugLoc(), // @LOCALMOD
+                  TII->get(ARM::BL))
+          .addExternalSymbol("__aeabi_read_tp", 0);
 
-      (*MIB).setMemRefs(MI.memoperands_begin(), MI.memoperands_end());
-      TransferImpOps(MI, MIB, MIB);
+        (*MIB).setMemRefs(MI.memoperands_begin(), MI.memoperands_end());
+        TransferImpOps(MI, MIB, MIB);
+      } else {
+        // Inline version for native client.
+        // See native_client/src/untrusted/stubs/aeabi_read_tp.S
+        // mov r0, r9
+        AddDefaultPred(BuildMI(MBB, MBBI, MI.getDebugLoc(), TII->get(ARM::MOVr),
+                               ARM::R0)
+                       .addReg(ARM::R9))
+        .addReg(0); // Doesn't use/modify CPSR.
+      }
+      // @LOCALMOD-END
       MI.eraseFromParent();
       return true;
     }
