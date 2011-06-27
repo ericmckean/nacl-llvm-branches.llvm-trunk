@@ -49,6 +49,7 @@ namespace llvm {
   bool DisableJumpTables;
   bool StrongPHIElim;
   bool AsmVerbosityDefault(false);
+  bool TLSUseCall; // @LOCALMOD
 }
 
 static cl::opt<bool, true>
@@ -213,6 +214,18 @@ static cl::opt<bool>
 FunctionSections("ffunction-sections",
   cl::desc("Emit functions into separate sections"),
   cl::init(false));
+
+
+// @LOCALMOD-BEGIN
+// Use a function call to get the thread pointer for TLS accesses,
+// instead of using inline code.
+static cl::opt<bool, true>
+EnableTLSUseCall("mtls-use-call",
+  cl::desc("Use a function call to get the thread pointer for TLS accesses."),
+  cl::location(TLSUseCall),
+  cl::init(false));
+// @LOCALMOD-END
+
 //---------------------------------------------------------------------------
 // TargetMachine Class
 //

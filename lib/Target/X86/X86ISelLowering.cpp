@@ -56,16 +56,6 @@ using namespace dwarf;
 
 STATISTIC(NumTailCalls, "Number of tail calls");
 
-// @LOCALMOD-BEGIN
-// Generate a call for TLS TP reads, instead of using a segment register.
-namespace {
-cl::opt<bool>
-TLSUseCall("mtls-use-call",
-           cl::desc("Use a function to get the TP for TLS exec models"),
-           cl::init(false));
-}  // namespace
-// @LOCALMOD-END
-
 // Forward declarations.
 static SDValue getMOVL(SelectionDAG &DAG, DebugLoc dl, EVT VT, SDValue V1,
                        SDValue V2);
@@ -6252,7 +6242,7 @@ X86TargetLowering::LowerGlobalTLSAddress(SDValue Op, SelectionDAG &DAG) const {
       case TLSModel::InitialExec:
       case TLSModel::LocalExec:
         // @LOCALMOD-START
-        if (TLSUseCall) {
+        if (llvm::TLSUseCall) {
           return LowerToTLSExecCall(GA, DAG, getPointerTy(), model,
                                     Subtarget->is64Bit());
         } else {
