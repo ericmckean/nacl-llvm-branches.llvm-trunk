@@ -22,10 +22,17 @@ SHARED_LIBRARY = 1
 LOADABLE_MODULE = 1
 
 LINK_COMPONENTS := support
-LIBS += -llto
 
-# Because off_t is used in the public API, the largefile parts are required for
-# ABI compatibility.
-CXXFLAGS+=-I$(BINUTILS_INCDIR) -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -lLTO
+#################################################
+# @LOCALMOD-BEGIN
+#
+# This bugfix has been upstreamed as of LLVM revision 132352.
+# All local changes to this file can be removed after merging.
+
+CXXFLAGS+=-I$(BINUTILS_INCDIR) -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64
+CXXFLAGS+=$(SharedLibDir)/$(SharedPrefix)LTO$(SHLIBEXT)
+
+# @LOCALMOD-END
+#################################################
 
 include $(LEVEL)/Makefile.common
