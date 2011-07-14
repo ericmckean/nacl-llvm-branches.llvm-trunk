@@ -35,8 +35,10 @@
 #include "llvm/Metadata.h"
 #include "llvm/Analysis/AliasSetTracker.h"
 #include "llvm/Analysis/DebugInfo.h"
+#include "llvm/Analysis/DIBuilder.h"
 #include "llvm/Analysis/Dominators.h"
 #include "llvm/Analysis/InstructionSimplify.h"
+#include "llvm/Transforms/Utils/Local.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -190,7 +192,7 @@ namespace {
     ///
     std::vector<AllocaInst*> Allocas;
     DominatorTree &DT;
-    DIFactory *DIF;
+    DIBuilder *DIB;
 
     /// AST - An AliasSetTracker object to update.  If null, don't update it.
     ///
@@ -235,9 +237,9 @@ namespace {
   public:
     PromoteMem2Reg(const std::vector<AllocaInst*> &A, DominatorTree &dt,
                    AliasSetTracker *ast)
-      : Allocas(A), DT(dt), DIF(0), AST(ast) {}
+      : Allocas(A), DT(dt), DIB(0), AST(ast) {}
     ~PromoteMem2Reg() {
-      delete DIF;
+      delete DIB;
     }
 
     void run();
@@ -272,8 +274,6 @@ namespace {
                                   LargeBlockInfo &LBI);
     void PromoteSingleBlockAlloca(AllocaInst *AI, AllocaInfo &Info,
                                   LargeBlockInfo &LBI);
-    void ConvertDebugDeclareToDebugValue(DbgDeclareInst *DDI, StoreInst *SI);
-
     
     void RenamePass(BasicBlock *BB, BasicBlock *Pred,
                     RenamePassData::ValVector &IncVals,
@@ -390,7 +390,9 @@ void PromoteMem2Reg::run() {
       if (Info.UsingBlocks.empty()) {
         // Record debuginfo for the store and remove the declaration's debuginfo.
         if (DbgDeclareInst *DDI = Info.DbgDeclare) {
-          ConvertDebugDeclareToDebugValue(DDI, Info.OnlyStore);
+          if (!DIB)
+            DIB = new DIBuilder(*DDI->getParent()->getParent()->getParent());
+          ConvertDebugDeclareToDebugValue(DDI, Info.OnlyStore, *DIB);
           DDI->eraseFromParent();
         }
         // Remove the (now dead) store and alloca.
@@ -422,8 +424,11 @@ void PromoteMem2Reg::run() {
         while (!AI->use_empty()) {
           StoreInst *SI = cast<StoreInst>(AI->use_back());
           // Record debuginfo for the store before removing it.
-          if (DbgDeclareInst *DDI = Info.DbgDeclare)
-            ConvertDebugDeclareToDebugValue(DDI, SI);
+          if (DbgDeclareInst *DDI = Info.DbgDeclare) {
+            if (!DIB)
+              DIB = new DIBuilder(*SI->getParent()->getParent()->getParent());
+            ConvertDebugDeclareToDebugValue(DDI, SI, *DIB);
+          }
           SI->eraseFromParent();
           LBI.deleteValue(SI);
         }
@@ -943,28 +948,6 @@ void PromoteMem2Reg::PromoteSingleBlockAlloca(AllocaInst *AI, AllocaInfo &Info,
   }
 }
 
-// Inserts a llvm.dbg.value instrinsic before the stores to an alloca'd value
-// that has an associated llvm.dbg.decl intrinsic.
-void PromoteMem2Reg::ConvertDebugDeclareToDebugValue(DbgDeclareInst *DDI,
-                                                     StoreInst *SI) {
-  DIVariable DIVar(DDI->getVariable());
-  if (!DIVar.Verify())
-    return;
-
-  if (!DIF)
-    DIF = new DIFactory(*SI->getParent()->getParent()->getParent());
-  Instruction *DbgVal = DIF->InsertDbgValueIntrinsic(SI->getOperand(0), 0,
-                                                     DIVar, SI);
-  
-  // Propagate any debug metadata from the store onto the dbg.value.
-  DebugLoc SIDL = SI->getDebugLoc();
-  if (!SIDL.isUnknown())
-    DbgVal->setDebugLoc(SIDL);
-  // Otherwise propagate debug metadata from dbg.declare.
-  else
-    DbgVal->setDebugLoc(DDI->getDebugLoc());
-}
-
 // QueuePhiNode - queues a phi-node to be added to a basic-block for a specific
 // Alloca returns true if there wasn't already a phi-node for that variable
 //
@@ -1075,8 +1058,11 @@ NextIteration:
       // what value were we writing?
       IncomingVals[ai->second] = SI->getOperand(0);
       // Record debuginfo for the store before removing it.
-      if (DbgDeclareInst *DDI = AllocaDbgDeclares[ai->second])
-        ConvertDebugDeclareToDebugValue(DDI, SI);
+      if (DbgDeclareInst *DDI = AllocaDbgDeclares[ai->second]) {
+        if (!DIB)
+          DIB = new DIBuilder(*SI->getParent()->getParent()->getParent());
+        ConvertDebugDeclareToDebugValue(DDI, SI, *DIB);
+      }
       BB->getInstList().erase(SI);
     }
   }

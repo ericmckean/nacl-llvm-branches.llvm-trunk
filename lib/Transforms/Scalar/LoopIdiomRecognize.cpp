@@ -30,7 +30,11 @@
 // the loop.  This would handle things like:
 //   void foo(_Complex float *P)
 //     for (i) { __real__(*P) = 0;  __imag__(*P) = 0; }
-// this is also "Example 2" from http://blog.regehr.org/archives/320
+//
+// We should enhance this to handle negative strides through memory.
+// Alternatively (and perhaps better) we could rely on an earlier pass to force
+// forward iteration through memory, which is generally better for cache
+// behavior.  Negative strides *do* happen for memset/memcpy loops.
 //
 // This could recognize common matrix multiplies and dot product idioms and
 // replace them with calls to BLAS (if linked in??).
@@ -40,12 +44,14 @@
 #define DEBUG_TYPE "loop-idiom"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/IntrinsicInst.h"
+#include "llvm/Module.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/LoopPass.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/Analysis/ScalarEvolutionExpander.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/Target/TargetData.h"
+#include "llvm/Target/TargetLibraryInfo.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/IRBuilder.h"
@@ -62,6 +68,7 @@ namespace {
     const TargetData *TD;
     DominatorTree *DT;
     ScalarEvolution *SE;
+    TargetLibraryInfo *TLI;
   public:
     static char ID;
     explicit LoopIdiomRecognize() : LoopPass(ID) {
@@ -74,17 +81,17 @@ namespace {
 
     bool processLoopStore(StoreInst *SI, const SCEV *BECount);
     bool processLoopMemSet(MemSetInst *MSI, const SCEV *BECount);
-    
-    bool processLoopStoreOfSplatValue(Value *DestPtr, unsigned StoreSize,
-                                      unsigned StoreAlignment,
-                                      Value *SplatValue, Instruction *TheStore,
-                                      const SCEVAddRecExpr *Ev,
-                                      const SCEV *BECount);
+
+    bool processLoopStridedStore(Value *DestPtr, unsigned StoreSize,
+                                 unsigned StoreAlignment,
+                                 Value *SplatValue, Instruction *TheStore,
+                                 const SCEVAddRecExpr *Ev,
+                                 const SCEV *BECount);
     bool processLoopStoreOfLoopLoad(StoreInst *SI, unsigned StoreSize,
                                     const SCEVAddRecExpr *StoreEv,
                                     const SCEVAddRecExpr *LoadEv,
                                     const SCEV *BECount);
-      
+
     /// This transformation requires natural loop information & requires that
     /// loop preheaders be inserted into the CFG.
     ///
@@ -101,6 +108,7 @@ namespace {
       AU.addPreserved<ScalarEvolution>();
       AU.addPreserved<DominatorTree>();
       AU.addRequired<DominatorTree>();
+      AU.addRequired<TargetLibraryInfo>();
     }
   };
 }
@@ -113,6 +121,7 @@ INITIALIZE_PASS_DEPENDENCY(DominatorTree)
 INITIALIZE_PASS_DEPENDENCY(LoopSimplify)
 INITIALIZE_PASS_DEPENDENCY(LCSSA)
 INITIALIZE_PASS_DEPENDENCY(ScalarEvolution)
+INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfo)
 INITIALIZE_AG_DEPENDENCY(AliasAnalysis)
 INITIALIZE_PASS_END(LoopIdiomRecognize, "loop-idiom", "Recognize loop idioms",
                     false, false)
@@ -125,64 +134,65 @@ Pass *llvm::createLoopIdiomPass() { return new LoopIdiomRecognize(); }
 ///
 static void DeleteDeadInstruction(Instruction *I, ScalarEvolution &SE) {
   SmallVector<Instruction*, 32> NowDeadInsts;
-  
+
   NowDeadInsts.push_back(I);
-  
+
   // Before we touch this instruction, remove it from SE!
   do {
     Instruction *DeadInst = NowDeadInsts.pop_back_val();
-    
+
     // This instruction is dead, zap it, in stages.  Start by removing it from
     // SCEV.
     SE.forgetValue(DeadInst);
-    
+
     for (unsigned op = 0, e = DeadInst->getNumOperands(); op != e; ++op) {
       Value *Op = DeadInst->getOperand(op);
       DeadInst->setOperand(op, 0);
-      
+
       // If this operand just became dead, add it to the NowDeadInsts list.
       if (!Op->use_empty()) continue;
-      
+
       if (Instruction *OpI = dyn_cast<Instruction>(Op))
         if (isInstructionTriviallyDead(OpI))
           NowDeadInsts.push_back(OpI);
     }
-    
+
     DeadInst->eraseFromParent();
-    
+
   } while (!NowDeadInsts.empty());
 }
 
 bool LoopIdiomRecognize::runOnLoop(Loop *L, LPPassManager &LPM) {
   CurLoop = L;
-  
+
   // The trip count of the loop must be analyzable.
   SE = &getAnalysis<ScalarEvolution>();
   if (!SE->hasLoopInvariantBackedgeTakenCount(L))
     return false;
   const SCEV *BECount = SE->getBackedgeTakenCount(L);
   if (isa<SCEVCouldNotCompute>(BECount)) return false;
-  
+
   // If this loop executes exactly one time, then it should be peeled, not
   // optimized by this pass.
   if (const SCEVConstant *BECst = dyn_cast<SCEVConstant>(BECount))
     if (BECst->getValue()->getValue() == 0)
       return false;
-  
+
   // We require target data for now.
   TD = getAnalysisIfAvailable<TargetData>();
   if (TD == 0) return false;
 
   DT = &getAnalysis<DominatorTree>();
   LoopInfo &LI = getAnalysis<LoopInfo>();
-  
+  TLI = &getAnalysis<TargetLibraryInfo>();
+
   SmallVector<BasicBlock*, 8> ExitBlocks;
   CurLoop->getUniqueExitBlocks(ExitBlocks);
 
   DEBUG(dbgs() << "loop-idiom Scanning: F["
                << L->getHeader()->getParent()->getName()
                << "] Loop %" << L->getHeader()->getName() << "\n");
-  
+
   bool MadeChange = false;
   // Scan all the blocks in the loop that are not in subloops.
   for (Loop::block_iterator BI = L->block_begin(), E = L->block_end(); BI != E;
@@ -190,7 +200,7 @@ bool LoopIdiomRecognize::runOnLoop(Loop *L, LPPassManager &LPM) {
     // Ignore blocks in subloops.
     if (LI.getLoopFor(*BI) != CurLoop)
       continue;
-    
+
     MadeChange |= runOnLoopBlock(*BI, BECount, ExitBlocks);
   }
   return MadeChange;
@@ -207,7 +217,7 @@ bool LoopIdiomRecognize::runOnLoopBlock(BasicBlock *BB, const SCEV *BECount,
   for (unsigned i = 0, e = ExitBlocks.size(); i != e; ++i)
     if (!DT->dominates(BB, ExitBlocks[i]))
       return false;
-  
+
   bool MadeChange = false;
   for (BasicBlock::iterator I = BB->begin(), E = BB->end(); I != E; ) {
     Instruction *Inst = I++;
@@ -216,20 +226,20 @@ bool LoopIdiomRecognize::runOnLoopBlock(BasicBlock *BB, const SCEV *BECount,
       WeakVH InstPtr(I);
       if (!processLoopStore(SI, BECount)) continue;
       MadeChange = true;
-      
+
       // If processing the store invalidated our iterator, start over from the
       // top of the block.
       if (InstPtr == 0)
         I = BB->begin();
       continue;
     }
-    
+
     // Look for memset instructions, which may be optimized to a larger memset.
     if (MemSetInst *MSI = dyn_cast<MemSetInst>(Inst))  {
       WeakVH InstPtr(I);
       if (!processLoopMemSet(MSI, BECount)) continue;
       MadeChange = true;
-      
+
       // If processing the memset invalidated our iterator, start over from the
       // top of the block.
       if (InstPtr == 0)
@@ -237,7 +247,7 @@ bool LoopIdiomRecognize::runOnLoopBlock(BasicBlock *BB, const SCEV *BECount,
       continue;
     }
   }
-  
+
   return MadeChange;
 }
 
@@ -248,12 +258,12 @@ bool LoopIdiomRecognize::processLoopStore(StoreInst *SI, const SCEV *BECount) {
 
   Value *StoredVal = SI->getValueOperand();
   Value *StorePtr = SI->getPointerOperand();
-  
+
   // Reject stores that are so large that they overflow an unsigned.
   uint64_t SizeInBits = TD->getTypeSizeInBits(StoredVal->getType());
   if ((SizeInBits & 7) || (SizeInBits >> 32) != 0)
     return false;
-  
+
   // See if the pointer expression is an AddRec like {base,+,1} on the current
   // loop, which indicates a strided store.  If we have something else, it's a
   // random store we can't handle.
@@ -264,21 +274,25 @@ bool LoopIdiomRecognize::processLoopStore(StoreInst *SI, const SCEV *BECount) {
 
   // Check to see if the stride matches the size of the store.  If so, then we
   // know that every byte is touched in the loop.
-  unsigned StoreSize = (unsigned)SizeInBits >> 3; 
+  unsigned StoreSize = (unsigned)SizeInBits >> 3;
   const SCEVConstant *Stride = dyn_cast<SCEVConstant>(StoreEv->getOperand(1));
-  
-  // TODO: Could also handle negative stride here someday, that will require the
-  // validity check in mayLoopAccessLocation to be updated though.
-  if (Stride == 0 || StoreSize != Stride->getValue()->getValue())
+
+  if (Stride == 0 || StoreSize != Stride->getValue()->getValue()) {
+    // TODO: Could also handle negative stride here someday, that will require
+    // the validity check in mayLoopAccessLocation to be updated though.
+    // Enable this to print exact negative strides.
+    if (0 && Stride && StoreSize == -Stride->getValue()->getValue()) {
+      dbgs() << "NEGATIVE STRIDE: " << *SI << "\n";
+      dbgs() << "BB: " << *SI->getParent();
+    }
+
     return false;
-  
-  // If the stored value is a byte-wise value (like i32 -1), then it may be
-  // turned into a memset of i8 -1, assuming that all the consequtive bytes
-  // are stored.  A store of i32 0x01020304 can never be turned into a memset.
-  if (Value *SplatValue = isBytewiseValue(StoredVal))
-    if (processLoopStoreOfSplatValue(StorePtr, StoreSize, SI->getAlignment(),
-                                     SplatValue, SI, StoreEv, BECount))
-      return true;
+  }
+
+  // See if we can optimize just this store in isolation.
+  if (processLoopStridedStore(StorePtr, StoreSize, SI->getAlignment(),
+                              StoredVal, SI, StoreEv, BECount))
+    return true;
 
   // If the stored value is a strided load in the same loop with the same stride
   // this this may be transformable into a memcpy.  This kicks in for stuff like
@@ -302,8 +316,12 @@ processLoopMemSet(MemSetInst *MSI, const SCEV *BECount) {
   // We can only handle non-volatile memsets with a constant size.
   if (MSI->isVolatile() || !isa<ConstantInt>(MSI->getLength())) return false;
 
+  // If we're not allowed to hack on memset, we fail.
+  if (!TLI->has(LibFunc::memset))
+    return false;
+
   Value *Pointer = MSI->getDest();
-  
+
   // See if the pointer expression is an AddRec like {base,+,1} on the current
   // loop, which indicates a strided store.  If we have something else, it's a
   // random store we can't handle.
@@ -315,19 +333,19 @@ processLoopMemSet(MemSetInst *MSI, const SCEV *BECount) {
   uint64_t SizeInBytes = cast<ConstantInt>(MSI->getLength())->getZExtValue();
   if ((SizeInBytes >> 32) != 0)
     return false;
-  
+
   // Check to see if the stride matches the size of the memset.  If so, then we
   // know that every byte is touched in the loop.
   const SCEVConstant *Stride = dyn_cast<SCEVConstant>(Ev->getOperand(1));
-  
+
   // TODO: Could also handle negative stride here someday, that will require the
   // validity check in mayLoopAccessLocation to be updated though.
   if (Stride == 0 || MSI->getLength() != Stride->getValue())
     return false;
-  
-  return processLoopStoreOfSplatValue(Pointer, (unsigned)SizeInBytes,
-                                      MSI->getAlignment(), MSI->getValue(),
-                                      MSI, Ev, BECount);
+
+  return processLoopStridedStore(Pointer, (unsigned)SizeInBytes,
+                                 MSI->getAlignment(), MSI->getValue(),
+                                 MSI, Ev, BECount);
 }
 
 
@@ -347,7 +365,7 @@ static bool mayLoopAccessLocation(Value *Ptr,AliasAnalysis::ModRefResult Access,
   // to be exactly the size of the memset, which is (BECount+1)*StoreSize
   if (const SCEVConstant *BECst = dyn_cast<SCEVConstant>(BECount))
     AccessSize = (BECst->getValue()->getZExtValue()+1)*StoreSize;
-  
+
   // TODO: For this to be really effective, we have to dive into the pointer
   // operand in the store.  Store to &A[i] of 100 will always return may alias
   // with store of &A[100], we need to StoreLoc to be "A" with size of 100,
@@ -364,18 +382,79 @@ static bool mayLoopAccessLocation(Value *Ptr,AliasAnalysis::ModRefResult Access,
   return false;
 }
 
-/// processLoopStoreOfSplatValue - We see a strided store of a memsetable value.
-/// If we can transform this into a memset in the loop preheader, do so.
+/// getMemSetPatternValue - If a strided store of the specified value is safe to
+/// turn into a memset_pattern16, return a ConstantArray of 16 bytes that should
+/// be passed in.  Otherwise, return null.
+///
+/// Note that we don't ever attempt to use memset_pattern8 or 4, because these
+/// just replicate their input array and then pass on to memset_pattern16.
+static Constant *getMemSetPatternValue(Value *V, const TargetData &TD) {
+  // If the value isn't a constant, we can't promote it to being in a constant
+  // array.  We could theoretically do a store to an alloca or something, but
+  // that doesn't seem worthwhile.
+  Constant *C = dyn_cast<Constant>(V);
+  if (C == 0) return 0;
+
+  // Only handle simple values that are a power of two bytes in size.
+  uint64_t Size = TD.getTypeSizeInBits(V->getType());
+  if (Size == 0 || (Size & 7) || (Size & (Size-1)))
+    return 0;
+
+  // Don't care enough about darwin/ppc to implement this.
+  if (TD.isBigEndian())
+    return 0;
+
+  // Convert to size in bytes.
+  Size /= 8;
+
+  // TODO: If CI is larger than 16-bytes, we can try slicing it in half to see
+  // if the top and bottom are the same (e.g. for vectors and large integers).
+  if (Size > 16) return 0;
+
+  // If the constant is exactly 16 bytes, just use it.
+  if (Size == 16) return C;
+
+  // Otherwise, we'll use an array of the constants.
+  unsigned ArraySize = 16/Size;
+  ArrayType *AT = ArrayType::get(V->getType(), ArraySize);
+  return ConstantArray::get(AT, std::vector<Constant*>(ArraySize, C));
+}
+
+
+/// processLoopStridedStore - We see a strided store of some value.  If we can
+/// transform this into a memset or memset_pattern in the loop preheader, do so.
 bool LoopIdiomRecognize::
-processLoopStoreOfSplatValue(Value *DestPtr, unsigned StoreSize, 
-                             unsigned StoreAlignment, Value *SplatValue, 
-                             Instruction *TheStore,
-                             const SCEVAddRecExpr *Ev, const SCEV *BECount) {
-  // Verify that the stored value is loop invariant.  If not, we can't promote
-  // the memset.
-  if (!CurLoop->isLoopInvariant(SplatValue))
+processLoopStridedStore(Value *DestPtr, unsigned StoreSize,
+                        unsigned StoreAlignment, Value *StoredVal,
+                        Instruction *TheStore, const SCEVAddRecExpr *Ev,
+                        const SCEV *BECount) {
+
+  // If the stored value is a byte-wise value (like i32 -1), then it may be
+  // turned into a memset of i8 -1, assuming that all the consecutive bytes
+  // are stored.  A store of i32 0x01020304 can never be turned into a memset,
+  // but it can be turned into memset_pattern if the target supports it.
+  Value *SplatValue = isBytewiseValue(StoredVal);
+  Constant *PatternValue = 0;
+
+  // If we're allowed to form a memset, and the stored value would be acceptable
+  // for memset, use it.
+  if (SplatValue && TLI->has(LibFunc::memset) &&
+      // Verify that the stored value is loop invariant.  If not, we can't
+      // promote the memset.
+      CurLoop->isLoopInvariant(SplatValue)) {
+    // Keep and use SplatValue.
+    PatternValue = 0;
+  } else if (TLI->has(LibFunc::memset_pattern16) &&
+             (PatternValue = getMemSetPatternValue(StoredVal, *TD))) {
+    // It looks like we can use PatternValue!
+    SplatValue = 0;
+  } else {
+    // Otherwise, this isn't an idiom we can transform.  For example, we can't
+    // do anything with a 3-byte store, for example.
     return false;
-  
+  }
+
+
   // Okay, we have a strided store "p[i]" of a splattable value.  We can turn
   // this into a memset in the loop preheader now if we want.  However, this
   // would be unsafe to do if there is anything else in the loop that may read
@@ -384,43 +463,62 @@ processLoopStoreOfSplatValue(Value *DestPtr, unsigned StoreSize,
                             CurLoop, BECount,
                             StoreSize, getAnalysis<AliasAnalysis>(), TheStore))
     return false;
-  
+
   // Okay, everything looks good, insert the memset.
   BasicBlock *Preheader = CurLoop->getLoopPreheader();
-  
+
   IRBuilder<> Builder(Preheader->getTerminator());
-  
+
   // The trip count of the loop and the base pointer of the addrec SCEV is
   // guaranteed to be loop invariant, which means that it should dominate the
   // header.  Just insert code for it in the preheader.
   SCEVExpander Expander(*SE);
-  
+
   unsigned AddrSpace = cast<PointerType>(DestPtr->getType())->getAddressSpace();
-  Value *BasePtr = 
+  Value *BasePtr =
     Expander.expandCodeFor(Ev->getStart(), Builder.getInt8PtrTy(AddrSpace),
                            Preheader->getTerminator());
-  
+
   // The # stored bytes is (BECount+1)*Size.  Expand the trip count out to
   // pointer size if it isn't already.
-  const Type *IntPtr = TD->getIntPtrType(SplatValue->getContext());
+  const Type *IntPtr = TD->getIntPtrType(DestPtr->getContext());
   BECount = SE->getTruncateOrZeroExtend(BECount, IntPtr);
-  
+
   const SCEV *NumBytesS = SE->getAddExpr(BECount, SE->getConstant(IntPtr, 1),
-                                         true /*no unsigned overflow*/);
+                                         SCEV::FlagNUW);
   if (StoreSize != 1)
     NumBytesS = SE->getMulExpr(NumBytesS, SE->getConstant(IntPtr, StoreSize),
-                               true /*no unsigned overflow*/);
-  
-  Value *NumBytes = 
+                               SCEV::FlagNUW);
+
+  Value *NumBytes =
     Expander.expandCodeFor(NumBytesS, IntPtr, Preheader->getTerminator());
-  
-  Value *NewCall =
-    Builder.CreateMemSet(BasePtr, SplatValue, NumBytes, StoreAlignment);
-  
+
+  CallInst *NewCall;
+  if (SplatValue)
+    NewCall = Builder.CreateMemSet(BasePtr, SplatValue,NumBytes,StoreAlignment);
+  else {
+    Module *M = TheStore->getParent()->getParent()->getParent();
+    Value *MSP = M->getOrInsertFunction("memset_pattern16",
+                                        Builder.getVoidTy(),
+                                        Builder.getInt8PtrTy(),
+                                        Builder.getInt8PtrTy(), IntPtr,
+                                        (void*)0);
+
+    // Otherwise we should form a memset_pattern16.  PatternValue is known to be
+    // an constant array of 16-bytes.  Plop the value into a mergable global.
+    GlobalVariable *GV = new GlobalVariable(*M, PatternValue->getType(), true,
+                                            GlobalValue::InternalLinkage,
+                                            PatternValue, ".memset_pattern");
+    GV->setUnnamedAddr(true); // Ok to merge these.
+    GV->setAlignment(16);
+    Value *PatternPtr = ConstantExpr::getBitCast(GV, Builder.getInt8PtrTy());
+    NewCall = Builder.CreateCall3(MSP, BasePtr, PatternPtr, NumBytes);
+  }
+
   DEBUG(dbgs() << "  Formed memset: " << *NewCall << "\n"
                << "    from store to: " << *Ev << " at: " << *TheStore << "\n");
-  (void)NewCall;
-  
+  NewCall->setDebugLoc(TheStore->getDebugLoc());
+
   // Okay, the memset has been formed.  Zap the original store and anything that
   // feeds into it.
   DeleteDeadInstruction(TheStore, *SE);
@@ -435,8 +533,12 @@ processLoopStoreOfLoopLoad(StoreInst *SI, unsigned StoreSize,
                            const SCEVAddRecExpr *StoreEv,
                            const SCEVAddRecExpr *LoadEv,
                            const SCEV *BECount) {
+  // If we're not allowed to form memcpy, we fail.
+  if (!TLI->has(LibFunc::memcpy))
+    return false;
+
   LoadInst *LI = cast<LoadInst>(SI->getValueOperand());
-  
+
   // Okay, we have a strided store "p[i]" of a loaded value.  We can turn
   // this into a memcpy in the loop preheader now if we want.  However, this
   // would be unsafe to do if there is anything else in the loop that may read
@@ -453,49 +555,49 @@ processLoopStoreOfLoopLoad(StoreInst *SI, unsigned StoreSize,
                             CurLoop, BECount, StoreSize,
                             getAnalysis<AliasAnalysis>(), SI))
     return false;
-  
+
   // Okay, everything looks good, insert the memcpy.
   BasicBlock *Preheader = CurLoop->getLoopPreheader();
-  
+
   IRBuilder<> Builder(Preheader->getTerminator());
-  
+
   // The trip count of the loop and the base pointer of the addrec SCEV is
   // guaranteed to be loop invariant, which means that it should dominate the
   // header.  Just insert code for it in the preheader.
   SCEVExpander Expander(*SE);
 
-  Value *LoadBasePtr = 
+  Value *LoadBasePtr =
     Expander.expandCodeFor(LoadEv->getStart(),
                            Builder.getInt8PtrTy(LI->getPointerAddressSpace()),
                            Preheader->getTerminator());
-  Value *StoreBasePtr = 
+  Value *StoreBasePtr =
     Expander.expandCodeFor(StoreEv->getStart(),
                            Builder.getInt8PtrTy(SI->getPointerAddressSpace()),
                            Preheader->getTerminator());
-  
+
   // The # stored bytes is (BECount+1)*Size.  Expand the trip count out to
   // pointer size if it isn't already.
   const Type *IntPtr = TD->getIntPtrType(SI->getContext());
   BECount = SE->getTruncateOrZeroExtend(BECount, IntPtr);
-  
+
   const SCEV *NumBytesS = SE->getAddExpr(BECount, SE->getConstant(IntPtr, 1),
-                                         true /*no unsigned overflow*/);
+                                         SCEV::FlagNUW);
   if (StoreSize != 1)
     NumBytesS = SE->getMulExpr(NumBytesS, SE->getConstant(IntPtr, StoreSize),
-                               true /*no unsigned overflow*/);
-  
+                               SCEV::FlagNUW);
+
   Value *NumBytes =
     Expander.expandCodeFor(NumBytesS, IntPtr, Preheader->getTerminator());
-  
+
   Value *NewCall =
     Builder.CreateMemCpy(StoreBasePtr, LoadBasePtr, NumBytes,
                          std::min(SI->getAlignment(), LI->getAlignment()));
-  
+
   DEBUG(dbgs() << "  Formed memcpy: " << *NewCall << "\n"
                << "    from load ptr=" << *LoadEv << " at: " << *LI << "\n"
                << "    from store ptr=" << *StoreEv << " at: " << *SI << "\n");
   (void)NewCall;
-  
+
   // Okay, the memset has been formed.  Zap the original store and anything that
   // feeds into it.
   DeleteDeadInstruction(SI, *SE);

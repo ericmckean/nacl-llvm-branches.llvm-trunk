@@ -493,7 +493,7 @@
 
 <pre class="doc_code">
 <i>; Declare the string constant as a global constant.</i>&nbsp;
-<a href="#identifiers">@.LC0</a> = <a href="#linkage_internal">internal</a> <a href="#globalvars">constant</a> <a href="#t_array">[13 x i8]</a> c"hello world\0A\00"      <i>; [13 x i8]*</i>&nbsp;
+<a href="#identifiers">@.LC0</a> = <a href="#linkage_internal">internal</a>&nbsp;<a href="#globalvars">constant</a>&nbsp;<a href="#t_array">[13 x i8]</a> c"hello world\0A\00"      <i>; [13 x i8]*</i>&nbsp;
 
 <i>; External declaration of the puts function</i>&nbsp;
 <a href="#functionstructure">declare</a> i32 @puts(i8*)                                      <i>; i32 (i8*)* </i>&nbsp;
@@ -1017,13 +1017,15 @@ declare signext i8 @returns_signed_char()
 <dl>
   <dt><tt><b>zeroext</b></tt></dt>
   <dd>This indicates to the code generator that the parameter or return value
-      should be zero-extended to a 32-bit value by the caller (for a parameter)
-      or the callee (for a return value).</dd>
+      should be zero-extended to the extent required by the target's ABI (which
+      is usually 32-bits, but is 8-bits for a i1 on x86-64) by the caller (for a
+      parameter) or the callee (for a return value).</dd>
 
   <dt><tt><b>signext</b></tt></dt>
   <dd>This indicates to the code generator that the parameter or return value
-      should be sign-extended to a 32-bit value by the caller (for a parameter)
-      or the callee (for a return value).</dd>
+      should be sign-extended to the extent required by the target's ABI (which
+      is usually 32-bits) by the caller (for a parameter) or the callee (for a
+      return value).</dd>
 
   <dt><tt><b>inreg</b></tt></dt>
   <dd>This indicates that this parameter or return value should be treated in a
@@ -2690,16 +2692,21 @@ call void asm sideeffect "something bad", ""()<b>, !srcloc !42</b>
 <p>Metadata can be used as function arguments. Here <tt>llvm.dbg.value</tt> 
    function is using two metadata arguments.</p>
 
-     <pre class="doc_code">
-       call void @llvm.dbg.value(metadata !24, i64 0, metadata !25)
-     </pre>
+<div class="doc_code">
+<pre>
+call void @llvm.dbg.value(metadata !24, i64 0, metadata !25)
+</pre>
+</div>
 
 <p>Metadata can be attached with an instruction. Here metadata <tt>!21</tt> is
    attached with <tt>add</tt> instruction using <tt>!dbg</tt> identifier.</p>
 
-    <pre class="doc_code">
-      %indvar.next = add i64 %indvar, 1, !dbg !21
-    </pre>
+<div class="doc_code">
+<pre>
+%indvar.next = add i64 %indvar, 1, !dbg !21
+</pre>
+</div>
+
 </div>
 
 
@@ -3441,7 +3448,8 @@ Instruction</a> </div>
 
 <h5>Syntax:</h5>
 <pre>
-  &lt;result&gt; = udiv &lt;ty&gt; &lt;op1&gt;, &lt;op2&gt;   <i>; yields {ty}:result</i>
+  &lt;result&gt; = udiv &lt;ty&gt; &lt;op1&gt;, &lt;op2&gt;         <i>; yields {ty}:result</i>
+  &lt;result&gt; = udiv exact &lt;ty&gt; &lt;op1&gt;, &lt;op2&gt;   <i>; yields {ty}:result</i>
 </pre>
 
 <h5>Overview:</h5>
@@ -3459,6 +3467,11 @@ Instruction</a> </div>
    operations; for signed integer division, use '<tt>sdiv</tt>'.</p>
 
 <p>Division by zero leads to undefined behavior.</p>
+
+<p>If the <tt>exact</tt> keyword is present, the result value of the
+   <tt>udiv</tt> is a <a href="#trapvalues">trap value</a> if %op1 is not a
+  multiple of %op2 (as such, "((a udiv exact b) mul b) == a").</p>
+
 
 <h5>Example:</h5>
 <pre>
@@ -3600,9 +3613,10 @@ Instruction</a> </div>
 
 <h5>Semantics:</h5>
 <p>This instruction returns the <i>remainder</i> of a division (where the result
-   has the same sign as the dividend, <tt>op1</tt>), not the <i>modulo</i>
-   operator (where the result has the same sign as the divisor, <tt>op2</tt>) of
-   a value.  For more information about the difference,
+   is either zero or has the same sign as the dividend, <tt>op1</tt>), not the
+   <i>modulo</i> operator (where the result is either zero or has the same sign
+   as the divisor, <tt>op2</tt>) of a value.
+   For more information about the difference,
    see <a href="http://mathforum.org/dr.math/problems/anne.4.28.99.html">The
    Math Forum</a>. For a table of how this is implemented in various languages,
    please see <a href="http://en.wikipedia.org/wiki/Modulo_operation">
@@ -3678,7 +3692,10 @@ Instruction</a> </div>
 
 <h5>Syntax:</h5>
 <pre>
-  &lt;result&gt; = shl &lt;ty&gt; &lt;op1&gt;, &lt;op2&gt;   <i>; yields {ty}:result</i>
+  &lt;result&gt; = shl &lt;ty&gt; &lt;op1&gt;, &lt;op2&gt;           <i>; yields {ty}:result</i>
+  &lt;result&gt; = shl nuw &lt;ty&gt; &lt;op1&gt;, &lt;op2&gt;       <i>; yields {ty}:result</i>
+  &lt;result&gt; = shl nsw &lt;ty&gt; &lt;op1&gt;, &lt;op2&gt;       <i>; yields {ty}:result</i>
+  &lt;result&gt; = shl nuw nsw &lt;ty&gt; &lt;op1&gt;, &lt;op2&gt;   <i>; yields {ty}:result</i>
 </pre>
 
 <h5>Overview:</h5>
@@ -3697,6 +3714,14 @@ Instruction</a> </div>
    of bits in <tt>op1</tt>, the result is undefined.  If the arguments are
    vectors, each vector element of <tt>op1</tt> is shifted by the corresponding
    shift amount in <tt>op2</tt>.</p>
+
+<p>If the <tt>nuw</tt> keyword is present, then the shift produces a 
+   <a href="#trapvalues">trap value</a> if it shifts out any non-zero bits.  If
+   the <tt>nsw</tt> keyword is present, then the shift produces a
+   <a href="#trapvalues">trap value</a> if it shifts out any bits that disagree
+   with the resultant sign bit.  As such, NUW/NSW have the same semantics as
+   they would if the shift were expressed as a mul instruction with the same
+   nsw/nuw bits in (mul %op1, (shl 1, %op2)).</p>
 
 <h5>Example:</h5>
 <pre>
@@ -3717,7 +3742,8 @@ Instruction</a> </div>
 
 <h5>Syntax:</h5>
 <pre>
-  &lt;result&gt; = lshr &lt;ty&gt; &lt;op1&gt;, &lt;op2&gt;   <i>; yields {ty}:result</i>
+  &lt;result&gt; = lshr &lt;ty&gt; &lt;op1&gt;, &lt;op2&gt;         <i>; yields {ty}:result</i>
+  &lt;result&gt; = lshr exact &lt;ty&gt; &lt;op1&gt;, &lt;op2&gt;   <i>; yields {ty}:result</i>
 </pre>
 
 <h5>Overview:</h5>
@@ -3736,6 +3762,11 @@ Instruction</a> </div>
    number of bits in <tt>op1</tt>, the result is undefined. If the arguments are
    vectors, each vector element of <tt>op1</tt> is shifted by the corresponding
    shift amount in <tt>op2</tt>.</p>
+
+<p>If the <tt>exact</tt> keyword is present, the result value of the
+   <tt>lshr</tt> is a <a href="#trapvalues">trap value</a> if any of the bits
+   shifted out are non-zero.</p>
+
 
 <h5>Example:</h5>
 <pre>
@@ -3756,7 +3787,8 @@ Instruction</a> </div>
 
 <h5>Syntax:</h5>
 <pre>
-  &lt;result&gt; = ashr &lt;ty&gt; &lt;op1&gt;, &lt;op2&gt;   <i>; yields {ty}:result</i>
+  &lt;result&gt; = ashr &lt;ty&gt; &lt;op1&gt;, &lt;op2&gt;         <i>; yields {ty}:result</i>
+  &lt;result&gt; = ashr exact &lt;ty&gt; &lt;op1&gt;, &lt;op2&gt;   <i>; yields {ty}:result</i>
 </pre>
 
 <h5>Overview:</h5>
@@ -3776,6 +3808,10 @@ Instruction</a> </div>
    larger than the number of bits in <tt>op1</tt>, the result is undefined. If
    the arguments are vectors, each vector element of <tt>op1</tt> is shifted by
    the corresponding shift amount in <tt>op2</tt>.</p>
+
+<p>If the <tt>exact</tt> keyword is present, the result value of the
+   <tt>ashr</tt> is a <a href="#trapvalues">trap value</a> if any of the bits
+   shifted out are non-zero.</p>
 
 <h5>Example:</h5>
 <pre>
@@ -4547,12 +4583,12 @@ entry:
    type <tt>ty2</tt>.</p>
 
 <h5>Arguments:</h5>
-<p>The '<tt>trunc</tt>' instruction takes a <tt>value</tt> to trunc, which must
-   be an <a href="#t_integer">integer</a> type, and a type that specifies the
-   size and type of the result, which must be
-   an <a href="#t_integer">integer</a> type. The bit size of <tt>value</tt> must
-   be larger than the bit size of <tt>ty2</tt>. Equal sized types are not
-   allowed.</p>
+<p>The '<tt>trunc</tt>' instruction takes a value to trunc, and a type to trunc it to.
+   Both types must be of <a href="#t_integer">integer</a> types, or vectors
+   of the same number of integers.
+   The bit size of the <tt>value</tt> must be larger than
+   the bit size of the destination type, <tt>ty2</tt>.
+   Equal sized types are not allowed.</p>
 
 <h5>Semantics:</h5>
 <p>The '<tt>trunc</tt>' instruction truncates the high order bits
@@ -4562,9 +4598,10 @@ entry:
 
 <h5>Example:</h5>
 <pre>
-  %X = trunc i32 257 to i8              <i>; yields i8:1</i>
-  %Y = trunc i32 123 to i1              <i>; yields i1:true</i>
-  %Z = trunc i32 122 to i1              <i>; yields i1:false</i>
+  %X = trunc i32 257 to i8                        <i>; yields i8:1</i>
+  %Y = trunc i32 123 to i1                        <i>; yields i1:true</i>
+  %Z = trunc i32 122 to i1                        <i>; yields i1:false</i>
+  %W = trunc &lt;2 x i16&gt; &lt;i16 8, i16 7&gt; to &lt;2 x i8&gt; <i>; yields &lt;i8 8, i8 7&gt;</i>
 </pre>
 
 </div>
@@ -4586,10 +4623,11 @@ entry:
 
 
 <h5>Arguments:</h5>
-<p>The '<tt>zext</tt>' instruction takes a value to cast, which must be of
-   <a href="#t_integer">integer</a> type, and a type to cast it to, which must
-   also be of <a href="#t_integer">integer</a> type. The bit size of the
-   <tt>value</tt> must be smaller than the bit size of the destination type,
+<p>The '<tt>zext</tt>' instruction takes a value to cast, and a type to cast it to.
+   Both types must be of <a href="#t_integer">integer</a> types, or vectors
+   of the same number of integers.
+   The bit size of the <tt>value</tt> must be smaller than
+   the bit size of the destination type,
    <tt>ty2</tt>.</p>
 
 <h5>Semantics:</h5>
@@ -4602,6 +4640,7 @@ entry:
 <pre>
   %X = zext i32 257 to i64              <i>; yields i64:257</i>
   %Y = zext i1 true to i32              <i>; yields i32:1</i>
+  %Z = zext &lt;2 x i16&gt; &lt;i16 8, i16 7&gt; to &lt;2 x i32&gt; <i>; yields &lt;i32 8, i32 7&gt;</i>
 </pre>
 
 </div>
@@ -4621,10 +4660,11 @@ entry:
 <p>The '<tt>sext</tt>' sign extends <tt>value</tt> to the type <tt>ty2</tt>.</p>
 
 <h5>Arguments:</h5>
-<p>The '<tt>sext</tt>' instruction takes a value to cast, which must be of
-   <a href="#t_integer">integer</a> type, and a type to cast it to, which must
-   also be of <a href="#t_integer">integer</a> type.  The bit size of the
-   <tt>value</tt> must be smaller than the bit size of the destination type,
+<p>The '<tt>sext</tt>' instruction takes a value to cast, and a type to cast it to.
+   Both types must be of <a href="#t_integer">integer</a> types, or vectors
+   of the same number of integers.
+   The bit size of the <tt>value</tt> must be smaller than
+   the bit size of the destination type,
    <tt>ty2</tt>.</p>
 
 <h5>Semantics:</h5>
@@ -4638,6 +4678,7 @@ entry:
 <pre>
   %X = sext i8  -1 to i16              <i>; yields i16   :65535</i>
   %Y = sext i1 true to i32             <i>; yields i32:-1</i>
+  %Z = sext &lt;2 x i16&gt; &lt;i16 8, i16 7&gt; to &lt;2 x i32&gt; <i>; yields &lt;i32 8, i32 7&gt;</i>
 </pre>
 
 </div>

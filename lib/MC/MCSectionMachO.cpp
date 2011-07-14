@@ -101,16 +101,18 @@ void MCSectionMachO::PrintSwitchToSection(const MCAsmInfo &MAI,
     return;
   }
 
-  OS << ',';
-
   unsigned SectionType = TAA & MCSectionMachO::SECTION_TYPE;
   assert(SectionType <= MCSectionMachO::LAST_KNOWN_SECTION_TYPE &&
          "Invalid SectionType specified!");
 
-  if (SectionTypeDescriptors[SectionType].AssemblerName)
+  if (SectionTypeDescriptors[SectionType].AssemblerName) {
+    OS << ',';
     OS << SectionTypeDescriptors[SectionType].AssemblerName;
-  else
-    OS << "<<" << SectionTypeDescriptors[SectionType].EnumName << ">>";
+  } else {
+    // If we have no name for the attribute, stop here.
+    OS << '\n';
+    return;
+  }
 
   // If we don't have any attributes, we're done.
   unsigned SectionAttrs = TAA & MCSectionMachO::SECTION_ATTRIBUTES;
@@ -125,7 +127,9 @@ void MCSectionMachO::PrintSwitchToSection(const MCAsmInfo &MAI,
 
   // Check each attribute to see if we have it.
   char Separator = ',';
-  for (unsigned i = 0; SectionAttrDescriptors[i].AttrFlag; ++i) {
+  for (unsigned i = 0;
+       SectionAttrs != 0 && SectionAttrDescriptors[i].AttrFlag;
+       ++i) {
     // Check to see if we have this attribute.
     if ((SectionAttrDescriptors[i].AttrFlag & SectionAttrs) == 0)
       continue;
@@ -176,7 +180,9 @@ std::string MCSectionMachO::ParseSectionSpecifier(StringRef Spec,        // In.
                                                   StringRef &Segment,    // Out.
                                                   StringRef &Section,    // Out.
                                                   unsigned  &TAA,        // Out.
+                                                  bool      &TAAParsed,  // Out.
                                                   unsigned  &StubSize) { // Out.
+  TAAParsed = false;
   // Find the first comma.
   std::pair<StringRef, StringRef> Comma = Spec.split(',');
 
@@ -232,6 +238,7 @@ std::string MCSectionMachO::ParseSectionSpecifier(StringRef Spec,        // In.
 
   // Remember the TypeID.
   TAA = TypeID;
+  TAAParsed = true;
 
   // If we have no comma after the section type, there are no attributes.
   if (Comma.second.empty()) {

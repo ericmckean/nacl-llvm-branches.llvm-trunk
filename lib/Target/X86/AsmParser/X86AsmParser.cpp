@@ -44,8 +44,6 @@ private:
 
   bool Error(SMLoc L, const Twine &Msg) { return Parser.Error(L, Msg); }
 
-  bool ParseRegister(unsigned &RegNo, SMLoc &StartLoc, SMLoc &EndLoc);
-
   X86Operand *ParseOperand();
   X86Operand *ParseMemOperand(unsigned SegReg, SMLoc StartLoc);
 
@@ -54,6 +52,14 @@ private:
   bool MatchAndEmitInstruction(SMLoc IDLoc,
                                SmallVectorImpl<MCParsedAsmOperand*> &Operands,
                                MCStreamer &Out);
+
+  /// isSrcOp - Returns true if operand is either (%rsi) or %ds:%(rsi)
+  /// in 64bit mode or (%edi) or %es:(%edi) in 32bit mode.
+  bool isSrcOp(X86Operand &Op);
+
+  /// isDstOp - Returns true if operand is either %es:(%rdi) in 64bit mode
+  /// or %es:(%edi) in 32bit mode.
+  bool isDstOp(X86Operand &Op);
 
   /// @name Auto-generated Matcher Functions
   /// {
@@ -71,6 +77,7 @@ public:
     setAvailableFeatures(ComputeAvailableFeatures(
                            &TM.getSubtarget<X86Subtarget>()));
   }
+  virtual bool ParseRegister(unsigned &RegNo, SMLoc &StartLoc, SMLoc &EndLoc);
 
   virtual bool ParseInstruction(StringRef Name, SMLoc NameLoc,
                                 SmallVectorImpl<MCParsedAsmOperand*> &Operands);
@@ -357,6 +364,24 @@ struct X86Operand : public MCParsedAsmOperand {
 
 } // end anonymous namespace.
 
+bool X86ATTAsmParser::isSrcOp(X86Operand &Op) {
+  unsigned basereg = Is64Bit ? X86::RSI : X86::ESI;
+
+  return (Op.isMem() &&
+    (Op.Mem.SegReg == 0 || Op.Mem.SegReg == X86::DS) &&
+    isa<MCConstantExpr>(Op.Mem.Disp) &&
+    cast<MCConstantExpr>(Op.Mem.Disp)->getValue() == 0 &&
+    Op.Mem.BaseReg == basereg && Op.Mem.IndexReg == 0);
+}
+
+bool X86ATTAsmParser::isDstOp(X86Operand &Op) {
+  unsigned basereg = Is64Bit ? X86::RDI : X86::EDI;
+
+  return Op.isMem() && Op.Mem.SegReg == X86::ES &&
+    isa<MCConstantExpr>(Op.Mem.Disp) &&
+    cast<MCConstantExpr>(Op.Mem.Disp)->getValue() == 0 &&
+    Op.Mem.BaseReg == basereg && Op.Mem.IndexReg == 0;
+}
 
 bool X86ATTAsmParser::ParseRegister(unsigned &RegNo,
                                     SMLoc &StartLoc, SMLoc &EndLoc) {
@@ -776,7 +801,119 @@ ParseInstruction(StringRef Name, SMLoc NameLoc,
       delete &Op;
     }
   }
-  
+  // Same hack for "in[bwl]? (%dx), %al" -> "inb %dx, %al".
+  if ((Name == "inb" || Name == "inw" || Name == "inl" || Name == "in") &&
+      Operands.size() == 3) {
+    X86Operand &Op = *(X86Operand*)Operands.begin()[1];
+    if (Op.isMem() && Op.Mem.SegReg == 0 &&
+        isa<MCConstantExpr>(Op.Mem.Disp) &&
+        cast<MCConstantExpr>(Op.Mem.Disp)->getValue() == 0 &&
+        Op.Mem.BaseReg == MatchRegisterName("dx") && Op.Mem.IndexReg == 0) {
+      SMLoc Loc = Op.getEndLoc();
+      Operands.begin()[1] = X86Operand::CreateReg(Op.Mem.BaseReg, Loc, Loc);
+      delete &Op;
+    }
+  }
+  // Transform "ins[bwl] %dx, %es:(%edi)" into "ins[bwl]"
+  if (Name.startswith("ins") && Operands.size() == 3 &&
+      (Name == "insb" || Name == "insw" || Name == "insl")) {
+    X86Operand &Op = *(X86Operand*)Operands.begin()[1];
+    X86Operand &Op2 = *(X86Operand*)Operands.begin()[2];
+    if (Op.isReg() && Op.getReg() == X86::DX && isDstOp(Op2)) {
+      Operands.pop_back();
+      Operands.pop_back();
+      delete &Op;
+      delete &Op2;
+    }
+  }
+
+  // Transform "outs[bwl] %ds:(%esi), %dx" into "out[bwl]"
+  if (Name.startswith("outs") && Operands.size() == 3 &&
+      (Name == "outsb" || Name == "outsw" || Name == "outsl")) {
+    X86Operand &Op = *(X86Operand*)Operands.begin()[1];
+    X86Operand &Op2 = *(X86Operand*)Operands.begin()[2];
+    if (isSrcOp(Op) && Op2.isReg() && Op2.getReg() == X86::DX) {
+      Operands.pop_back();
+      Operands.pop_back();
+      delete &Op;
+      delete &Op2;
+    }
+  }
+
+  // Transform "movs[bwl] %ds:(%esi), %es:(%edi)" into "movs[bwl]"
+  if (Name.startswith("movs") && Operands.size() == 3 &&
+      (Name == "movsb" || Name == "movsw" || Name == "movsl" ||
+       (Is64Bit && Name == "movsq"))) {
+    X86Operand &Op = *(X86Operand*)Operands.begin()[1];
+    X86Operand &Op2 = *(X86Operand*)Operands.begin()[2];
+    if (isSrcOp(Op) && isDstOp(Op2)) {
+      Operands.pop_back();
+      Operands.pop_back();
+      delete &Op;
+      delete &Op2;
+    }
+  }
+  // Transform "lods[bwl] %ds:(%esi),{%al,%ax,%eax,%rax}" into "lods[bwl]"
+  if (Name.startswith("lods") && Operands.size() == 3 &&
+      (Name == "lods" || Name == "lodsb" || Name == "lodsw" ||
+       Name == "lodsl" || (Is64Bit && Name == "lodsq"))) {
+    X86Operand *Op1 = static_cast<X86Operand*>(Operands[1]);
+    X86Operand *Op2 = static_cast<X86Operand*>(Operands[2]);
+    if (isSrcOp(*Op1) && Op2->isReg()) {
+      const char *ins;
+      unsigned reg = Op2->getReg();
+      bool isLods = Name == "lods";
+      if (reg == X86::AL && (isLods || Name == "lodsb"))
+        ins = "lodsb";
+      else if (reg == X86::AX && (isLods || Name == "lodsw"))
+        ins = "lodsw";
+      else if (reg == X86::EAX && (isLods || Name == "lodsl"))
+        ins = "lodsl";
+      else if (reg == X86::RAX && (isLods || Name == "lodsq"))
+        ins = "lodsq";
+      else
+        ins = NULL;
+      if (ins != NULL) {
+        Operands.pop_back();
+        Operands.pop_back();
+        delete Op1;
+        delete Op2;
+        if (Name != ins)
+          static_cast<X86Operand*>(Operands[0])->setTokenValue(ins);
+      }
+    }
+  }
+  // Transform "stos[bwl] {%al,%ax,%eax,%rax},%es:(%edi)" into "stos[bwl]"
+  if (Name.startswith("stos") && Operands.size() == 3 &&
+      (Name == "stos" || Name == "stosb" || Name == "stosw" ||
+       Name == "stosl" || (Is64Bit && Name == "stosq"))) {
+    X86Operand *Op1 = static_cast<X86Operand*>(Operands[1]);
+    X86Operand *Op2 = static_cast<X86Operand*>(Operands[2]);
+    if (isDstOp(*Op2) && Op1->isReg()) {
+      const char *ins;
+      unsigned reg = Op1->getReg();
+      bool isStos = Name == "stos";
+      if (reg == X86::AL && (isStos || Name == "stosb"))
+        ins = "stosb";
+      else if (reg == X86::AX && (isStos || Name == "stosw"))
+        ins = "stosw";
+      else if (reg == X86::EAX && (isStos || Name == "stosl"))
+        ins = "stosl";
+      else if (reg == X86::RAX && (isStos || Name == "stosq"))
+        ins = "stosq";
+      else
+        ins = NULL;
+      if (ins != NULL) {
+        Operands.pop_back();
+        Operands.pop_back();
+        delete Op1;
+        delete Op2;
+        if (Name != ins)
+          static_cast<X86Operand*>(Operands[0])->setTokenValue(ins);
+      }
+    }
+  }
+
   // FIXME: Hack to handle recognize s{hr,ar,hl} $1, <op>.  Canonicalize to
   // "shift <op>".
   if ((Name.startswith("shr") || Name.startswith("sar") ||
@@ -843,6 +980,8 @@ MatchAndEmitInstruction(SMLoc IDLoc,
   case Match_MissingFeature:
     Error(IDLoc, "instruction requires a CPU feature not currently enabled");
     return true;
+  case Match_ConversionFail:
+    return Error(IDLoc, "unable to convert operands to instruction");
   case Match_InvalidOperand:
     WasOriginallyInvalidOperand = true;
     break;

@@ -53,7 +53,7 @@ using namespace llvm;
 bool X86AsmPrinter::runOnMachineFunction(MachineFunction &MF) {
   SetupMachineFunction(MF);
 
-  if (Subtarget->isTargetCOFF()) {
+  if (Subtarget->isTargetCOFF() && !Subtarget->isTargetEnvMacho()) {
     bool Intrn = MF.getFunction()->hasInternalLinkage();
     OutStreamer.BeginCOFFSymbolDef(CurrentFnSym);
     OutStreamer.EmitCOFFSymbolStorageClass(Intrn ? COFF::IMAGE_SYM_CLASS_STATIC
@@ -474,13 +474,13 @@ bool X86AsmPrinter::PrintAsmMemoryOperand(const MachineInstr *MI,
 }
 
 void X86AsmPrinter::EmitStartOfAsmFile(Module &M) {
-  if (Subtarget->isTargetDarwin())
+  if (Subtarget->isTargetEnvMacho())
     OutStreamer.SwitchSection(getObjFileLowering().getTextSection());
 }
 
 
 void X86AsmPrinter::EmitEndOfAsmFile(Module &M) {
-  if (Subtarget->isTargetDarwin()) {
+  if (Subtarget->isTargetEnvMacho()) {
     // All darwin targets use mach-o.
     MachineModuleInfoMachO &MMIMacho =
       MMI->getObjFileInfo<MachineModuleInfoMachO>();
@@ -581,7 +581,7 @@ void X86AsmPrinter::EmitEndOfAsmFile(Module &M) {
     OutStreamer.EmitSymbolAttribute(S, MCSA_Global);
   }
 
-  if (Subtarget->isTargetCOFF()) {
+  if (Subtarget->isTargetCOFF() && !Subtarget->isTargetEnvMacho()) {
     X86COFFMachineModuleInfo &COFFMMI =
       MMI->getObjFileInfo<X86COFFMachineModuleInfo>();
 
@@ -709,12 +709,13 @@ void X86AsmPrinter::PrintDebugValueComment(const MachineInstr *MI,
 //===----------------------------------------------------------------------===//
 
 static MCInstPrinter *createX86MCInstPrinter(const Target &T,
+                                             TargetMachine &TM,
                                              unsigned SyntaxVariant,
                                              const MCAsmInfo &MAI) {
   if (SyntaxVariant == 0)
-    return new X86ATTInstPrinter(MAI);
+    return new X86ATTInstPrinter(TM, MAI);
   if (SyntaxVariant == 1)
-    return new X86IntelInstPrinter(MAI);
+    return new X86IntelInstPrinter(TM, MAI);
   return 0;
 }
 

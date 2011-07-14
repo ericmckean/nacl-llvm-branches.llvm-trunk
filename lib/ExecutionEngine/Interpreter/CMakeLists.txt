@@ -1,13 +1,9 @@
-# If the user required a custom path for ffi headers, use it on its
-# abolute form (see config-ix.cmake):
-if( FFI_INCLUDE_DIR )
+# Make sure that the path to libffi headers is on the command
+# line. That path can be a compiler's non-default path even when
+# FFI_INCLUDE_DIR was not used, because cmake has its own paths for
+# searching for headers (CMAKE_SYSTEM_INCLUDE_PATH, for instance):
+if( FFI_INCLUDE_PATH )
   include_directories( ${FFI_INCLUDE_PATH} )
-endif()
-
-# If the user required a custom path for libffi, use it on its abolute
-# form (see config-ix.cmake):
-if( FFI_LIBRARY_DIR )
-  link_directories( ${FFI_LIBRARY_PATH} )
 endif()
 
 add_llvm_library(LLVMInterpreter
@@ -17,5 +13,5 @@ add_llvm_library(LLVMInterpreter
   )
 
 if( LLVM_ENABLE_FFI )
-  target_link_libraries( LLVMInterpreter ffi )
+  target_link_libraries( LLVMInterpreter ${FFI_LIBRARY_PATH} )
 endif()

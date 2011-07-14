@@ -39,8 +39,28 @@ void MCSectionELF::PrintSwitchToSection(const MCAsmInfo &MAI,
     return;
   }
 
-  OS << "\t.section\t" << getSectionName();
-  
+  StringRef name = getSectionName();
+  if (name.find_first_not_of("0123456789_."
+                             "abcdefghijklmnopqrstuvwxyz"
+                             "ABCDEFGHIJKLMNOPQRSTUVWXYZ") == name.npos) {
+    OS << "\t.section\t" << name;
+  } else {
+    OS << "\t.section\t\"";
+    for (const char *b = name.begin(), *e = name.end(); b < e; ++b) {
+      if (*b == '"') // Unquoted "
+        OS << "\\\"";
+      else if (*b != '\\') // Neither " or backslash
+        OS << *b;
+      else if (b + 1 == e) // Trailing backslash
+        OS << "\\\\";
+      else {
+        OS << b[0] << b[1]; // Quoted character
+        ++b;
+      }
+    }
+    OS << '"';
+  }
+
   // Handle the weird solaris syntax if desired.
   if (MAI.usesSunStyleELFSectionSwitchSyntax() && 
       !(Flags & ELF::SHF_MERGE)) {
@@ -61,6 +81,8 @@ void MCSectionELF::PrintSwitchToSection(const MCAsmInfo &MAI,
     OS << 'a';
   if (Flags & ELF::SHF_EXECINSTR)
     OS << 'x';
+  if (Flags & ELF::SHF_GROUP)
+    OS << 'G';
   if (Flags & ELF::SHF_WRITE)
     OS << 'w';
   if (Flags & ELF::SHF_MERGE)
@@ -104,6 +126,8 @@ void MCSectionELF::PrintSwitchToSection(const MCAsmInfo &MAI,
     OS << "," << EntrySize;
   }
 
+  if (Flags & ELF::SHF_GROUP)
+    OS << "," << Group->getName() << ",comdat";
   OS << '\n';
 }
 
@@ -113,17 +137,6 @@ bool MCSectionELF::UseCodeAlign() const {
 
 bool MCSectionELF::isVirtualSection() const {
   return getType() == ELF::SHT_NOBITS;
-}
-
-// HasCommonSymbols - True if this section holds common symbols, this is
-// indicated on the ELF object file by a symbol with SHN_COMMON section 
-// header index.
-bool MCSectionELF::HasCommonSymbols() const {
-  
-  if (StringRef(SectionName).startswith(".gnu.linkonce."))
-    return true;
-
-  return false;
 }
 
 unsigned MCSectionELF::DetermineEntrySize(SectionKind Kind) {

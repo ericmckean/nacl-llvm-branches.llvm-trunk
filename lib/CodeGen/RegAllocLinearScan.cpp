@@ -13,6 +13,7 @@
 
 #define DEBUG_TYPE "regalloc"
 #include "LiveDebugVariables.h"
+#include "LiveRangeEdit.h"
 #include "VirtRegMap.h"
 #include "VirtRegRewriter.h"
 #include "Spiller.h"
@@ -431,8 +432,12 @@ void RALinScan::ComputeRelatedRegClasses() {
     for (DenseMap<unsigned, const TargetRegisterClass*>::iterator
          I = OneClassForEachPhysReg.begin(), E = OneClassForEachPhysReg.end();
          I != E; ++I)
-      for (const unsigned *AS = tri_->getAliasSet(I->first); *AS; ++AS)
-        RelatedRegClasses.unionSets(I->second, OneClassForEachPhysReg[*AS]);
+      for (const unsigned *AS = tri_->getAliasSet(I->first); *AS; ++AS) {
+        const TargetRegisterClass *AliasClass = 
+          OneClassForEachPhysReg.lookup(*AS);
+        if (AliasClass)
+          RelatedRegClasses.unionSets(I->second, AliasClass);
+      }
 }
 
 /// attemptTrivialCoalescing - If a simple interval is defined by a copy, try
@@ -454,7 +459,7 @@ unsigned RALinScan::attemptTrivialCoalescing(LiveInterval &cur, unsigned Reg) {
   const LiveRange &range = cur.ranges.front();
 
   VNInfo *vni = range.valno;
-  if (vni->isUnused())
+  if (vni->isUnused() || !vni->def.isValid())
     return Reg;
 
   unsigned CandReg;
@@ -989,7 +994,7 @@ void RALinScan::assignRegOrStackSlotAtInterval(LiveInterval* cur) {
   // one, e.g. X86::mov32to32_. These move instructions are not coalescable.
   if (!vrm_->getRegAllocPref(cur->reg) && cur->hasAtLeastOneValue()) {
     VNInfo *vni = cur->begin()->valno;
-    if (!vni->isUnused()) {
+    if (!vni->isUnused() && vni->def.isValid()) {
       MachineInstr *CopyMI = li_->getInstructionFromIndex(vni->def);
       if (CopyMI && CopyMI->isCopy()) {
         unsigned DstSubReg = CopyMI->getOperand(0).getSubReg();
@@ -1225,8 +1230,9 @@ void RALinScan::assignRegOrStackSlotAtInterval(LiveInterval* cur) {
   // linearscan.
   if (cur->weight != HUGE_VALF && cur->weight <= minWeight) {
     DEBUG(dbgs() << "\t\t\tspilling(c): " << *cur << '\n');
-    SmallVector<LiveInterval*, 8> spillIs, added;
-    spiller_->spill(cur, added, spillIs);
+    SmallVector<LiveInterval*, 8> added;
+    LiveRangeEdit LRE(*cur, added);
+    spiller_->spill(LRE);
 
     std::sort(added.begin(), added.end(), LISorter());
     if (added.empty())
@@ -1302,7 +1308,8 @@ void RALinScan::assignRegOrStackSlotAtInterval(LiveInterval* cur) {
     DEBUG(dbgs() << "\t\t\tspilling(a): " << *sli << '\n');
     if (sli->beginIndex() < earliestStart)
       earliestStart = sli->beginIndex();
-    spiller_->spill(sli, added, spillIs);
+    LiveRangeEdit LRE(*sli, added, 0, &spillIs);
+    spiller_->spill(LRE);
     spilled.insert(sli->reg);
   }
 

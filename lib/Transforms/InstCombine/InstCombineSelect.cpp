@@ -503,9 +503,8 @@ static Value *foldSelectICmpAnd(const SelectInst &SI, ConstantInt *TrueVal,
   if (!IC || !IC->isEquality())
     return 0;
 
-  if (ConstantInt *C = dyn_cast<ConstantInt>(IC->getOperand(1)))
-    if (!C->isZero())
-      return 0;
+  if (!match(IC->getOperand(1), m_Zero()))
+    return 0;
 
   ConstantInt *AndRHS;
   Value *LHS = IC->getOperand(0);
@@ -791,6 +790,19 @@ Instruction *InstCombiner::visitSelectInst(SelectInst &SI) {
         CanSelectOperandBeMappingIntoPredBlock(FalseVal, SI))
       if (Instruction *NV = FoldOpIntoPhi(SI))
         return NV;
+
+  if (SelectInst *TrueSI = dyn_cast<SelectInst>(TrueVal)) {
+    if (TrueSI->getCondition() == CondVal) {
+      SI.setOperand(1, TrueSI->getTrueValue());
+      return &SI;
+    }
+  }
+  if (SelectInst *FalseSI = dyn_cast<SelectInst>(FalseVal)) {
+    if (FalseSI->getCondition() == CondVal) {
+      SI.setOperand(2, FalseSI->getFalseValue());
+      return &SI;
+    }
+  }
 
   if (BinaryOperator::isNot(CondVal)) {
     SI.setOperand(0, BinaryOperator::getNotArgument(CondVal));

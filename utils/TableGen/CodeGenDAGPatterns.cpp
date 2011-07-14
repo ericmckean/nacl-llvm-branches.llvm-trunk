@@ -344,51 +344,154 @@ bool EEVT::TypeSet::EnforceSmallerThan(EEVT::TypeSet &Other, TreePattern &TP) {
   if (!hasVectorTypes())
     MadeChange |= EnforceScalar(TP);
 
-  // This code does not currently handle nodes which have multiple types,
-  // where some types are integer, and some are fp.  Assert that this is not
-  // the case.
-  assert(!(hasIntegerTypes() && hasFloatingPointTypes()) &&
-         !(Other.hasIntegerTypes() && Other.hasFloatingPointTypes()) &&
-         "SDTCisOpSmallerThanOp does not handle mixed int/fp types!");
+  if (TypeVec.size() == 1 && Other.TypeVec.size() == 1) {
+    // If we are down to concrete types, this code does not currently
+    // handle nodes which have multiple types, where some types are
+    // integer, and some are fp.  Assert that this is not the case.
+    assert(!(hasIntegerTypes() && hasFloatingPointTypes()) &&
+           !(Other.hasIntegerTypes() && Other.hasFloatingPointTypes()) &&
+           "SDTCisOpSmallerThanOp does not handle mixed int/fp types!");
+
+    // Otherwise, if these are both vector types, either this vector
+    // must have a larger bitsize than the other, or this element type
+    // must be larger than the other.
+    EVT Type(TypeVec[0]);
+    EVT OtherType(Other.TypeVec[0]);
+
+    if (hasVectorTypes() && Other.hasVectorTypes()) {
+      if (Type.getSizeInBits() >= OtherType.getSizeInBits())
+        if (Type.getVectorElementType().getSizeInBits()
+            >= OtherType.getVectorElementType().getSizeInBits())
+          TP.error("Type inference contradiction found, '" +
+                   getName() + "' element type not smaller than '" +
+                   Other.getName() +"'!");
+    }
+    else
+      // For scalar types, the bitsize of this type must be larger
+      // than that of the other.
+      if (Type.getSizeInBits() >= OtherType.getSizeInBits())
+        TP.error("Type inference contradiction found, '" +
+                 getName() + "' is not smaller than '" +
+                 Other.getName() +"'!");
+
+  }
+  
+
+  // Handle int and fp as disjoint sets.  This won't work for patterns
+  // that have mixed fp/int types but those are likely rare and would
+  // not have been accepted by this code previously.
 
   // Okay, find the smallest type from the current set and remove it from the
   // largest set.
-  MVT::SimpleValueType Smallest = TypeVec[0];
+  MVT::SimpleValueType SmallestInt = MVT::LAST_VALUETYPE;
+  for (unsigned i = 0, e = TypeVec.size(); i != e; ++i)
+    if (isInteger(TypeVec[i])) {
+      SmallestInt = TypeVec[i];
+      break;
+    }
   for (unsigned i = 1, e = TypeVec.size(); i != e; ++i)
-    if (TypeVec[i] < Smallest)
-      Smallest = TypeVec[i];
+    if (isInteger(TypeVec[i]) && TypeVec[i] < SmallestInt)
+      SmallestInt = TypeVec[i];
+
+  MVT::SimpleValueType SmallestFP = MVT::LAST_VALUETYPE;
+  for (unsigned i = 0, e = TypeVec.size(); i != e; ++i)
+    if (isFloatingPoint(TypeVec[i])) {
+      SmallestFP = TypeVec[i];
+      break;
+    }
+  for (unsigned i = 1, e = TypeVec.size(); i != e; ++i)
+    if (isFloatingPoint(TypeVec[i]) && TypeVec[i] < SmallestFP)
+      SmallestFP = TypeVec[i];
+
+  int OtherIntSize = 0;
+  int OtherFPSize = 0;
+  for (SmallVector<MVT::SimpleValueType, 2>::iterator TVI =
+         Other.TypeVec.begin();
+       TVI != Other.TypeVec.end();
+       /* NULL */) {
+    if (isInteger(*TVI)) {
+      ++OtherIntSize;
+      if (*TVI == SmallestInt) {
+        TVI = Other.TypeVec.erase(TVI);
+        --OtherIntSize;
+        MadeChange = true;
+        continue;
+      }
+    }
+    else if (isFloatingPoint(*TVI)) {
+      ++OtherFPSize;
+      if (*TVI == SmallestFP) {
+        TVI = Other.TypeVec.erase(TVI);
+        --OtherFPSize;
+        MadeChange = true;
+        continue;
+      }
+    }
+    ++TVI;
+  }
 
   // If this is the only type in the large set, the constraint can never be
   // satisfied.
-  if (Other.TypeVec.size() == 1 && Other.TypeVec[0] == Smallest)
+  if ((Other.hasIntegerTypes() && OtherIntSize == 0)
+      || (Other.hasFloatingPointTypes() && OtherFPSize == 0))
     TP.error("Type inference contradiction found, '" +
              Other.getName() + "' has nothing larger than '" + getName() +"'!");
 
-  SmallVector<MVT::SimpleValueType, 2>::iterator TVI =
-    std::find(Other.TypeVec.begin(), Other.TypeVec.end(), Smallest);
-  if (TVI != Other.TypeVec.end()) {
-    Other.TypeVec.erase(TVI);
-    MadeChange = true;
-  }
-
   // Okay, find the largest type in the Other set and remove it from the
   // current set.
-  MVT::SimpleValueType Largest = Other.TypeVec[0];
+  MVT::SimpleValueType LargestInt = MVT::Other;
+  for (unsigned i = 0, e = Other.TypeVec.size(); i != e; ++i)
+    if (isInteger(Other.TypeVec[i])) {
+      LargestInt = Other.TypeVec[i];
+      break;
+    }
   for (unsigned i = 1, e = Other.TypeVec.size(); i != e; ++i)
-    if (Other.TypeVec[i] > Largest)
-      Largest = Other.TypeVec[i];
+    if (isInteger(Other.TypeVec[i]) && Other.TypeVec[i] > LargestInt)
+      LargestInt = Other.TypeVec[i];
+
+  MVT::SimpleValueType LargestFP = MVT::Other;
+  for (unsigned i = 0, e = Other.TypeVec.size(); i != e; ++i)
+    if (isFloatingPoint(Other.TypeVec[i])) {
+      LargestFP = Other.TypeVec[i];
+      break;
+    }
+  for (unsigned i = 1, e = Other.TypeVec.size(); i != e; ++i)
+    if (isFloatingPoint(Other.TypeVec[i]) && Other.TypeVec[i] > LargestFP)
+      LargestFP = Other.TypeVec[i];
+
+  int IntSize = 0;
+  int FPSize = 0;
+  for (SmallVector<MVT::SimpleValueType, 2>::iterator TVI =
+         TypeVec.begin();
+       TVI != TypeVec.end();
+       /* NULL */) {
+    if (isInteger(*TVI)) {
+      ++IntSize;
+      if (*TVI == LargestInt) {
+        TVI = TypeVec.erase(TVI);
+        --IntSize;
+        MadeChange = true;
+        continue;
+      }
+    }
+    else if (isFloatingPoint(*TVI)) {
+      ++FPSize;
+      if (*TVI == LargestFP) {
+        TVI = TypeVec.erase(TVI);
+        --FPSize;
+        MadeChange = true;
+        continue;
+      }
+    }
+    ++TVI;
+  }
 
   // If this is the only type in the small set, the constraint can never be
   // satisfied.
-  if (TypeVec.size() == 1 && TypeVec[0] == Largest)
+  if ((hasIntegerTypes() && IntSize == 0)
+      || (hasFloatingPointTypes() && FPSize == 0))
     TP.error("Type inference contradiction found, '" +
              getName() + "' has nothing smaller than '" + Other.getName()+"'!");
-
-  TVI = std::find(TypeVec.begin(), TypeVec.end(), Largest);
-  if (TVI != TypeVec.end()) {
-    TypeVec.erase(TVI);
-    MadeChange = true;
-  }
 
   return MadeChange;
 }
@@ -2185,13 +2288,14 @@ class InstAnalyzer {
   const CodeGenDAGPatterns &CDP;
   bool &mayStore;
   bool &mayLoad;
+  bool &IsBitcast;
   bool &HasSideEffects;
   bool &IsVariadic;
 public:
   InstAnalyzer(const CodeGenDAGPatterns &cdp,
-               bool &maystore, bool &mayload, bool &hse, bool &isv)
-    : CDP(cdp), mayStore(maystore), mayLoad(mayload), HasSideEffects(hse),
-      IsVariadic(isv) {
+               bool &maystore, bool &mayload, bool &isbc, bool &hse, bool &isv)
+    : CDP(cdp), mayStore(maystore), mayLoad(mayload), IsBitcast(isbc),
+      HasSideEffects(hse), IsVariadic(isv) {
   }
 
   /// Analyze - Analyze the specified instruction, returning true if the
@@ -2210,6 +2314,29 @@ public:
   }
 
 private:
+  bool IsNodeBitcast(const TreePatternNode *N) const {
+    if (HasSideEffects || mayLoad || mayStore || IsVariadic)
+      return false;
+
+    if (N->getNumChildren() != 2)
+      return false;
+
+    const TreePatternNode *N0 = N->getChild(0);
+    if (!N0->isLeaf() || !dynamic_cast<DefInit*>(N0->getLeafValue()))
+      return false;
+
+    const TreePatternNode *N1 = N->getChild(1);
+    if (N1->isLeaf())
+      return false;
+    if (N1->getNumChildren() != 1 || !N1->getChild(0)->isLeaf())
+      return false;
+
+    const SDNodeInfo &OpInfo = CDP.getSDNodeInfo(N1->getOperator());
+    if (OpInfo.getNumResults() != 1 || OpInfo.getNumOperands() != 1)
+      return false;
+    return OpInfo.getEnumName() == "ISD::BITCAST";
+  }
+
   void AnalyzeNode(const TreePatternNode *N) {
     if (N->isLeaf()) {
       if (DefInit *DI = dynamic_cast<DefInit*>(N->getLeafValue())) {
@@ -2230,8 +2357,10 @@ private:
       AnalyzeNode(N->getChild(i));
 
     // Ignore set nodes, which are not SDNodes.
-    if (N->getOperator()->getName() == "set")
+    if (N->getOperator()->getName() == "set") {
+      IsBitcast = IsNodeBitcast(N);
       return;
+    }
 
     // Get information about the SDNode for the operator.
     const SDNodeInfo &OpInfo = CDP.getSDNodeInfo(N->getOperator());
@@ -2260,12 +2389,13 @@ private:
 
 static void InferFromPattern(const CodeGenInstruction &Inst,
                              bool &MayStore, bool &MayLoad,
+                             bool &IsBitcast,
                              bool &HasSideEffects, bool &IsVariadic,
                              const CodeGenDAGPatterns &CDP) {
-  MayStore = MayLoad = HasSideEffects = IsVariadic = false;
+  MayStore = MayLoad = IsBitcast = HasSideEffects = IsVariadic = false;
 
   bool HadPattern =
-    InstAnalyzer(CDP, MayStore, MayLoad, HasSideEffects, IsVariadic)
+    InstAnalyzer(CDP, MayStore, MayLoad, IsBitcast, HasSideEffects, IsVariadic)
     .Analyze(Inst.TheDef);
 
   // InstAnalyzer only correctly analyzes mayStore/mayLoad so far.
@@ -2611,11 +2741,12 @@ void CodeGenDAGPatterns::InferInstructionFlags() {
     CodeGenInstruction &InstInfo =
       const_cast<CodeGenInstruction &>(*Instructions[i]);
     // Determine properties of the instruction from its pattern.
-    bool MayStore, MayLoad, HasSideEffects, IsVariadic;
-    InferFromPattern(InstInfo, MayStore, MayLoad, HasSideEffects, IsVariadic,
-                     *this);
+    bool MayStore, MayLoad, IsBitcast, HasSideEffects, IsVariadic;
+    InferFromPattern(InstInfo, MayStore, MayLoad, IsBitcast,
+                     HasSideEffects, IsVariadic, *this);
     InstInfo.mayStore = MayStore;
     InstInfo.mayLoad = MayLoad;
+    InstInfo.isBitcast = IsBitcast;
     InstInfo.hasSideEffects = HasSideEffects;
     InstInfo.Operands.isVariadic = IsVariadic;
   }

@@ -576,8 +576,16 @@ Value *InstCombiner::SimplifyDemandedUseBits(Value *V, APInt DemandedMask,
     break;
   case Instruction::Shl:
     if (ConstantInt *SA = dyn_cast<ConstantInt>(I->getOperand(1))) {
-      uint64_t ShiftAmt = SA->getLimitedValue(BitWidth);
+      uint64_t ShiftAmt = SA->getLimitedValue(BitWidth-1);
       APInt DemandedMaskIn(DemandedMask.lshr(ShiftAmt));
+      
+      // If the shift is NUW/NSW, then it does demand the high bits.
+      ShlOperator *IOp = cast<ShlOperator>(I);
+      if (IOp->hasNoSignedWrap())
+        DemandedMaskIn |= APInt::getHighBitsSet(BitWidth, ShiftAmt+1);
+      else if (IOp->hasNoUnsignedWrap())
+        DemandedMaskIn |= APInt::getHighBitsSet(BitWidth, ShiftAmt);
+      
       if (SimplifyDemandedBits(I->getOperandUse(0), DemandedMaskIn, 
                                KnownZero, KnownOne, Depth+1))
         return I;
@@ -592,10 +600,16 @@ Value *InstCombiner::SimplifyDemandedUseBits(Value *V, APInt DemandedMask,
   case Instruction::LShr:
     // For a logical shift right
     if (ConstantInt *SA = dyn_cast<ConstantInt>(I->getOperand(1))) {
-      uint64_t ShiftAmt = SA->getLimitedValue(BitWidth);
+      uint64_t ShiftAmt = SA->getLimitedValue(BitWidth-1);
       
       // Unsigned shift right.
       APInt DemandedMaskIn(DemandedMask.shl(ShiftAmt));
+      
+      // If the shift is exact, then it does demand the low bits (and knows that
+      // they are zero).
+      if (cast<LShrOperator>(I)->isExact())
+        DemandedMaskIn |= APInt::getLowBitsSet(BitWidth, ShiftAmt);
+      
       if (SimplifyDemandedBits(I->getOperandUse(0), DemandedMaskIn,
                                KnownZero, KnownOne, Depth+1))
         return I;
@@ -627,7 +641,7 @@ Value *InstCombiner::SimplifyDemandedUseBits(Value *V, APInt DemandedMask,
       return I->getOperand(0);
     
     if (ConstantInt *SA = dyn_cast<ConstantInt>(I->getOperand(1))) {
-      uint32_t ShiftAmt = SA->getLimitedValue(BitWidth);
+      uint32_t ShiftAmt = SA->getLimitedValue(BitWidth-1);
       
       // Signed shift right.
       APInt DemandedMaskIn(DemandedMask.shl(ShiftAmt));
@@ -635,6 +649,12 @@ Value *InstCombiner::SimplifyDemandedUseBits(Value *V, APInt DemandedMask,
       // demanded.
       if (DemandedMask.countLeadingZeros() <= ShiftAmt)
         DemandedMaskIn.setBit(BitWidth-1);
+      
+      // If the shift is exact, then it does demand the low bits (and knows that
+      // they are zero).
+      if (cast<AShrOperator>(I)->isExact())
+        DemandedMaskIn |= APInt::getLowBitsSet(BitWidth, ShiftAmt);
+      
       if (SimplifyDemandedBits(I->getOperandUse(0), DemandedMaskIn,
                                KnownZero, KnownOne, Depth+1))
         return I;
@@ -664,6 +684,10 @@ Value *InstCombiner::SimplifyDemandedUseBits(Value *V, APInt DemandedMask,
     break;
   case Instruction::SRem:
     if (ConstantInt *Rem = dyn_cast<ConstantInt>(I->getOperand(1))) {
+      // X % -1 demands all the bits because we don't want to introduce
+      // INT_MIN % -1 (== undef) by accident.
+      if (Rem->isAllOnesValue())
+        break;
       APInt RA = Rem->getValue().abs();
       if (RA.isPowerOf2()) {
         if (DemandedMask.ult(RA))    // srem won't affect demanded bits
@@ -691,6 +715,18 @@ Value *InstCombiner::SimplifyDemandedUseBits(Value *V, APInt DemandedMask,
 
         assert(!(KnownZero & KnownOne) && "Bits known to be one AND zero?"); 
       }
+    }
+
+    // The sign bit is the LHS's sign bit, except when the result of the
+    // remainder is zero.
+    if (DemandedMask.isNegative() && KnownZero.isNonNegative()) {
+      APInt Mask2 = APInt::getSignBit(BitWidth);
+      APInt LHSKnownZero(BitWidth, 0), LHSKnownOne(BitWidth, 0);
+      ComputeMaskedBits(I->getOperand(0), Mask2, LHSKnownZero, LHSKnownOne,
+                        Depth+1);
+      // If it's known zero, our sign bit is also zero.
+      if (LHSKnownZero.isNegative())
+        KnownZero |= LHSKnownZero;
     }
     break;
   case Instruction::URem: {

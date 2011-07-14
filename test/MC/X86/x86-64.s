@@ -2,6 +2,18 @@
 // RUN: FileCheck < %t %s
 // RUN: FileCheck --check-prefix=CHECK-STDERR < %t.err %s
 
+	monitor
+// CHECK: monitor
+// CHECK: encoding: [0x0f,0x01,0xc8]
+	monitor %rax, %rcx, %rdx
+// CHECK: monitor
+// CHECK: encoding: [0x0f,0x01,0xc8]
+	mwait
+// CHECK: mwait
+// CHECK: encoding: [0x0f,0x01,0xc9]
+	mwait %rax, %rcx
+// CHECK: mwait
+// CHECK: encoding: [0x0f,0x01,0xc9]
 
 // Suffix inference:
 
@@ -229,13 +241,32 @@ inl	%dx
 
 // PR8114
 // CHECK: outb	%al, %dx
+// CHECK: outb	%al, %dx
+// CHECK: outw	%ax, %dx
 // CHECK: outw	%ax, %dx
 // CHECK: outl	%eax, %dx
+// CHECK: outl	%eax, %dx
 
-out %al, (%dx)
-out %ax, (%dx)
-outl %eax, (%dx)
+out	%al, (%dx)
+outb	%al, (%dx)
+out	%ax, (%dx)
+outw	%ax, (%dx)
+out	%eax, (%dx)
+outl	%eax, (%dx)
 
+// CHECK: inb	%dx, %al
+// CHECK: inb	%dx, %al
+// CHECK: inw	%dx, %ax
+// CHECK: inw	%dx, %ax
+// CHECK: inl	%dx, %eax
+// CHECK: inl	%dx, %eax
+
+in	(%dx), %al
+inb	(%dx), %al
+in	(%dx), %ax
+inw	(%dx), %ax
+in	(%dx), %eax
+inl	(%dx), %eax
 
 // rdar://8431422
 
@@ -636,6 +667,10 @@ movl	0, %eax   // CHECK: movl 0, %eax # encoding: [0x8b,0x04,0x25,0x00,0x00,0x00
 // CHECK: encoding: [0x75,A]
         jnz 0
 
+// PR9264
+btl	$1, 0 // CHECK: btl $1, 0 # encoding: [0x0f,0xba,0x24,0x25,0x00,0x00,0x00,0x00,0x01]
+bt	$1, 0 // CHECK: btl $1, 0 # encoding: [0x0f,0xba,0x24,0x25,0x00,0x00,0x00,0x00,0x01]
+
 // rdar://8017515
 btq $0x01,%rdx
 // CHECK: btq	$1, %rdx
@@ -926,3 +961,166 @@ movq 18446744073709551615,%rbx   // CHECK: movq	-1, %rbx
 
 // PR8946
 movdqu	%xmm0, %xmm1 // CHECK: movdqu	%xmm0, %xmm1 # encoding: [0xf3,0x0f,0x6f,0xc8]
+
+// PR8935
+xgetbv // CHECK: xgetbv # encoding: [0x0f,0x01,0xd0]
+xsetbv // CHECK: xsetbv # encoding: [0x0f,0x01,0xd1]
+
+// CHECK: loope 0
+// CHECK: encoding: [0xe1,A]
+	loopz 0
+
+// CHECK: loopne 0
+// CHECK: encoding: [0xe0,A]
+	loopnz 0
+
+// CHECK: outsb # encoding: [0x6e]
+// CHECK: outsb
+// CHECK: outsb
+	outsb
+	outsb	%ds:(%rsi), %dx
+	outsb	(%rsi), %dx
+
+// CHECK: outsw # encoding: [0x66,0x6f]
+// CHECK: outsw
+// CHECK: outsw
+	outsw
+	outsw	%ds:(%rsi), %dx
+	outsw	(%rsi), %dx
+
+// CHECK: outsl # encoding: [0x6f]
+// CHECK: outsl
+	outsl
+	outsl	%ds:(%rsi), %dx
+	outsl	(%rsi), %dx
+
+// CHECK: insb # encoding: [0x6c]
+// CHECK: insb
+	insb
+	insb	%dx, %es:(%rdi)
+
+// CHECK: insw # encoding: [0x66,0x6d]
+// CHECK: insw
+	insw
+	insw	%dx, %es:(%rdi)
+
+// CHECK: insl # encoding: [0x6d]
+// CHECK: insl
+	insl
+	insl	%dx, %es:(%rdi)
+
+// CHECK: movsb # encoding: [0xa4]
+// CHECK: movsb
+// CHECK: movsb
+	movsb
+	movsb	%ds:(%rsi), %es:(%rdi)
+	movsb	(%rsi), %es:(%rdi)
+
+// CHECK: movsw # encoding: [0x66,0xa5]
+// CHECK: movsw
+// CHECK: movsw
+	movsw
+	movsw	%ds:(%rsi), %es:(%rdi)
+	movsw	(%rsi), %es:(%rdi)
+
+// CHECK: movsl # encoding: [0xa5]
+// CHECK: movsl
+// CHECK: movsl
+	movsl
+	movsl	%ds:(%rsi), %es:(%rdi)
+	movsl	(%rsi), %es:(%rdi)
+
+// CHECK: movsq # encoding: [0x48,0xa5]
+// CHECK: movsq
+// CHECK: movsq
+	movsq
+	movsq	%ds:(%rsi), %es:(%rdi)
+	movsq	(%rsi), %es:(%rdi)
+
+// CHECK: lodsb # encoding: [0xac]
+// CHECK: lodsb
+// CHECK: lodsb
+// CHECK: lodsb
+// CHECK: lodsb
+	lodsb
+	lodsb	%ds:(%rsi), %al
+	lodsb	(%rsi), %al
+	lods	%ds:(%rsi), %al
+	lods	(%rsi), %al
+
+// CHECK: lodsw # encoding: [0x66,0xad]
+// CHECK: lodsw
+// CHECK: lodsw
+// CHECK: lodsw
+// CHECK: lodsw
+	lodsw
+	lodsw	%ds:(%rsi), %ax
+	lodsw	(%rsi), %ax
+	lods	%ds:(%rsi), %ax
+	lods	(%rsi), %ax
+
+// CHECK: lodsl # encoding: [0xad]
+// CHECK: lodsl
+// CHECK: lodsl
+// CHECK: lodsl
+// CHECK: lodsl
+	lodsl
+	lodsl	%ds:(%rsi), %eax
+	lodsl	(%rsi), %eax
+	lods	%ds:(%rsi), %eax
+	lods	(%rsi), %eax
+
+// CHECK: lodsq # encoding: [0x48,0xad]
+// CHECK: lodsq
+// CHECK: lodsq
+// CHECK: lodsq
+// CHECK: lodsq
+	lodsq
+	lodsq	%ds:(%rsi), %rax
+	lodsq	(%rsi), %rax
+	lods	%ds:(%rsi), %rax
+	lods	(%rsi), %rax
+
+// CHECK: stosb # encoding: [0xaa]
+// CHECK: stosb
+// CHECK: stosb
+	stosb
+	stosb	%al, %es:(%rdi)
+	stos	%al, %es:(%rdi)
+
+// CHECK: stosw # encoding: [0x66,0xab]
+// CHECK: stosw
+// CHECK: stosw
+	stosw
+	stosw	%ax, %es:(%rdi)
+	stos	%ax, %es:(%rdi)
+
+// CHECK: stosl # encoding: [0xab]
+// CHECK: stosl
+// CHECK: stosl
+	stosl
+	stosl	%eax, %es:(%rdi)
+	stos	%eax, %es:(%rdi)
+
+// CHECK: stosq # encoding: [0x48,0xab]
+// CHECK: stosq
+// CHECK: stosq
+	stosq
+	stosq	%rax, %es:(%rdi)
+	stos	%rax, %es:(%rdi)
+
+// CHECK: strw
+// CHECK: encoding: [0x66,0x0f,0x00,0xc8]
+	str %ax
+
+// CHECK: strl
+// CHECK: encoding: [0x0f,0x00,0xc8]
+	str %eax
+
+// CHECK: strw
+// CHECK: encoding: [0x66,0x0f,0x00,0xc8]
+	str %ax
+
+// CHECK: strq
+// CHECK: encoding: [0x48,0x0f,0x00,0xc8]
+	str %rax

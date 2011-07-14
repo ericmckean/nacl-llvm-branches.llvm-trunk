@@ -41,6 +41,8 @@ def MRM_F8 : Format<41>;
 def MRM_F9 : Format<42>;
 def RawFrmImm8 : Format<43>;
 def RawFrmImm16 : Format<44>;
+def MRM_D0 : Format<45>;
+def MRM_D1 : Format<46>;
 
 // ImmType - This specifies the immediate type used by an instruction. This is
 // part of the ad-hoc solution used to emit machine instruction encodings by our
@@ -317,7 +319,7 @@ class VSSI<bits<8> o, Format F, dag outs, dag ins, string asm,
         Requires<[HasAVX]>;
 class VPSI<bits<8> o, Format F, dag outs, dag ins, string asm,
            list<dag> pattern>
-      : I<o, F, outs, ins, !strconcat("v", asm), pattern, SSEPackedSingle>,
+      : I<o, F, outs, ins, !strconcat("v", asm), pattern, SSEPackedSingle>, TB,
         Requires<[HasAVX]>;
 
 // SSE2 Instruction Templates:
@@ -351,7 +353,7 @@ class VSDI<bits<8> o, Format F, dag outs, dag ins, string asm,
         Requires<[HasAVX]>;
 class VPDI<bits<8> o, Format F, dag outs, dag ins, string asm,
            list<dag> pattern>
-      : I<o, F, outs, ins, !strconcat("v", asm), pattern, SSEPackedDouble>,
+      : I<o, F, outs, ins, !strconcat("v", asm), pattern, SSEPackedDouble>, TB,
         OpSize, Requires<[HasAVX]>;
 
 // SSE3 Instruction Templates:

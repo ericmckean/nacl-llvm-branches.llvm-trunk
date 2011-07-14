@@ -253,7 +253,8 @@ static void DoInitialMatch(const SCEV *S, Loop *L,
       DoInitialMatch(AR->getStart(), L, Good, Bad, SE);
       DoInitialMatch(SE.getAddRecExpr(SE.getConstant(AR->getType(), 0),
                                       AR->getStepRecurrence(SE),
-                                      AR->getLoop()),
+                                      // FIXME: AR->getNoWrapFlags()
+                                      AR->getLoop(), SCEV::FlagAnyWrap),
                      L, Good, Bad, SE);
       return;
     }
@@ -455,7 +456,10 @@ static const SCEV *getExactSDiv(const SCEV *LHS, const SCEV *RHS,
       const SCEV *Start = getExactSDiv(AR->getStart(), RHS, SE,
                                        IgnoreSignificantBits);
       if (!Start) return 0;
-      return SE.getAddRecExpr(Start, Step, AR->getLoop());
+      // FlagNW is independent of the start value, step direction, and is
+      // preserved with smaller magnitude steps.
+      // FIXME: AR->getNoWrapFlags(SCEV::FlagNW)
+      return SE.getAddRecExpr(Start, Step, AR->getLoop(), SCEV::FlagAnyWrap);
     }
     return 0;
   }
@@ -520,7 +524,9 @@ static int64_t ExtractImmediate(const SCEV *&S, ScalarEvolution &SE) {
     SmallVector<const SCEV *, 8> NewOps(AR->op_begin(), AR->op_end());
     int64_t Result = ExtractImmediate(NewOps.front(), SE);
     if (Result != 0)
-      S = SE.getAddRecExpr(NewOps, AR->getLoop());
+      S = SE.getAddRecExpr(NewOps, AR->getLoop(),
+                           // FIXME: AR->getNoWrapFlags(SCEV::FlagNW)
+                           SCEV::FlagAnyWrap);
     return Result;
   }
   return 0;
@@ -545,7 +551,9 @@ static GlobalValue *ExtractSymbol(const SCEV *&S, ScalarEvolution &SE) {
     SmallVector<const SCEV *, 8> NewOps(AR->op_begin(), AR->op_end());
     GlobalValue *Result = ExtractSymbol(NewOps.front(), SE);
     if (Result)
-      S = SE.getAddRecExpr(NewOps, AR->getLoop());
+      S = SE.getAddRecExpr(NewOps, AR->getLoop(),
+                           // FIXME: AR->getNoWrapFlags(SCEV::FlagNW)
+                           SCEV::FlagAnyWrap);
     return Result;
   }
   return 0;
@@ -2236,7 +2244,9 @@ static void CollectSubexprs(const SCEV *S, const SCEVConstant *C,
     if (!AR->getStart()->isZero()) {
       CollectSubexprs(SE.getAddRecExpr(SE.getConstant(AR->getType(), 0),
                                        AR->getStepRecurrence(SE),
-                                       AR->getLoop()),
+                                       AR->getLoop(),
+                                       //FIXME: AR->getNoWrapFlags(SCEV::FlagNW)
+                                       SCEV::FlagAnyWrap),
                       C, Ops, L, SE);
       CollectSubexprs(AR->getStart(), C, Ops, L, SE);
       return;
@@ -3047,7 +3057,7 @@ void LSRInstance::NarrowSearchSpaceByCollapsingUnrolledCode() {
   }
 }
 
-/// NarrowSearchSpaceByRefilteringUndesirableDedicatedRegisters - Call 
+/// NarrowSearchSpaceByRefilteringUndesirableDedicatedRegisters - Call
 /// FilterOutUndesirableDedicatedRegisters again, if necessary, now that
 /// we've done more filtering, as it may be able to find more formulae to
 /// eliminate.
@@ -3544,21 +3554,23 @@ void LSRInstance::RewriteForPHI(PHINode *PN,
       // is the canonical backedge for this loop, which complicates post-inc
       // users.
       if (e != 1 && BB->getTerminator()->getNumSuccessors() > 1 &&
-          !isa<IndirectBrInst>(BB->getTerminator()) &&
-          (PN->getParent() != L->getHeader() || !L->contains(BB))) {
-        // Split the critical edge.
-        BasicBlock *NewBB = SplitCriticalEdge(BB, PN->getParent(), P);
+          !isa<IndirectBrInst>(BB->getTerminator())) {
+        Loop *PNLoop = LI.getLoopFor(PN->getParent());
+        if (!PNLoop || PN->getParent() != PNLoop->getHeader()) {
+          // Split the critical edge.
+          BasicBlock *NewBB = SplitCriticalEdge(BB, PN->getParent(), P);
 
-        // If PN is outside of the loop and BB is in the loop, we want to
-        // move the block to be immediately before the PHI block, not
-        // immediately after BB.
-        if (L->contains(BB) && !L->contains(PN))
-          NewBB->moveBefore(PN->getParent());
+          // If PN is outside of the loop and BB is in the loop, we want to
+          // move the block to be immediately before the PHI block, not
+          // immediately after BB.
+          if (L->contains(BB) && !L->contains(PN))
+            NewBB->moveBefore(PN->getParent());
 
-        // Splitting the edge can reduce the number of PHI entries we have.
-        e = PN->getNumIncomingValues();
-        BB = NewBB;
-        i = PN->getBasicBlockIndex(BB);
+          // Splitting the edge can reduce the number of PHI entries we have.
+          e = PN->getNumIncomingValues();
+          BB = NewBB;
+          i = PN->getBasicBlockIndex(BB);
+        }
       }
 
       std::pair<DenseMap<BasicBlock *, Value *>::iterator, bool> Pair =
@@ -3822,6 +3834,9 @@ void LoopStrengthReduce::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addPreserved<DominatorTree>();
   AU.addRequired<ScalarEvolution>();
   AU.addPreserved<ScalarEvolution>();
+  // Requiring LoopSimplify a second time here prevents IVUsers from running
+  // twice, since LoopSimplify was invalidated by running ScalarEvolution.
+  AU.addRequiredID(LoopSimplifyID);
   AU.addRequired<IVUsers>();
   AU.addPreserved<IVUsers>();
 }

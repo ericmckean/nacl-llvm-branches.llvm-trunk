@@ -263,6 +263,7 @@ static const char *GetCodeName(unsigned CodeID, unsigned BlockID,
     switch(CodeID) {
     default:return 0;
     case bitc::METADATA_ATTACHMENT:  return "METADATA_ATTACHMENT";
+    case bitc::METADATA_ATTACHMENT2: return "METADATA_ATTACHMENT2";
     }
   case bitc::METADATA_BLOCK_ID:
     switch(CodeID) {
@@ -277,7 +278,6 @@ static const char *GetCodeName(unsigned CodeID, unsigned BlockID,
     case bitc::METADATA_NODE2:       return "METADATA_NODE2";
     case bitc::METADATA_FN_NODE2:    return "METADATA_FN_NODE2";
     case bitc::METADATA_NAMED_NODE2: return "METADATA_NAMED_NODE2";
-    case bitc::METADATA_ATTACHMENT2: return "METADATA_ATTACHMENT2";
     }
   }
 }
@@ -471,11 +471,11 @@ static bool ParseBlock(BitstreamCursor &Stream, unsigned IndentLevel) {
 }
 
 static void PrintSize(double Bits) {
-  fprintf(stderr, "%.2f/%.2fB/%lluW", Bits, Bits/8,(unsigned long long)Bits/32);
+  fprintf(stderr, "%.2f/%.2fB/%luW", Bits, Bits/8,(unsigned long)(Bits/32));
 }
 static void PrintSize(uint64_t Bits) {
-  fprintf(stderr, "%llub/%.2fB/%lluW", (unsigned long long)Bits,
-          (double)Bits/8, (unsigned long long)Bits/32);
+  fprintf(stderr, "%lub/%.2fB/%luW", (unsigned long)Bits,
+          (double)Bits/8, (unsigned long)(Bits/32));
 }
 
 
@@ -601,8 +601,8 @@ static int AnalyzeBitcode() {
       for (unsigned i = 0, e = FreqPairs.size(); i != e; ++i) {
         const PerRecordStats &RecStats = Stats.CodeFreq[FreqPairs[i].second];
 
-        fprintf(stderr, "\t\t%7d %9llu ", RecStats.NumInstances,
-                (unsigned long long)RecStats.TotalBits);
+        fprintf(stderr, "\t\t%7d %9lu ", RecStats.NumInstances,
+                (unsigned long)RecStats.TotalBits);
 
         if (RecStats.NumAbbrev)
           fprintf(stderr, "%7.2f  ",

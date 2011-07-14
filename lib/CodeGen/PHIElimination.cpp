@@ -28,11 +28,17 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Statistic.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/Debug.h"
 #include <algorithm>
 #include <map>
 using namespace llvm;
+
+static cl::opt<bool>
+DisableEdgeSplitting("disable-phi-elim-edge-splitting", cl::init(false),
+                     cl::Hidden, cl::desc("Disable critical edge splitting "
+                                          "during PHI elimination"));
 
 namespace {
   class PHIElimination : public MachineFunctionPass {
@@ -83,6 +89,7 @@ namespace {
 }
 
 STATISTIC(NumAtomic, "Number of atomic phis lowered");
+STATISTIC(NumCriticalEdgesSplit, "Number of critical edges split");
 STATISTIC(NumReused, "Number of reused lowered phis");
 
 char PHIElimination::ID = 0;
@@ -104,10 +111,12 @@ bool PHIElimination::runOnMachineFunction(MachineFunction &MF) {
   bool Changed = false;
 
   // Split critical edges to help the coalescer
-  if (LiveVariables *LV = getAnalysisIfAvailable<LiveVariables>()) {
-    MachineLoopInfo *MLI = getAnalysisIfAvailable<MachineLoopInfo>();
-    for (MachineFunction::iterator I = MF.begin(), E = MF.end(); I != E; ++I)
-      Changed |= SplitPHIEdges(MF, *I, *LV, MLI);
+  if (!DisableEdgeSplitting) {
+    if (LiveVariables *LV = getAnalysisIfAvailable<LiveVariables>()) {
+      MachineLoopInfo *MLI = getAnalysisIfAvailable<MachineLoopInfo>();
+      for (MachineFunction::iterator I = MF.begin(), E = MF.end(); I != E; ++I)
+        Changed |= SplitPHIEdges(MF, *I, *LV, MLI);
+    }
   }
 
   // Populate VRegPHIUseCount
@@ -392,9 +401,9 @@ void PHIElimination::analyzePHINodes(const MachineFunction& MF) {
 }
 
 bool PHIElimination::SplitPHIEdges(MachineFunction &MF,
-                                         MachineBasicBlock &MBB,
-                                         LiveVariables &LV,
-                                         MachineLoopInfo *MLI) {
+                                   MachineBasicBlock &MBB,
+                                   LiveVariables &LV,
+                                   MachineLoopInfo *MLI) {
   if (MBB.empty() || !MBB.front().isPHI() || MBB.isLandingPad())
     return false;   // Quick exit for basic blocks without PHIs.
 
@@ -413,10 +422,14 @@ bool PHIElimination::SplitPHIEdges(MachineFunction &MF,
           !LV.isLiveIn(Reg, MBB) && LV.isLiveOut(Reg, *PreMBB)) {
         if (!MLI ||
             !(MLI->getLoopFor(PreMBB) == MLI->getLoopFor(&MBB) &&
-              MLI->isLoopHeader(&MBB)))
-          Changed |= PreMBB->SplitCriticalEdge(&MBB, this) != 0;
+              MLI->isLoopHeader(&MBB))) {
+          if (PreMBB->SplitCriticalEdge(&MBB, this)) {
+            Changed = true;
+            ++NumCriticalEdgesSplit;
+          }
+        }
       }
     }
   }
-  return true;
+  return Changed;
 }
