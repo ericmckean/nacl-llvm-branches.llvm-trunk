@@ -60,5 +60,7 @@ endif
 #@ LOCALMOD-BEGIN
 # This is to fix an upstream bug. It is in the process of being upstreamed.
 # This line can be removed after it has been fixed upstream and we've merged.
-LLVMLibsOptions := $(LLVMLibsOptions) -Wl,-soname=$(SharedPrefix)LTO$(SHLIBEXT)
+ifneq ($(HOST_OS),Darwin)
+  LLVMLibsOptions := $(LLVMLibsOptions) -Wl,-soname=$(SharedPrefix)LTO$(SHLIBEXT)
+endif
 #@ LOCALMOD-END
