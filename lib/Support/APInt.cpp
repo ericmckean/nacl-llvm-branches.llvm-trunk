@@ -1505,7 +1505,7 @@ APInt::ms APInt::magic() const {
       r2 = r2 - ad;
     }
     delta = ad - r2;
-  } while (q1.ule(delta) || (q1 == delta && r1 == 0));
+  } while (q1.ult(delta) || (q1 == delta && r1 == 0));
 
   mag.m = q2 + 1;
   if (d.isNegative()) mag.m = -mag.m;   // resulting magic number
@@ -1517,13 +1517,15 @@ APInt::ms APInt::magic() const {
 /// division by a constant as a sequence of multiplies, adds and shifts.
 /// Requires that the divisor not be 0.  Taken from "Hacker's Delight", Henry
 /// S. Warren, Jr., chapter 10.
-APInt::mu APInt::magicu() const {
+/// LeadingZeros can be used to simplify the calculation if the upper bits
+/// of the devided value are known zero.
+APInt::mu APInt::magicu(unsigned LeadingZeros) const {
   const APInt& d = *this;
   unsigned p;
   APInt nc, delta, q1, r1, q2, r2;
   struct mu magu;
   magu.a = 0;               // initialize "add" indicator
-  APInt allOnes = APInt::getAllOnesValue(d.getBitWidth());
+  APInt allOnes = APInt::getAllOnesValue(d.getBitWidth()).lshr(LeadingZeros);
   APInt signedMin = APInt::getSignedMinValue(d.getBitWidth());
   APInt signedMax = APInt::getSignedMaxValue(d.getBitWidth());
 

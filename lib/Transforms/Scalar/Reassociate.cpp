@@ -22,6 +22,7 @@
 
 #define DEBUG_TYPE "reassociate"
 #include "llvm/Transforms/Scalar.h"
+#include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Constants.h"
 #include "llvm/DerivedTypes.h"
 #include "llvm/Function.h"
@@ -74,6 +75,7 @@ namespace {
   class Reassociate : public FunctionPass {
     DenseMap<BasicBlock*, unsigned> RankMap;
     DenseMap<AssertingVH<>, unsigned> ValueRankMap;
+    SmallVector<WeakVH, 8> DeadInsts;
     bool MadeChange;
   public:
     static char ID; // Pass identification, replacement for typeid
@@ -113,13 +115,13 @@ FunctionPass *llvm::createReassociatePass() { return new Reassociate(); }
 
 void Reassociate::RemoveDeadBinaryOp(Value *V) {
   Instruction *Op = dyn_cast<Instruction>(V);
-  if (!Op || !isa<BinaryOperator>(Op) || !Op->use_empty())
+  if (!Op || !isa<BinaryOperator>(Op))
     return;
   
   Value *LHS = Op->getOperand(0), *RHS = Op->getOperand(1);
   
   ValueRankMap.erase(Op);
-  Op->eraseFromParent();
+  DeadInsts.push_back(Op);
   RemoveDeadBinaryOp(LHS);
   RemoveDeadBinaryOp(RHS);
 }
@@ -240,6 +242,12 @@ void Reassociate::LinearizeExpr(BinaryOperator *I) {
   RHS->setOperand(0, LHS);
   I->setOperand(0, RHS);
 
+  // Conservatively clear all the optional flags, which may not hold
+  // after the reassociation.
+  I->clearSubclassOptionalData();
+  LHS->clearSubclassOptionalData();
+  RHS->clearSubclassOptionalData();
+
   ++NumLinear;
   MadeChange = true;
   DEBUG(dbgs() << "Linearized: " << *I << '\n');
@@ -341,6 +349,12 @@ void Reassociate::RewriteExprTree(BinaryOperator *I,
       DEBUG(dbgs() << "RA: " << *I << '\n');
       I->setOperand(0, Ops[i].Op);
       I->setOperand(1, Ops[i+1].Op);
+
+      // Clear all the optional flags, which may not hold after the
+      // reassociation if the expression involved more than just this operation.
+      if (Ops.size() != 2)
+        I->clearSubclassOptionalData();
+
       DEBUG(dbgs() << "TO: " << *I << '\n');
       MadeChange = true;
       ++NumChanged;
@@ -356,6 +370,11 @@ void Reassociate::RewriteExprTree(BinaryOperator *I,
   if (I->getOperand(1) != Ops[i].Op) {
     DEBUG(dbgs() << "RA: " << *I << '\n');
     I->setOperand(1, Ops[i].Op);
+
+    // Conservatively clear all the optional flags, which may not hold
+    // after the reassociation.
+    I->clearSubclassOptionalData();
+
     DEBUG(dbgs() << "TO: " << *I << '\n');
     MadeChange = true;
     ++NumChanged;
@@ -586,7 +605,7 @@ Value *Reassociate::RemoveFactorFromExpression(Value *V, Value *Factor) {
   // remaining operand.
   if (Factors.size() == 1) {
     ValueRankMap.erase(BO);
-    BO->eraseFromParent();
+    DeadInsts.push_back(BO);
     V = Factors[0].Op;
   } else {
     RewriteExprTree(BO, Factors);
@@ -811,16 +830,23 @@ Value *Reassociate::OptimizeAdd(Instruction *I,
     // RemoveFactorFromExpression on successive values to behave differently.
     Instruction *DummyInst = BinaryOperator::CreateAdd(MaxOccVal, MaxOccVal);
     SmallVector<Value*, 4> NewMulOps;
-    for (unsigned i = 0, e = Ops.size(); i != e; ++i) {
+    for (unsigned i = 0; i != Ops.size(); ++i) {
       // Only try to remove factors from expressions we're allowed to.
       BinaryOperator *BOp = dyn_cast<BinaryOperator>(Ops[i].Op);
       if (BOp == 0 || BOp->getOpcode() != Instruction::Mul || !BOp->use_empty())
         continue;
       
       if (Value *V = RemoveFactorFromExpression(Ops[i].Op, MaxOccVal)) {
-        NewMulOps.push_back(V);
-        Ops.erase(Ops.begin()+i);
-        --i; --e;
+        // The factorized operand may occur several times.  Convert them all in
+        // one fell swoop.
+        for (unsigned j = Ops.size(); j != i;) {
+          --j;
+          if (Ops[j].Op == Ops[i].Op) {
+            NewMulOps.push_back(V);
+            Ops.erase(Ops.begin()+j);
+          }
+        }
+        --i;
       }
     }
     
@@ -1068,6 +1094,11 @@ bool Reassociate::runOnFunction(Function &F) {
   MadeChange = false;
   for (Function::iterator FI = F.begin(), FE = F.end(); FI != FE; ++FI)
     ReassociateBB(FI);
+
+  // Now that we're done, delete any instructions which are no longer used.
+  while (!DeadInsts.empty())
+    if (Value *V = DeadInsts.pop_back_val())
+      RecursivelyDeleteTriviallyDeadInstructions(V);
 
   // We are done with the rank map.
   RankMap.clear();

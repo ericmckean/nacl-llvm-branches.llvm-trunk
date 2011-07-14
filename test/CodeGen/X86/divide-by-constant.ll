@@ -40,7 +40,7 @@ entry:
 	%div = sdiv i16 %x, 33		; <i32> [#uses=1]
 	ret i16 %div
 ; CHECK: test4:
-; CHECK: imull	$-1985, %ecx, %ecx 
+; CHECK: imull	$1986, %eax, %eax 
 }
 
 define i32 @test5(i32 %A) nounwind {
@@ -51,3 +51,23 @@ define i32 @test5(i32 %A) nounwind {
 ; CHECK: mull	4(%esp)
 }
 
+define signext i16 @test6(i16 signext %x) nounwind {
+entry:
+  %div = sdiv i16 %x, 10
+  ret i16 %div
+; CHECK: test6:
+; CHECK: imull	$26215, %eax, %eax
+; CHECK: shrl	$31, %ecx
+; CHECK: sarl	$18, %eax
+}
+
+define i32 @test7(i32 %x) nounwind {
+  %div = udiv i32 %x, 28
+  ret i32 %div
+; CHECK: test7:
+; CHECK: shrl $2
+; CHECK: movl $613566757
+; CHECK: mull
+; CHECK-NOT: shrl
+; CHECK: ret
+}

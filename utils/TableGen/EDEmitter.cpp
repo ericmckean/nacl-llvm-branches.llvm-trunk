@@ -325,6 +325,9 @@ static int X86TypeFromOpName(LiteralConstantEmitter *type,
   PCR("uncondbrtarget");
   PCR("bltarget");
 
+  // all I, ARM mode only, conditional/unconditional
+  PCR("br_target");
+  PCR("bl_target");
   return 1;
 }
 
@@ -354,7 +357,8 @@ static void X86PopulateOperands(
     const CGIOperandList::OperandInfo &operandInfo = inst.Operands[index];
     Record &rec = *operandInfo.Rec;
 
-    if (X86TypeFromOpName(operandTypes[index], rec.getName())) {
+    if (X86TypeFromOpName(operandTypes[index], rec.getName()) &&
+        !rec.isSubClassOf("PointerLikeRegClass")) {
       errs() << "Operand type: " << rec.getName().c_str() << "\n";
       errs() << "Operand name: " << operandInfo.Name.c_str() << "\n";
       errs() << "Instruction name: " << inst.TheDef->getName().c_str() << "\n";
@@ -572,6 +576,8 @@ static int ARMFlagFromOpName(LiteralConstantEmitter *type,
   IMM("nohash_imm");
   IMM("p_imm");
   IMM("c_imm");
+  IMM("imod_op");
+  IMM("iflags_op");
   IMM("cpinst_operand");
   IMM("setend_op");
   IMM("cps_opt");
@@ -592,6 +598,11 @@ static int ARMFlagFromOpName(LiteralConstantEmitter *type,
   IMM("t2adrlabel");
   IMM("shift_imm");
   IMM("neon_vcvt_imm32");
+  IMM("shr_imm8");
+  IMM("shr_imm16");
+  IMM("shr_imm32");
+  IMM("shr_imm64");
+  IMM("t2ldrlabel");
 
   MISC("brtarget", "kOperandTypeARMBranchTarget");                // ?
   MISC("uncondbrtarget", "kOperandTypeARMBranchTarget");           // ?
@@ -599,6 +610,10 @@ static int ARMFlagFromOpName(LiteralConstantEmitter *type,
   MISC("t_bcctarget", "kOperandTypeARMBranchTarget");             // ?
   MISC("t_cbtarget", "kOperandTypeARMBranchTarget");              // ?
   MISC("bltarget", "kOperandTypeARMBranchTarget");                // ?
+
+  MISC("br_target", "kOperandTypeARMBranchTarget");                // ?
+  MISC("bl_target", "kOperandTypeARMBranchTarget");                // ?
+
   MISC("t_bltarget", "kOperandTypeARMBranchTarget");              // ?
   MISC("t_blxtarget", "kOperandTypeARMBranchTarget");             // ?
   MISC("so_reg", "kOperandTypeARMSoReg");                         // R, R, I

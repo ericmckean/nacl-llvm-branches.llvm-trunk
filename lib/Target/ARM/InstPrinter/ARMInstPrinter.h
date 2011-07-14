@@ -17,14 +17,18 @@
 #include "llvm/MC/MCInstPrinter.h"
 
 namespace llvm {
-  class MCOperand;
+
+class MCOperand;
+class TargetMachine;
 
 class ARMInstPrinter : public MCInstPrinter {
 public:
-  ARMInstPrinter(const MCAsmInfo &MAI) : MCInstPrinter(MAI) {}
+  ARMInstPrinter(TargetMachine &TM, const MCAsmInfo &MAI)
+    : MCInstPrinter(MAI) {}
 
   virtual void printInst(const MCInst *MI, raw_ostream &O);
   virtual StringRef getOpcodeName(unsigned Opcode) const;
+  virtual StringRef getRegName(unsigned RegNo) const;
 
   static const char *getInstructionName(unsigned Opcode);
 
@@ -85,9 +89,9 @@ public:
                                    raw_ostream &O);
 
   void printSetendOperand(const MCInst *MI, unsigned OpNum, raw_ostream &O);
-  void printCPSOptionOperand(const MCInst *MI, unsigned OpNum, raw_ostream &O);
+  void printCPSIMod(const MCInst *MI, unsigned OpNum, raw_ostream &O);
+  void printCPSIFlag(const MCInst *MI, unsigned OpNum, raw_ostream &O);
   void printMSRMaskOperand(const MCInst *MI, unsigned OpNum, raw_ostream &O);
-  void printNegZeroOperand(const MCInst *MI, unsigned OpNum, raw_ostream &O);
   void printPredicateOperand(const MCInst *MI, unsigned OpNum, raw_ostream &O);
   void printMandatoryPredicateOperand(const MCInst *MI, unsigned OpNum,
                                       raw_ostream &O);

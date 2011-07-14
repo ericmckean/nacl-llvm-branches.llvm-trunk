@@ -84,9 +84,7 @@ LimitFPPrecision("limit-float-precision",
 // %buffer = alloca [4096 x i8]
 // %data = load [4096 x i8]* %argPtr
 // store [4096 x i8] %data, [4096 x i8]* %buffer
-static cl::opt<unsigned>
-MaxParallelChains("dag-chain-limit", cl::desc("Max parallel isel dag chains"),
-                  cl::init(64), cl::Hidden);
+static const unsigned MaxParallelChains = 64;
 
 static SDValue getCopyFromPartsVector(SelectionDAG &DAG, DebugLoc DL,
                                       const SDValue *Parts, unsigned NumParts,
@@ -641,16 +639,17 @@ SDValue RegsForValue::getCopyFromRegs(SelectionDAG &DAG,
       // If the source register was virtual and if we know something about it,
       // add an assert node.
       if (!TargetRegisterInfo::isVirtualRegister(Regs[Part+i]) ||
-          !RegisterVT.isInteger() || RegisterVT.isVector() ||
-          !FuncInfo.LiveOutRegInfo.inBounds(Regs[Part+i]))
+          !RegisterVT.isInteger() || RegisterVT.isVector())
         continue;
-      
-      const FunctionLoweringInfo::LiveOutInfo &LOI =
-        FuncInfo.LiveOutRegInfo[Regs[Part+i]];
+
+      const FunctionLoweringInfo::LiveOutInfo *LOI =
+        FuncInfo.GetLiveOutRegInfo(Regs[Part+i]);
+      if (!LOI)
+        continue;
 
       unsigned RegSize = RegisterVT.getSizeInBits();
-      unsigned NumSignBits = LOI.NumSignBits;
-      unsigned NumZeroBits = LOI.KnownZero.countLeadingOnes();
+      unsigned NumSignBits = LOI->NumSignBits;
+      unsigned NumZeroBits = LOI->KnownZero.countLeadingOnes();
 
       // FIXME: We capture more information than the dag can represent.  For
       // now, just use the tightest assertzext/assertsext possible.
@@ -908,7 +907,7 @@ void SelectionDAGBuilder::resolveDanglingDebugInfo(const Value *V,
                               Val.getResNo(), Offset, dl, DbgSDNodeOrder);
         DAG.AddDbgValue(SDV, Val.getNode(), false);
       }
-    } else 
+    } else
       DEBUG(dbgs() << "Dropping debug info for " << DI);
     DanglingDebugInfoMap[V] = DanglingDebugInfo();
   }
@@ -929,7 +928,9 @@ SDValue SelectionDAGBuilder::getValue(const Value *V) {
     unsigned InReg = It->second;
     RegsForValue RFV(*DAG.getContext(), TLI, InReg, V->getType());
     SDValue Chain = DAG.getEntryNode();
-    return N = RFV.getCopyFromRegs(DAG, FuncInfo, getCurDebugLoc(), Chain,NULL);
+    N = RFV.getCopyFromRegs(DAG, FuncInfo, getCurDebugLoc(), Chain,NULL);
+    resolveDanglingDebugInfo(V, N);
+    return N;
   }
 
   // Otherwise create a new SDValue and remember it.
@@ -1127,15 +1128,8 @@ void SelectionDAGBuilder::visitRet(const ReturnInst &I) {
         else if (F->paramHasAttr(0, Attribute::ZExt))
           ExtendKind = ISD::ZERO_EXTEND;
 
-        // FIXME: C calling convention requires the return type to be promoted
-        // to at least 32-bit. But this is not necessary for non-C calling
-        // conventions. The frontend should mark functions whose return values
-        // require promoting with signext or zeroext attributes.
-        if (ExtendKind != ISD::ANY_EXTEND && VT.isInteger()) {
-          EVT MinVT = TLI.getRegisterType(*DAG.getContext(), MVT::i32);
-          if (VT.bitsLT(MinVT))
-            VT = MinVT;
-        }
+        if (ExtendKind != ISD::ANY_EXTEND && VT.isInteger())
+          VT = TLI.getTypeForExtArgOrReturn(*DAG.getContext(), VT, ExtendKind);
 
         unsigned NumParts = TLI.getNumRegisters(*DAG.getContext(), VT);
         EVT PartVT = TLI.getRegisterType(*DAG.getContext(), VT);
@@ -1150,9 +1144,9 @@ void SelectionDAGBuilder::visitRet(const ReturnInst &I) {
           Flags.setInReg();
 
         // Propagate extension type if any
-        if (F->paramHasAttr(0, Attribute::SExt))
+        if (ExtendKind == ISD::SIGN_EXTEND)
           Flags.setSExt();
-        else if (F->paramHasAttr(0, Attribute::ZExt))
+        else if (ExtendKind == ISD::ZERO_EXTEND)
           Flags.setZExt();
 
         for (unsigned i = 0; i < NumParts; ++i) {
@@ -1415,7 +1409,7 @@ void SelectionDAGBuilder::visitBr(const BranchInst &I) {
   //     jle foo
   //
   if (const BinaryOperator *BOp = dyn_cast<BinaryOperator>(CondVal)) {
-    if (!TLI.isJumpExpensive() && 
+    if (!TLI.isJumpExpensive() &&
         BOp->hasOneUse() &&
         (BOp->getOpcode() == Instruction::And ||
          BOp->getOpcode() == Instruction::Or)) {
@@ -1913,7 +1907,7 @@ bool SelectionDAGBuilder::handleJTSwitchCase(CaseRec& CR,
   DEBUG(dbgs() << "Lowering jump table\n"
                << "First entry: " << First << ". Last entry: " << Last << '\n'
                << "Range: " << Range
-               << "Size: " << TSize << ". Density: " << Density << "\n\n");
+               << ". Size: " << TSize << ". Density: " << Density << "\n\n");
 
   // Get the MachineFunction which holds the current MBB.  This is used when
   // inserting any additional MBBs necessary to represent the switch.
@@ -2259,7 +2253,8 @@ size_t SelectionDAGBuilder::Clusterify(CaseVector& Cases,
   if (Cases.size() >= 2)
     // Must recompute end() each iteration because it may be
     // invalidated by erase if we hold on to it
-    for (CaseItr I = Cases.begin(), J = ++(Cases.begin()); J != Cases.end(); ) {
+    for (CaseItr I = Cases.begin(), J = llvm::next(Cases.begin());
+         J != Cases.end(); ) {
       const APInt& nextValue = cast<ConstantInt>(J->Low)->getValue();
       const APInt& currentValue = cast<ConstantInt>(I->High)->getValue();
       MachineBasicBlock* nextBB = J->BB;
@@ -2384,29 +2379,13 @@ void SelectionDAGBuilder::visitIndirectBr(const IndirectBrInst &I) {
 void SelectionDAGBuilder::visitFSub(const User &I) {
   // -0.0 - X --> fneg
   const Type *Ty = I.getType();
-  if (Ty->isVectorTy()) {
-    if (ConstantVector *CV = dyn_cast<ConstantVector>(I.getOperand(0))) {
-      const VectorType *DestTy = cast<VectorType>(I.getType());
-      const Type *ElTy = DestTy->getElementType();
-      unsigned VL = DestTy->getNumElements();
-      std::vector<Constant*> NZ(VL, ConstantFP::getNegativeZero(ElTy));
-      Constant *CNZ = ConstantVector::get(&NZ[0], NZ.size());
-      if (CV == CNZ) {
-        SDValue Op2 = getValue(I.getOperand(1));
-        setValue(&I, DAG.getNode(ISD::FNEG, getCurDebugLoc(),
-                                 Op2.getValueType(), Op2));
-        return;
-      }
-    }
+  if (isa<Constant>(I.getOperand(0)) &&
+      I.getOperand(0) == ConstantFP::getZeroValueForNegation(Ty)) {
+    SDValue Op2 = getValue(I.getOperand(1));
+    setValue(&I, DAG.getNode(ISD::FNEG, getCurDebugLoc(),
+                             Op2.getValueType(), Op2));
+    return;
   }
-
-  if (ConstantFP *CFP = dyn_cast<ConstantFP>(I.getOperand(0)))
-    if (CFP->isExactlyValue(ConstantFP::getNegativeZero(Ty)->getValueAPF())) {
-      SDValue Op2 = getValue(I.getOperand(1));
-      setValue(&I, DAG.getNode(ISD::FNEG, getCurDebugLoc(),
-                               Op2.getValueType(), Op2));
-      return;
-    }
 
   visitBinary(I, ISD::FSUB);
 }
@@ -2421,31 +2400,29 @@ void SelectionDAGBuilder::visitBinary(const User &I, unsigned OpCode) {
 void SelectionDAGBuilder::visitShift(const User &I, unsigned Opcode) {
   SDValue Op1 = getValue(I.getOperand(0));
   SDValue Op2 = getValue(I.getOperand(1));
-  if (!I.getType()->isVectorTy() &&
-      Op2.getValueType() != TLI.getShiftAmountTy()) {
+
+  MVT ShiftTy = TLI.getShiftAmountTy(Op2.getValueType());
+
+  // Coerce the shift amount to the right type if we can.
+  if (!I.getType()->isVectorTy() && Op2.getValueType() != ShiftTy) {
+    unsigned ShiftSize = ShiftTy.getSizeInBits();
+    unsigned Op2Size = Op2.getValueType().getSizeInBits();
+    DebugLoc DL = getCurDebugLoc();
+
     // If the operand is smaller than the shift count type, promote it.
-    EVT PTy = TLI.getPointerTy();
-    EVT STy = TLI.getShiftAmountTy();
-    if (STy.bitsGT(Op2.getValueType()))
-      Op2 = DAG.getNode(ISD::ANY_EXTEND, getCurDebugLoc(),
-                        TLI.getShiftAmountTy(), Op2);
+    if (ShiftSize > Op2Size)
+      Op2 = DAG.getNode(ISD::ZERO_EXTEND, DL, ShiftTy, Op2);
+
     // If the operand is larger than the shift count type but the shift
     // count type has enough bits to represent any shift value, truncate
     // it now. This is a common case and it exposes the truncate to
     // optimization early.
-    else if (STy.getSizeInBits() >=
-             Log2_32_Ceil(Op2.getValueType().getSizeInBits()))
-      Op2 = DAG.getNode(ISD::TRUNCATE, getCurDebugLoc(),
-                        TLI.getShiftAmountTy(), Op2);
-    // Otherwise we'll need to temporarily settle for some other
-    // convenient type; type legalization will make adjustments as
-    // needed.
-    else if (PTy.bitsLT(Op2.getValueType()))
-      Op2 = DAG.getNode(ISD::TRUNCATE, getCurDebugLoc(),
-                        TLI.getPointerTy(), Op2);
-    else if (PTy.bitsGT(Op2.getValueType()))
-      Op2 = DAG.getNode(ISD::ANY_EXTEND, getCurDebugLoc(),
-                        TLI.getPointerTy(), Op2);
+    else if (ShiftSize >= Log2_32_Ceil(Op2.getValueType().getSizeInBits()))
+      Op2 = DAG.getNode(ISD::TRUNCATE, DL, ShiftTy, Op2);
+    // Otherwise we'll need to temporarily settle for some other convenient
+    // type.  Type legalization will make adjustments once the shiftee is split.
+    else
+      Op2 = DAG.getZExtOrTrunc(Op2, DL, MVT::i32);
   }
 
   setValue(&I, DAG.getNode(Opcode, getCurDebugLoc(),
@@ -4302,7 +4279,7 @@ SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I, unsigned Intrinsic) {
                                 N.getResNo(), Offset, dl, SDNodeOrder);
           DAG.AddDbgValue(SDV, N.getNode(), false);
         }
-      } else if (isa<PHINode>(V) && !V->use_empty() ) {
+      } else if (!V->use_empty() ) {
         // Do not call getValue(V) yet, as we don't want to generate code.
         // Remember it for later.
         DanglingDebugInfo DDI(&DI, dl, SDNodeOrder);

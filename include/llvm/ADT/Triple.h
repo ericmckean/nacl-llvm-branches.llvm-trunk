@@ -73,7 +73,7 @@ public:
 
     Apple,
     PC,
-    NoVendor
+    SCEI
   };
   enum OSType {
     UnknownOS,
@@ -85,23 +85,22 @@ public:
     FreeBSD,
     Linux,
     Lv2,        // PS3
-    MinGW32,
-    MinGW64,
+    MinGW32,    // i*86-pc-mingw32, *-w64-mingw32
     NetBSD,
     OpenBSD,
     Psp,
     Solaris,
     Win32,
     Haiku,
-    Minix,
-    NoOS
+    Minix
   };
   enum EnvironmentType {
     UnknownEnvironment,
 
     GNU,
     GNUEABI,
-    EABI
+    EABI,
+    MachO
   };
 
 private:

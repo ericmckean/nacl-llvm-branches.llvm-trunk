@@ -178,6 +178,10 @@ const MCSection *TargetLoweringObjectFileELF::getEHFrameSection() const {
 
 static SectionKind
 getELFKindForNamedSection(StringRef Name, SectionKind K) {
+  // FIXME: Why is this here? Codegen is should not be in the business
+  // of figuring section flags. If the user wrote section(".eh_frame"),
+  // we should just pass that to MC which will defer to the assembly
+  // or use its default if producing an object file.
   if (Name.empty() || Name[0] != '.') return K;
 
   // Some lame default implementation based on some magic section names.
@@ -202,6 +206,9 @@ getELFKindForNamedSection(StringRef Name, SectionKind K) {
       Name.startswith(".gnu.linkonce.tb.") ||
       Name.startswith(".llvm.linkonce.tb."))
     return SectionKind::getThreadBSS();
+
+  if (Name == ".eh_frame")
+    return SectionKind::getDataRel();
 
   return K;
 }
@@ -266,22 +273,6 @@ getExplicitSectionGlobal(const GlobalValue *GV, SectionKind Kind,
                                     getELFSectionFlags(Kind), Kind);
 }
 
-static const char *getSectionPrefixForUniqueGlobal(SectionKind Kind) {
-  if (Kind.isText())                 return ".gnu.linkonce.t.";
-  if (Kind.isReadOnly())             return ".gnu.linkonce.r.";
-
-  if (Kind.isThreadData())           return ".gnu.linkonce.td.";
-  if (Kind.isThreadBSS())            return ".gnu.linkonce.tb.";
-
-  if (Kind.isDataNoRel())            return ".gnu.linkonce.d.";
-  if (Kind.isDataRelLocal())         return ".gnu.linkonce.d.rel.local.";
-  if (Kind.isDataRel())              return ".gnu.linkonce.d.rel.";
-  if (Kind.isReadOnlyWithRelLocal()) return ".gnu.linkonce.d.rel.ro.local.";
-
-  assert(Kind.isReadOnlyWithRel() && "Unknown section kind");
-  return ".gnu.linkonce.d.rel.ro.";
-}
-
 /// getSectionPrefixForGlobal - Return the section prefix name used by options
 /// FunctionsSections and DataSections.
 static const char *getSectionPrefixForGlobal(SectionKind Kind) {
@@ -317,19 +308,21 @@ SelectSectionForGlobal(const GlobalValue *GV, SectionKind Kind,
   if ((GV->isWeakForLinker() || EmitUniquedSection) &&
       !Kind.isCommon() && !Kind.isBSS()) {
     const char *Prefix;
-    if (GV->isWeakForLinker())
-      Prefix = getSectionPrefixForUniqueGlobal(Kind);
-    else {
-      assert(EmitUniquedSection);
-      Prefix = getSectionPrefixForGlobal(Kind);
-    }
+    Prefix = getSectionPrefixForGlobal(Kind);
 
     SmallString<128> Name(Prefix, Prefix+strlen(Prefix));
     MCSymbol *Sym = Mang->getSymbol(GV);
     Name.append(Sym->getName().begin(), Sym->getName().end());
+    StringRef Group = "";
+    unsigned Flags = getELFSectionFlags(Kind);
+    if (GV->isWeakForLinker()) {
+      Group = Sym->getName();
+      Flags |= ELF::SHF_GROUP;
+    }
+
     return getContext().getELFSection(Name.str(),
                                       getELFSectionType(Name.str(), Kind),
-                                      getELFSectionFlags(Kind), Kind);
+                                      Flags, Kind, 0, Group);
   }
 
   if (Kind.isText()) return TextSection;
@@ -648,10 +641,11 @@ getExplicitSectionGlobal(const GlobalValue *GV, SectionKind Kind,
                          Mangler *Mang, const TargetMachine &TM) const {
   // Parse the section specifier and create it if valid.
   StringRef Segment, Section;
-  unsigned TAA, StubSize;
+  unsigned TAA = 0, StubSize = 0;
+  bool TAAParsed;
   std::string ErrorCode =
     MCSectionMachO::ParseSectionSpecifier(GV->getSection(), Segment, Section,
-                                          TAA, StubSize);
+                                          TAA, TAAParsed, StubSize);
   if (!ErrorCode.empty()) {
     // If invalid, report the error with report_fatal_error.
     report_fatal_error("Global variable '" + GV->getNameStr() +
@@ -664,6 +658,11 @@ getExplicitSectionGlobal(const GlobalValue *GV, SectionKind Kind,
   // Get the section.
   const MCSectionMachO *S =
     getContext().getMachOSection(Segment, Section, TAA, StubSize, Kind);
+
+  // If TAA wasn't set by ParseSectionSpecifier() above,
+  // use the value returned by getMachOSection() as a default.
+  if (!TAAParsed)
+    TAA = S->getTypeAndAttributes();
 
   // Okay, now that we got the section, verify that the TAA & StubSize agree.
   // If the user declared multiple globals with different section flags, we need

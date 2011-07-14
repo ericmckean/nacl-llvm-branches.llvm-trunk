@@ -123,14 +123,15 @@ class ARMFastISel : public FastISel {
                                      const TargetRegisterClass *RC,
                                      unsigned Op0, bool Op0IsKill,
                                      const ConstantFP *FPImm);
-    virtual unsigned FastEmitInst_i(unsigned MachineInstOpcode,
-                                    const TargetRegisterClass *RC,
-                                    uint64_t Imm);
     virtual unsigned FastEmitInst_rri(unsigned MachineInstOpcode,
                                       const TargetRegisterClass *RC,
                                       unsigned Op0, bool Op0IsKill,
                                       unsigned Op1, bool Op1IsKill,
                                       uint64_t Imm);
+    virtual unsigned FastEmitInst_i(unsigned MachineInstOpcode,
+                                    const TargetRegisterClass *RC,
+                                    uint64_t Imm);
+
     virtual unsigned FastEmitInst_extractsubreg(MVT RetVT,
                                                 unsigned Op0, bool Op0IsKill,
                                                 uint32_t Idx);
@@ -172,6 +173,7 @@ class ARMFastISel : public FastISel {
     unsigned ARMMaterializeGV(const GlobalValue *GV, EVT VT);
     unsigned ARMMoveToFPReg(EVT VT, unsigned SrcReg);
     unsigned ARMMoveToIntReg(EVT VT, unsigned SrcReg);
+    unsigned ARMSelectCallOp(const GlobalValue *GV);
 
     // Call handling routines.
   private:
@@ -192,6 +194,7 @@ class ARMFastISel : public FastISel {
 
     // OptionalDef handling routines.
   private:
+    bool isARMNEONPred(const MachineInstr *MI);
     bool DefinesOptionalPredicate(MachineInstr *MI, bool *CPSR);
     const MachineInstrBuilder &AddOptionalDefs(const MachineInstrBuilder &MIB);
     void AddLoadStoreOperands(EVT VT, Address &Addr,
@@ -220,6 +223,21 @@ bool ARMFastISel::DefinesOptionalPredicate(MachineInstr *MI, bool *CPSR) {
   return true;
 }
 
+bool ARMFastISel::isARMNEONPred(const MachineInstr *MI) {
+  const TargetInstrDesc &TID = MI->getDesc();
+  
+  // If we're a thumb2 or not NEON function we were handled via isPredicable.
+  if ((TID.TSFlags & ARMII::DomainMask) != ARMII::DomainNEON ||
+       AFI->isThumb2Function())
+    return false;
+  
+  for (unsigned i = 0, e = TID.getNumOperands(); i != e; ++i)
+    if (TID.OpInfo[i].isPredicate())
+      return true;
+  
+  return false;
+}
+
 // If the machine is predicable go ahead and add the predicate operands, if
 // it needs default CC operands add those.
 // TODO: If we want to support thumb1 then we'll need to deal with optional
@@ -229,10 +247,12 @@ const MachineInstrBuilder &
 ARMFastISel::AddOptionalDefs(const MachineInstrBuilder &MIB) {
   MachineInstr *MI = &*MIB;
 
-  // Do we use a predicate?
-  if (TII.isPredicable(MI))
+  // Do we use a predicate? or...
+  // Are we NEON in ARM mode and have a predicate operand? If so, I know
+  // we're not predicable but add it anyways.
+  if (TII.isPredicable(MI) || isARMNEONPred(MI))
     AddDefaultPred(MIB);
-
+  
   // Do we optionally set a predicate?  Preds is size > 0 iff the predicate
   // defines CPSR. All other OptionalDefines in ARM are the CCR register.
   bool CPSR = false;
@@ -1437,8 +1457,8 @@ bool ARMFastISel::ProcessCallArgs(SmallVectorImpl<Value*> &Args,
     unsigned Arg = ArgRegs[VA.getValNo()];
     MVT ArgVT = ArgVTs[VA.getValNo()];
 
-    // We don't handle NEON parameters yet.
-    if (VA.getLocVT().isVector() && VA.getLocVT().getSizeInBits() > 64)
+    // We don't handle NEON/vector parameters yet.
+    if (ArgVT.isVector() || ArgVT.getSizeInBits() > 64)
       return false;
 
     // Handle arg promotion, etc.
@@ -1633,6 +1653,25 @@ bool ARMFastISel::SelectRet(const Instruction *I) {
   return true;
 }
 
+unsigned ARMFastISel::ARMSelectCallOp(const GlobalValue *GV) {
+
+  // Depend our opcode for thumb on whether or not we're targeting an
+  // externally callable function. For libcalls we'll just pass a NULL GV
+  // in here.
+  bool isExternal = false;
+  if (!GV || GV->hasExternalLinkage()) isExternal = true;
+  
+  // Darwin needs the r9 versions of the opcodes.
+  bool isDarwin = Subtarget->isTargetDarwin();
+  if (isThumb && isExternal) {
+    return isDarwin ? ARM::tBLXi_r9 : ARM::tBLXi;
+  } else if (isThumb) {
+    return isDarwin ? ARM::tBLr9 : ARM::tBL;
+  } else  {
+    return isDarwin ? ARM::BLr9 : ARM::BL;
+  }
+}
+
 // A quick function that will emit a call for a named libcall in F with the
 // vector of passed arguments for the Instruction in I. We can assume that we
 // can emit a call for any libcall we can produce. This is an abridged version
@@ -1694,20 +1733,17 @@ bool ARMFastISel::ARMEmitLibcall(const Instruction *I, RTLIB::Libcall Call) {
   // Issue the call, BLXr9 for darwin, BLX otherwise. This uses V5 ops.
   // TODO: Turn this into the table of arm call ops.
   MachineInstrBuilder MIB;
-  unsigned CallOpc;
-  if(isThumb) {
-    CallOpc = Subtarget->isTargetDarwin() ? ARM::tBLXi_r9 : ARM::tBLXi;
+  unsigned CallOpc = ARMSelectCallOp(NULL);
+  if(isThumb)
     // Explicitly adding the predicate here.
     MIB = AddDefaultPred(BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DL,
                          TII.get(CallOpc)))
                          .addExternalSymbol(TLI.getLibcallName(Call));
-  } else {
-    CallOpc = Subtarget->isTargetDarwin() ? ARM::BLr9 : ARM::BL;
+  else
     // Explicitly adding the predicate here.
     MIB = AddDefaultPred(BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DL,
                          TII.get(CallOpc))
           .addExternalSymbol(TLI.getLibcallName(Call)));
-  }
 
   // Add implicit physical register uses to the call.
   for (unsigned i = 0, e = RegArgs.size(); i != e; ++i)
@@ -1813,21 +1849,18 @@ bool ARMFastISel::SelectCall(const Instruction *I) {
   // Issue the call, BLXr9 for darwin, BLX otherwise. This uses V5 ops.
   // TODO: Turn this into the table of arm call ops.
   MachineInstrBuilder MIB;
-  unsigned CallOpc;
+  unsigned CallOpc = ARMSelectCallOp(GV);
   // Explicitly adding the predicate here.
-  if(isThumb) {
-    CallOpc = Subtarget->isTargetDarwin() ? ARM::tBLXi_r9 : ARM::tBLXi;
+  if(isThumb)
     // Explicitly adding the predicate here.
     MIB = AddDefaultPred(BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DL,
                          TII.get(CallOpc)))
           .addGlobalAddress(GV, 0, 0);
-  } else {
-    CallOpc = Subtarget->isTargetDarwin() ? ARM::BLr9 : ARM::BL;
+  else
     // Explicitly adding the predicate here.
     MIB = AddDefaultPred(BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, DL,
                          TII.get(CallOpc))
           .addGlobalAddress(GV, 0, 0));
-  }
   
   // Add implicit physical register uses to the call.
   for (unsigned i = 0, e = RegArgs.size(); i != e; ++i)

@@ -187,6 +187,8 @@ namespace {
       const { return 0; }
     unsigned getUnconditionalBranchTargetOpValue(const MachineInstr &MI,
       unsigned Op) const { return 0; }
+    unsigned getARMBranchTargetOpValue(const MachineInstr &MI, unsigned Op)
+      const { return 0; }
     unsigned getCCOutOpValue(const MachineInstr &MI, unsigned Op)
       const { return 0; }
     unsigned getSOImmOpValue(const MachineInstr &MI, unsigned Op)
@@ -308,6 +310,15 @@ namespace {
       const { return 0; }
 
     unsigned getRegisterListOpValue(const MachineInstr &MI, unsigned Op)
+      const { return 0; }
+
+    unsigned getShiftRight8Imm(const MachineInstr &MI, unsigned Op)
+      const { return 0; }
+    unsigned getShiftRight16Imm(const MachineInstr &MI, unsigned Op)
+      const { return 0; }
+    unsigned getShiftRight32Imm(const MachineInstr &MI, unsigned Op)
+      const { return 0; }
+    unsigned getShiftRight64Imm(const MachineInstr &MI, unsigned Op)
       const { return 0; }
 
     /// getMovi32Value - Return binary encoding of operand for movw/movt. If the
@@ -967,7 +978,7 @@ unsigned ARMCodeEmitter::getMachineSoImmOpValue(unsigned SoImm) {
 
 unsigned ARMCodeEmitter::getAddrModeSBit(const MachineInstr &MI,
                                          const TargetInstrDesc &TID) const {
-  for (unsigned i = MI.getNumOperands(), e = TID.getNumOperands(); i != e; --i){
+  for (unsigned i = MI.getNumOperands(), e = TID.getNumOperands(); i >= e; --i){
     const MachineOperand &MO = MI.getOperand(i-1);
     if (MO.isReg() && MO.isDef() && MO.getReg() == ARM::CPSR)
       return 1 << ARMII::S_BitShift;

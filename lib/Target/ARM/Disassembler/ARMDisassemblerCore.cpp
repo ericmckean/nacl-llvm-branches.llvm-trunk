@@ -679,8 +679,8 @@ static bool DisassembleCoprocessor(MCInst &MI, unsigned Opcode, uint32_t insn,
 }
 
 // Branch Instructions.
-// BLr9: SignExtend(Imm24:'00', 32)
-// Bcc, BLr9_pred: SignExtend(Imm24:'00', 32) Pred0 Pred1
+// BL: SignExtend(Imm24:'00', 32)
+// Bcc, BL_pred: SignExtend(Imm24:'00', 32) Pred0 Pred1
 // SMC: ZeroExtend(imm4, 32)
 // SVC: ZeroExtend(Imm24, 32)
 //
@@ -720,25 +720,29 @@ static bool DisassembleBrFrm(MCInst &MI, unsigned Opcode, uint32_t insn,
     NumOpsAdded = 1;
     return true;
   }
-  // MSR and MSRsys take one GPR reg Rm, followed by the mask.
-  if (Opcode == ARM::MSR || Opcode == ARM::MSRsys) {
-    assert(NumOps >= 1 && OpInfo[0].RegClass == ARM::GPRRegClassID &&
+  // MSR take a mask, followed by one GPR reg Rm. The mask contains the R Bit in
+  // bit 4, and the special register fields in bits 3-0.
+  if (Opcode == ARM::MSR) {
+    assert(NumOps >= 1 && OpInfo[1].RegClass == ARM::GPRRegClassID &&
            "Reg operand expected");
+    MI.addOperand(MCOperand::CreateImm(slice(insn, 22, 22) << 4 /* R Bit */ |
+                                       slice(insn, 19, 16) /* Special Reg */ ));
     MI.addOperand(MCOperand::CreateReg(getRegisterEnum(B, ARM::GPRRegClassID,
                                                        decodeRm(insn))));
-    MI.addOperand(MCOperand::CreateImm(slice(insn, 19, 16)));
     NumOpsAdded = 2;
     return true;
   }
-  // MSRi and MSRsysi take one so_imm operand, followed by the mask.
-  if (Opcode == ARM::MSRi || Opcode == ARM::MSRsysi) {
+  // MSRi take a mask, followed by one so_imm operand. The mask contains the
+  // R Bit in bit 4, and the special register fields in bits 3-0.
+  if (Opcode == ARM::MSRi) {
+    MI.addOperand(MCOperand::CreateImm(slice(insn, 22, 22) << 4 /* R Bit */ |
+                                       slice(insn, 19, 16) /* Special Reg */ ));
     // SOImm is 4-bit rotate amount in bits 11-8 with 8-bit imm in bits 7-0.
     // A5.2.4 Rotate amount is twice the numeric value of Inst{11-8}.
     // See also ARMAddressingModes.h: getSOImmValImm() and getSOImmValRot().
     unsigned Rot = (insn >> ARMII::SoRotImmShift) & 0xF;
     unsigned Imm = insn & 0xFF;
     MI.addOperand(MCOperand::CreateImm(ARM_AM::rotr32(Imm, 2*Rot)));
-    MI.addOperand(MCOperand::CreateImm(slice(insn, 19, 16)));
     NumOpsAdded = 2;
     return true;
   }
@@ -756,7 +760,7 @@ static bool DisassembleBrFrm(MCInst &MI, unsigned Opcode, uint32_t insn,
     return true;
   }
 
-  assert((Opcode == ARM::Bcc || Opcode == ARM::BLr9 || Opcode == ARM::BLr9_pred
+  assert((Opcode == ARM::Bcc || Opcode == ARM::BL || Opcode == ARM::BL_pred
           || Opcode == ARM::SMC || Opcode == ARM::SVC) &&
          "Unexpected Opcode");
 
@@ -774,12 +778,6 @@ static bool DisassembleBrFrm(MCInst &MI, unsigned Opcode, uint32_t insn,
     unsigned Imm26 = slice(insn, 23, 0) << 2;
     //Imm32 = signextend<signed int, 26>(Imm26);
     Imm32 = SignExtend32<26>(Imm26);
-
-    // When executing an ARM instruction, PC reads as the address of the current
-    // instruction plus 8.  The assembler subtracts 8 from the difference
-    // between the branch instruction and the target address, disassembler has
-    // to add 8 to compensate.
-    Imm32 += 8;
   }
 
   MI.addOperand(MCOperand::CreateImm(Imm32));
@@ -789,7 +787,7 @@ static bool DisassembleBrFrm(MCInst &MI, unsigned Opcode, uint32_t insn,
 }
 
 // Misc. Branch Instructions.
-// BLXr9, BXr9
+// BLX, BX
 // BX, BX_RET
 static bool DisassembleBrMiscFrm(MCInst &MI, unsigned Opcode, uint32_t insn,
     unsigned short NumOps, unsigned &NumOpsAdded, BO B) {
@@ -801,12 +799,13 @@ static bool DisassembleBrMiscFrm(MCInst &MI, unsigned Opcode, uint32_t insn,
 
   OpIdx = 0;
 
-  // BX_RET has only two predicate operands, do an early return.
-  if (Opcode == ARM::BX_RET)
+  // BX_RET and MOVPCLR have only two predicate operands; do an early return.
+  if (Opcode == ARM::BX_RET || Opcode == ARM::MOVPCLR)
     return true;
 
-  // BLXr9 and BX take one GPR reg.
-  if (Opcode == ARM::BLXr9 || Opcode == ARM::BX) {
+  // BLX and BX take one GPR reg.
+  if (Opcode == ARM::BLX || Opcode == ARM::BLX_pred ||
+      Opcode == ARM::BX) {
     assert(NumOps >= 1 && OpInfo[OpIdx].RegClass == ARM::GPRRegClassID &&
            "Reg operand expected");
     MI.addOperand(MCOperand::CreateReg(getRegisterEnum(B, ARM::GPRRegClassID,
@@ -1073,18 +1072,21 @@ static bool DisassembleLdStFrm(MCInst &MI, unsigned Opcode, uint32_t insn,
   if (OpIdx + 1 >= NumOps)
     return false;
 
-  assert((OpInfo[OpIdx].RegClass == ARM::GPRRegClassID) &&
-         (OpInfo[OpIdx+1].RegClass < 0) &&
-         "Expect 1 reg operand followed by 1 imm operand");
-
   ARM_AM::AddrOpc AddrOpcode = getUBit(insn) ? ARM_AM::add : ARM_AM::sub;
   if (getIBit(insn) == 0) {
-    MI.addOperand(MCOperand::CreateReg(0));
+    // For pre- and post-indexed case, add a reg0 operand (Addressing Mode #2).
+    // Otherwise, skip the reg operand since for addrmode_imm12, Rn has already
+    // been populated.
+    if (isPrePost) {
+      MI.addOperand(MCOperand::CreateReg(0));
+      OpIdx += 1;
+    }
 
     // Disassemble the 12-bit immediate offset.
     unsigned Imm12 = slice(insn, 11, 0);
     unsigned Offset = ARM_AM::getAM2Opc(AddrOpcode, Imm12, ARM_AM::no_shift);
     MI.addOperand(MCOperand::CreateImm(Offset));
+    OpIdx += 1;
   } else {
     // Disassemble the offset reg (Rm), shift type, and immediate shift length.
     MI.addOperand(MCOperand::CreateReg(getRegisterEnum(B, ARM::GPRRegClassID,
@@ -1098,8 +1100,8 @@ static bool DisassembleLdStFrm(MCInst &MI, unsigned Opcode, uint32_t insn,
     getImmShiftSE(ShOp, ShImm);
     MI.addOperand(MCOperand::CreateImm(
                     ARM_AM::getAM2Opc(AddrOpcode, ShImm, ShOp)));
+    OpIdx += 2;
   }
-  OpIdx += 2;
 
   return true;
 }
@@ -1161,8 +1163,9 @@ static bool DisassembleLdStMiscFrm(MCInst &MI, unsigned Opcode, uint32_t insn,
                                                      decodeRd(insn))));
   ++OpIdx;
 
-  // Fill in LDRD and STRD's second operand.
-  if (DualReg) {
+  // Fill in LDRD and STRD's second operand, but only if it's offset mode OR we
+  // have a pre-or-post-indexed store operation.
+  if (DualReg && (!isPrePost || isStore)) {
     MI.addOperand(MCOperand::CreateReg(getRegisterEnum(B, ARM::GPRRegClassID,
                                                        decodeRd(insn) + 1)));
     ++OpIdx;
@@ -1184,7 +1187,7 @@ static bool DisassembleLdStMiscFrm(MCInst &MI, unsigned Opcode, uint32_t insn,
   assert(OpInfo[OpIdx].RegClass == ARM::GPRRegClassID &&
          "Reg operand expected");
   assert((!isPrePost || (TID.getOperandConstraint(OpIdx, TOI::TIED_TO) != -1))
-         && "Index mode or tied_to operand expected");
+         && "Offset mode or tied_to operand expected");
   MI.addOperand(MCOperand::CreateReg(getRegisterEnum(B, ARM::GPRRegClassID,
                                                      decodeRn(insn))));
   ++OpIdx;
@@ -2942,15 +2945,25 @@ static bool DisassembleMiscFrm(MCInst &MI, unsigned Opcode, uint32_t insn,
     return true;
   }
 
-  // CPS has a singleton $opt operand that contains the following information:
-  // opt{4-0} = mode from Inst{4-0}
-  // opt{5} = changemode from Inst{17}
-  // opt{8-6} = AIF from Inst{8-6}
-  // opt{10-9} = imod from Inst{19-18} with 0b10 as enable and 0b11 as disable
-  if (Opcode == ARM::CPS) {
-    unsigned Option = slice(insn, 4, 0) | slice(insn, 17, 17) << 5 |
-      slice(insn, 8, 6) << 6 | slice(insn, 19, 18) << 9;
-    MI.addOperand(MCOperand::CreateImm(Option));
+  // FIXME: To enable correct asm parsing and disasm of CPS we need 3 different
+  // opcodes which match the same real instruction. This is needed since there's
+  // no current handling of optional arguments. Fix here when a better handling
+  // of optional arguments is implemented.
+  if (Opcode == ARM::CPS3p) {
+    MI.addOperand(MCOperand::CreateImm(slice(insn, 19, 18))); // imod
+    MI.addOperand(MCOperand::CreateImm(slice(insn, 8, 6)));   // iflags
+    MI.addOperand(MCOperand::CreateImm(slice(insn, 4, 0)));   // mode
+    NumOpsAdded = 3;
+    return true;
+  }
+  if (Opcode == ARM::CPS2p) {
+    MI.addOperand(MCOperand::CreateImm(slice(insn, 19, 18))); // imod
+    MI.addOperand(MCOperand::CreateImm(slice(insn, 8, 6)));   // iflags
+    NumOpsAdded = 2;
+    return true;
+  }
+  if (Opcode == ARM::CPS1p) {
+    MI.addOperand(MCOperand::CreateImm(slice(insn, 4, 0))); // mode
     NumOpsAdded = 1;
     return true;
   }

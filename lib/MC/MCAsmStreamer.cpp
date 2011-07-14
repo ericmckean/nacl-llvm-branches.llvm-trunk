@@ -107,7 +107,7 @@ public:
   /// @name MCStreamer Interface
   /// @{
 
-  virtual void SwitchSection(const MCSection *Section);
+  virtual void ChangeSection(const MCSection *Section);
 
   virtual void InitSections() {
     // FIXME, this is MachO specific, but the testsuite
@@ -192,6 +192,16 @@ public:
   virtual bool EmitCFIPersonality(const MCSymbol *Sym, unsigned Encoding);
   virtual bool EmitCFILsda(const MCSymbol *Sym, unsigned Encoding);
 
+  virtual void EmitFnStart();
+  virtual void EmitFnEnd();
+  virtual void EmitCantUnwind();
+  virtual void EmitPersonality(const MCSymbol *Personality);
+  virtual void EmitHandlerData();
+  virtual void EmitSetFP(unsigned FpReg, unsigned SpReg, int64_t Offset = 0);
+  virtual void EmitPad(int64_t Offset);
+  virtual void EmitRegSave(const SmallVectorImpl<unsigned> &RegList, bool);
+
+
   virtual void EmitInstruction(const MCInst &Inst);
 
   /// EmitRawText - If this file is backed by an assembly streamer, this dumps
@@ -254,23 +264,19 @@ static inline int64_t truncateToSize(int64_t Value, unsigned Bytes) {
   return Value & ((uint64_t) (int64_t) -1 >> (64 - Bytes * 8));
 }
 
-void MCAsmStreamer::SwitchSection(const MCSection *Section) {
+void MCAsmStreamer::ChangeSection(const MCSection *Section) {
   assert(Section && "Cannot switch to a null section!");
-  if (Section != CurSection) {
-    PrevSection = CurSection;
-    CurSection = Section;
-    Section->PrintSwitchToSection(MAI, OS);
-  }
+  Section->PrintSwitchToSection(MAI, OS);
 }
 
 void MCAsmStreamer::EmitLabel(MCSymbol *Symbol) {
   assert(Symbol->isUndefined() && "Cannot define a symbol twice!");
   assert(!Symbol->isVariable() && "Cannot emit a variable symbol!");
-  assert(CurSection && "Cannot emit before setting section!");
+  assert(getCurrentSection() && "Cannot emit before setting section!");
 
   OS << *Symbol << MAI.getLabelSuffix();
   EmitEOL();
-  Symbol->setSection(*CurSection);
+  Symbol->setSection(*getCurrentSection());
 }
 
 void MCAsmStreamer::EmitAssemblerFlag(MCAssemblerFlag Flag) {
@@ -486,7 +492,7 @@ static void PrintQuotedString(StringRef Data, raw_ostream &OS) {
 
 
 void MCAsmStreamer::EmitBytes(StringRef Data, unsigned AddrSpace) {
-  assert(CurSection && "Cannot emit contents before setting section!");
+  assert(getCurrentSection() && "Cannot emit contents before setting section!");
   if (Data.empty()) return;
 
   if (Data.size() == 1) {
@@ -517,7 +523,7 @@ void MCAsmStreamer::EmitIntValue(uint64_t Value, unsigned Size,
 
 void MCAsmStreamer::EmitValueImpl(const MCExpr *Value, unsigned Size,
                                   bool isPCRel, unsigned AddrSpace) {
-  assert(CurSection && "Cannot emit contents before setting section!");
+  assert(getCurrentSection() && "Cannot emit contents before setting section!");
   assert(!isPCRel && "Cannot emit pc relative relocations!");
   const char *Directive = 0;
   switch (Size) {
@@ -863,8 +869,63 @@ void MCAsmStreamer::AddEncodingComment(const MCInst &Inst) {
   }
 }
 
+void MCAsmStreamer::EmitFnStart() {
+  OS << "\t.fnstart";
+  EmitEOL();
+}
+
+void MCAsmStreamer::EmitFnEnd() {
+  OS << "\t.fnend";
+  EmitEOL();
+}
+
+void MCAsmStreamer::EmitCantUnwind() {
+  OS << "\t.cantunwind";
+  EmitEOL();
+}
+
+void MCAsmStreamer::EmitHandlerData() {
+  OS << "\t.handlerdata";
+  EmitEOL();
+}
+
+void MCAsmStreamer::EmitPersonality(const MCSymbol *Personality) {
+  OS << "\t.personality " << Personality->getName();
+  EmitEOL();
+}
+
+void MCAsmStreamer::EmitSetFP(unsigned FpReg, unsigned SpReg, int64_t Offset) {
+  OS << "\t.setfp\t" << InstPrinter->getRegName(FpReg)
+     << ", "        << InstPrinter->getRegName(SpReg);
+  if (Offset)
+    OS << ", #" << Offset;
+  EmitEOL();
+}
+
+void MCAsmStreamer::EmitPad(int64_t Offset) {
+  OS << "\t.pad\t#" << Offset;
+  EmitEOL();
+}
+
+void MCAsmStreamer::EmitRegSave(const SmallVectorImpl<unsigned> &RegList,
+                                bool isVector) {
+  assert(RegList.size() && "RegList should not be empty");
+  if (isVector)
+    OS << "\t.vsave\t{";
+  else
+    OS << "\t.save\t{";
+
+  OS << InstPrinter->getRegName(RegList[0]);
+
+  for (unsigned i = 1, e = RegList.size(); i != e; ++i)
+    OS << ", " << InstPrinter->getRegName(RegList[i]);
+
+  OS << "}";
+  EmitEOL();
+}
+
 void MCAsmStreamer::EmitInstruction(const MCInst &Inst) {
-  assert(CurSection && "Cannot emit contents before setting section!");
+  assert(getCurrentSection() && "Cannot emit contents before setting section!");
 
   if (!UseLoc)
     MCLineEntry::Make(this, getCurrentSection());

@@ -26,6 +26,7 @@
 #define LLVM_USE_H
 
 #include "llvm/ADT/PointerIntPair.h"
+#include <cstddef>
 #include <iterator>
 
 namespace llvm {
@@ -33,6 +34,8 @@ namespace llvm {
 class Value;
 class User;
 class Use;
+template<typename>
+struct simplify_type;
 
 // Use** is only 4-byte aligned.
 template<>

@@ -53,6 +53,7 @@ protected:
   void dropHungoffUses() {
     Use::zap(OperandList, OperandList + NumOperands, true);
     OperandList = 0;
+    // Reset NumOperands so User::operator delete() does the right thing.
     NumOperands = 0;
   }
 public:
@@ -94,11 +95,11 @@ public:
     OperandList[i] = Val;
   }
   const Use &getOperandUse(unsigned i) const {
-    assert(i < NumOperands && "getOperand() out of range!");
+    assert(i < NumOperands && "getOperandUse() out of range!");
     return OperandList[i];
   }
   Use &getOperandUse(unsigned i) {
-    assert(i < NumOperands && "getOperand() out of range!");
+    assert(i < NumOperands && "getOperandUse() out of range!");
     return OperandList[i];
   }
   

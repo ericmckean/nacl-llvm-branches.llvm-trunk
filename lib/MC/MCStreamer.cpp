@@ -19,8 +19,9 @@
 #include <cstdlib>
 using namespace llvm;
 
-MCStreamer::MCStreamer(MCContext &Ctx) : Context(Ctx), CurSection(0),
-                                         PrevSection(0) {
+MCStreamer::MCStreamer(MCContext &Ctx) : Context(Ctx) {
+  const MCSection *section = NULL;
+  SectionStack.push_back(std::make_pair(section, section));
 }
 
 MCStreamer::~MCStreamer() {
@@ -256,6 +257,46 @@ bool MCStreamer::EmitCFIRestoreState() {
   MCCFIInstruction Instruction(MCCFIInstruction::Restore, Label);
   CurFrame->Instructions.push_back(Instruction);
   return false;
+}
+
+void MCStreamer::EmitFnStart() {
+  errs() << "Not implemented yet\n";
+  abort();
+}
+
+void MCStreamer::EmitFnEnd() {
+  errs() << "Not implemented yet\n";
+  abort();
+}
+
+void MCStreamer::EmitCantUnwind() {
+  errs() << "Not implemented yet\n";
+  abort();
+}
+
+void MCStreamer::EmitHandlerData() {
+  errs() << "Not implemented yet\n";
+  abort();
+}
+
+void MCStreamer::EmitPersonality(const MCSymbol *Personality) {
+  errs() << "Not implemented yet\n";
+  abort();
+}
+
+void MCStreamer::EmitSetFP(unsigned FpReg, unsigned SpReg, int64_t Offset) {
+  errs() << "Not implemented yet\n";
+  abort();
+}
+
+void MCStreamer::EmitPad(int64_t Offset) {
+  errs() << "Not implemented yet\n";
+  abort();
+}
+
+void MCStreamer::EmitRegSave(const SmallVectorImpl<unsigned> &RegList, bool) {
+  errs() << "Not implemented yet\n";
+  abort();
 }
 
 /// EmitRawText - If this file is backed by an assembly streamer, this dumps

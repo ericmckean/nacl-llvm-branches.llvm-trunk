@@ -29,6 +29,9 @@ StringRef ARMInstPrinter::getOpcodeName(unsigned Opcode) const {
   return getInstructionName(Opcode);
 }
 
+StringRef ARMInstPrinter::getRegName(unsigned RegNo) const {
+  return getRegisterName(RegNo);
+}
 
 void ARMInstPrinter::printInst(const MCInst *MI, raw_ostream &O) {
   unsigned Opcode = MI->getOpcode();
@@ -379,33 +382,32 @@ void ARMInstPrinter::printSetendOperand(const MCInst *MI, unsigned OpNum,
     O << "le";
 }
 
-void ARMInstPrinter::printCPSOptionOperand(const MCInst *MI, unsigned OpNum,
-                                           raw_ostream &O) {
+void ARMInstPrinter::printCPSIMod(const MCInst *MI, unsigned OpNum,
+                                  raw_ostream &O) {
   const MCOperand &Op = MI->getOperand(OpNum);
-  unsigned option = Op.getImm();
-  unsigned mode = option & 31;
-  bool changemode = option >> 5 & 1;
-  unsigned AIF = option >> 6 & 7;
-  unsigned imod = option >> 9 & 3;
-  if (imod == 2)
-    O << "ie";
-  else if (imod == 3)
-    O << "id";
-  O << '\t';
-  if (imod > 1) {
-    if (AIF & 4) O << 'a';
-    if (AIF & 2) O << 'i';
-    if (AIF & 1) O << 'f';
-    if (AIF > 0 && changemode) O << ", ";
-  }
-  if (changemode)
-    O << '#' << mode;
+  O << ARM_PROC::IModToString(Op.getImm());
+}
+
+void ARMInstPrinter::printCPSIFlag(const MCInst *MI, unsigned OpNum,
+                                   raw_ostream &O) {
+  const MCOperand &Op = MI->getOperand(OpNum);
+  unsigned IFlags = Op.getImm();
+  for (int i=2; i >= 0; --i)
+    if (IFlags & (1 << i))
+      O << ARM_PROC::IFlagsToString(1 << i);
 }
 
 void ARMInstPrinter::printMSRMaskOperand(const MCInst *MI, unsigned OpNum,
                                          raw_ostream &O) {
   const MCOperand &Op = MI->getOperand(OpNum);
-  unsigned Mask = Op.getImm();
+  unsigned SpecRegRBit = Op.getImm() >> 4;
+  unsigned Mask = Op.getImm() & 0xf;
+
+  if (SpecRegRBit)
+    O << "spsr";
+  else
+    O << "cpsr";
+
   if (Mask) {
     O << '_';
     if (Mask & 8) O << 'f';
@@ -413,16 +415,6 @@ void ARMInstPrinter::printMSRMaskOperand(const MCInst *MI, unsigned OpNum,
     if (Mask & 2) O << 'x';
     if (Mask & 1) O << 'c';
   }
-}
-
-void ARMInstPrinter::printNegZeroOperand(const MCInst *MI, unsigned OpNum,
-                                         raw_ostream &O) {
-  const MCOperand &Op = MI->getOperand(OpNum);
-  O << '#';
-  if (Op.getImm() < 0)
-    O << '-' << (-Op.getImm() - 1);
-  else
-    O << Op.getImm();
 }
 
 void ARMInstPrinter::printPredicateOperand(const MCInst *MI, unsigned OpNum,
@@ -574,9 +566,6 @@ void ARMInstPrinter::printAddrModeImm12Operand(const MCInst *MI, unsigned OpNum,
   if (!MO1.isReg()) {   // FIXME: This is for CP entries, but isn't right.
     printOperand(MI, OpNum, O);
     return;
-  } else if (MO1.getReg() == ARM::PC && MO2.isExpr()) {
-    printOperand(MI, OpNum+1, O);
-    return;
   }
 
   O << "[" << getRegisterName(MO1.getReg());
@@ -673,12 +662,37 @@ void ARMInstPrinter::printT2AddrModeSoRegOperand(const MCInst *MI,
 
 void ARMInstPrinter::printVFPf32ImmOperand(const MCInst *MI, unsigned OpNum,
                                            raw_ostream &O) {
-  O << '#' << (float)MI->getOperand(OpNum).getFPImm();
+  const MCOperand &MO = MI->getOperand(OpNum);
+  O << '#';
+  if (MO.isFPImm()) {
+    O << (float)MO.getFPImm();
+  } else {
+    union {
+      uint32_t I;
+      float F;
+    } FPUnion;
+
+    FPUnion.I = MO.getImm();
+    O << FPUnion.F;
+  }
 }
 
 void ARMInstPrinter::printVFPf64ImmOperand(const MCInst *MI, unsigned OpNum,
                                            raw_ostream &O) {
-  O << '#' << MI->getOperand(OpNum).getFPImm();
+  const MCOperand &MO = MI->getOperand(OpNum);
+  O << '#';
+  if (MO.isFPImm()) {
+    O << MO.getFPImm();
+  } else {
+    // We expect the binary encoding of a floating point number here.
+    union {
+      uint64_t I;
+      double D;
+    } FPUnion;
+
+    FPUnion.I = MO.getImm();
+    O << FPUnion.D;
+  }
 }
 
 void ARMInstPrinter::printNEONModImmOperand(const MCInst *MI, unsigned OpNum,

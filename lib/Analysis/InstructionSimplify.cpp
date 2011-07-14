@@ -22,13 +22,15 @@
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/Analysis/Dominators.h"
+#include "llvm/Analysis/ValueTracking.h"
+#include "llvm/Support/ConstantRange.h"
 #include "llvm/Support/PatternMatch.h"
 #include "llvm/Support/ValueHandle.h"
 #include "llvm/Target/TargetData.h"
 using namespace llvm;
 using namespace llvm::PatternMatch;
 
-#define RecursionLimit 3
+enum { RecursionLimit = 3 };
 
 STATISTIC(NumExpand,  "Number of expansions");
 STATISTIC(NumFactor , "Number of factorizations");
@@ -394,17 +396,39 @@ static Value *ThreadCmpOverSelect(CmpInst::Predicate Pred, Value *LHS,
   assert(isa<SelectInst>(LHS) && "Not comparing with a select instruction!");
   SelectInst *SI = cast<SelectInst>(LHS);
 
-  // Now that we have "cmp select(cond, TV, FV), RHS", analyse it.
+  // Now that we have "cmp select(Cond, TV, FV), RHS", analyse it.
   // Does "cmp TV, RHS" simplify?
   if (Value *TCmp = SimplifyCmpInst(Pred, SI->getTrueValue(), RHS, TD, DT,
-                                    MaxRecurse))
+                                    MaxRecurse)) {
     // It does!  Does "cmp FV, RHS" simplify?
     if (Value *FCmp = SimplifyCmpInst(Pred, SI->getFalseValue(), RHS, TD, DT,
-                                      MaxRecurse))
+                                      MaxRecurse)) {
       // It does!  If they simplified to the same value, then use it as the
       // result of the original comparison.
       if (TCmp == FCmp)
         return TCmp;
+      Value *Cond = SI->getCondition();
+      // If the false value simplified to false, then the result of the compare
+      // is equal to "Cond && TCmp".  This also catches the case when the false
+      // value simplified to false and the true value to true, returning "Cond".
+      if (match(FCmp, m_Zero()))
+        if (Value *V = SimplifyAndInst(Cond, TCmp, TD, DT, MaxRecurse))
+          return V;
+      // If the true value simplified to true, then the result of the compare
+      // is equal to "Cond || FCmp".
+      if (match(TCmp, m_One()))
+        if (Value *V = SimplifyOrInst(Cond, FCmp, TD, DT, MaxRecurse))
+          return V;
+      // Finally, if the false value simplified to true and the true value to
+      // false, then the result of the compare is equal to "!Cond".
+      if (match(FCmp, m_One()) && match(TCmp, m_Zero()))
+        if (Value *V =
+            SimplifyXorInst(Cond, Constant::getAllOnesValue(Cond->getType()),
+                            TD, DT, MaxRecurse))
+          return V;
+    }
+  }
+
   return 0;
 }
 
@@ -509,7 +533,7 @@ static Value *SimplifyAddInst(Value *Op0, Value *Op1, bool isNSW, bool isNUW,
   }
 
   // X + undef -> undef
-  if (isa<UndefValue>(Op1))
+  if (match(Op1, m_Undef()))
     return Op1;
 
   // X + 0 -> X
@@ -575,7 +599,7 @@ static Value *SimplifySubInst(Value *Op0, Value *Op1, bool isNSW, bool isNUW,
 
   // X - undef -> undef
   // undef - X -> undef
-  if (isa<UndefValue>(Op0) || isa<UndefValue>(Op1))
+  if (match(Op0, m_Undef()) || match(Op1, m_Undef()))
     return UndefValue::get(Op0->getType());
 
   // X - 0 -> X
@@ -698,7 +722,7 @@ static Value *SimplifyMulInst(Value *Op0, Value *Op1, const TargetData *TD,
   }
 
   // X * undef -> 0
-  if (isa<UndefValue>(Op1))
+  if (match(Op1, m_Undef()))
     return Constant::getNullValue(Op0->getType());
 
   // X * 0 -> 0
@@ -709,7 +733,16 @@ static Value *SimplifyMulInst(Value *Op0, Value *Op1, const TargetData *TD,
   if (match(Op1, m_One()))
     return Op0;
 
-  /// i1 mul -> and.
+  // (X / Y) * Y -> X if the division is exact.
+  Value *X = 0, *Y = 0;
+  if ((match(Op0, m_IDiv(m_Value(X), m_Value(Y))) && Y == Op1) || // (X / Y) * Y
+      (match(Op1, m_IDiv(m_Value(X), m_Value(Y))) && Y == Op0)) { // Y * (X / Y)
+    BinaryOperator *Div = cast<BinaryOperator>(Y == Op1 ? Op0 : Op1);
+    if (Div->isExact())
+      return X;
+  }
+
+  // i1 mul -> and.
   if (MaxRecurse && Op0->getType()->isIntegerTy(1))
     if (Value *V = SimplifyAndInst(Op0, Op1, TD, DT, MaxRecurse-1))
       return V;
@@ -746,6 +779,127 @@ Value *llvm::SimplifyMulInst(Value *Op0, Value *Op1, const TargetData *TD,
   return ::SimplifyMulInst(Op0, Op1, TD, DT, RecursionLimit);
 }
 
+/// SimplifyDiv - Given operands for an SDiv or UDiv, see if we can
+/// fold the result.  If not, this returns null.
+static Value *SimplifyDiv(Instruction::BinaryOps Opcode, Value *Op0, Value *Op1,
+                          const TargetData *TD, const DominatorTree *DT,
+                          unsigned MaxRecurse) {
+  if (Constant *C0 = dyn_cast<Constant>(Op0)) {
+    if (Constant *C1 = dyn_cast<Constant>(Op1)) {
+      Constant *Ops[] = { C0, C1 };
+      return ConstantFoldInstOperands(Opcode, C0->getType(), Ops, 2, TD);
+    }
+  }
+
+  bool isSigned = Opcode == Instruction::SDiv;
+
+  // X / undef -> undef
+  if (match(Op1, m_Undef()))
+    return Op1;
+
+  // undef / X -> 0
+  if (match(Op0, m_Undef()))
+    return Constant::getNullValue(Op0->getType());
+
+  // 0 / X -> 0, we don't need to preserve faults!
+  if (match(Op0, m_Zero()))
+    return Op0;
+
+  // X / 1 -> X
+  if (match(Op1, m_One()))
+    return Op0;
+
+  if (Op0->getType()->isIntegerTy(1))
+    // It can't be division by zero, hence it must be division by one.
+    return Op0;
+
+  // X / X -> 1
+  if (Op0 == Op1)
+    return ConstantInt::get(Op0->getType(), 1);
+
+  // (X * Y) / Y -> X if the multiplication does not overflow.
+  Value *X = 0, *Y = 0;
+  if (match(Op0, m_Mul(m_Value(X), m_Value(Y))) && (X == Op1 || Y == Op1)) {
+    if (Y != Op1) std::swap(X, Y); // Ensure expression is (X * Y) / Y, Y = Op1
+    BinaryOperator *Mul = cast<BinaryOperator>(Op0);
+    // If the Mul knows it does not overflow, then we are good to go.
+    if ((isSigned && Mul->hasNoSignedWrap()) ||
+        (!isSigned && Mul->hasNoUnsignedWrap()))
+      return X;
+    // If X has the form X = A / Y then X * Y cannot overflow.
+    if (BinaryOperator *Div = dyn_cast<BinaryOperator>(X))
+      if (Div->getOpcode() == Opcode && Div->getOperand(1) == Y)
+        return X;
+  }
+
+  // (X rem Y) / Y -> 0
+  if ((isSigned && match(Op0, m_SRem(m_Value(), m_Specific(Op1)))) ||
+      (!isSigned && match(Op0, m_URem(m_Value(), m_Specific(Op1)))))
+    return Constant::getNullValue(Op0->getType());
+
+  // If the operation is with the result of a select instruction, check whether
+  // operating on either branch of the select always yields the same value.
+  if (isa<SelectInst>(Op0) || isa<SelectInst>(Op1))
+    if (Value *V = ThreadBinOpOverSelect(Opcode, Op0, Op1, TD, DT, MaxRecurse))
+      return V;
+
+  // If the operation is with the result of a phi instruction, check whether
+  // operating on all incoming values of the phi always yields the same value.
+  if (isa<PHINode>(Op0) || isa<PHINode>(Op1))
+    if (Value *V = ThreadBinOpOverPHI(Opcode, Op0, Op1, TD, DT, MaxRecurse))
+      return V;
+
+  return 0;
+}
+
+/// SimplifySDivInst - Given operands for an SDiv, see if we can
+/// fold the result.  If not, this returns null.
+static Value *SimplifySDivInst(Value *Op0, Value *Op1, const TargetData *TD,
+                               const DominatorTree *DT, unsigned MaxRecurse) {
+  if (Value *V = SimplifyDiv(Instruction::SDiv, Op0, Op1, TD, DT, MaxRecurse))
+    return V;
+
+  return 0;
+}
+
+Value *llvm::SimplifySDivInst(Value *Op0, Value *Op1, const TargetData *TD,
+                              const DominatorTree *DT) {
+  return ::SimplifySDivInst(Op0, Op1, TD, DT, RecursionLimit);
+}
+
+/// SimplifyUDivInst - Given operands for a UDiv, see if we can
+/// fold the result.  If not, this returns null.
+static Value *SimplifyUDivInst(Value *Op0, Value *Op1, const TargetData *TD,
+                               const DominatorTree *DT, unsigned MaxRecurse) {
+  if (Value *V = SimplifyDiv(Instruction::UDiv, Op0, Op1, TD, DT, MaxRecurse))
+    return V;
+
+  return 0;
+}
+
+Value *llvm::SimplifyUDivInst(Value *Op0, Value *Op1, const TargetData *TD,
+                              const DominatorTree *DT) {
+  return ::SimplifyUDivInst(Op0, Op1, TD, DT, RecursionLimit);
+}
+
+static Value *SimplifyFDivInst(Value *Op0, Value *Op1, const TargetData *,
+                               const DominatorTree *, unsigned) {
+  // undef / X -> undef    (the undef could be a snan).
+  if (match(Op0, m_Undef()))
+    return Op0;
+
+  // X / undef -> undef
+  if (match(Op1, m_Undef()))
+    return Op1;
+
+  return 0;
+}
+
+Value *llvm::SimplifyFDivInst(Value *Op0, Value *Op1, const TargetData *TD,
+                              const DominatorTree *DT) {
+  return ::SimplifyFDivInst(Op0, Op1, TD, DT, RecursionLimit);
+}
+
 /// SimplifyShift - Given operands for an Shl, LShr or AShr, see if we can
 /// fold the result.  If not, this returns null.
 static Value *SimplifyShift(unsigned Opcode, Value *Op0, Value *Op1,
@@ -767,7 +921,7 @@ static Value *SimplifyShift(unsigned Opcode, Value *Op0, Value *Op1,
     return Op0;
 
   // X shift by undef -> undef because it may shift by the bitwidth.
-  if (isa<UndefValue>(Op1))
+  if (match(Op1, m_Undef()))
     return Op1;
 
   // Shifting by the bitwidth or more is undefined.
@@ -793,46 +947,60 @@ static Value *SimplifyShift(unsigned Opcode, Value *Op0, Value *Op1,
 
 /// SimplifyShlInst - Given operands for an Shl, see if we can
 /// fold the result.  If not, this returns null.
-static Value *SimplifyShlInst(Value *Op0, Value *Op1, const TargetData *TD,
-                              const DominatorTree *DT, unsigned MaxRecurse) {
+static Value *SimplifyShlInst(Value *Op0, Value *Op1, bool isNSW, bool isNUW,
+                              const TargetData *TD, const DominatorTree *DT,
+                              unsigned MaxRecurse) {
   if (Value *V = SimplifyShift(Instruction::Shl, Op0, Op1, TD, DT, MaxRecurse))
     return V;
 
   // undef << X -> 0
-  if (isa<UndefValue>(Op0))
+  if (match(Op0, m_Undef()))
     return Constant::getNullValue(Op0->getType());
 
+  // (X >> A) << A -> X
+  Value *X;
+  if (match(Op0, m_Shr(m_Value(X), m_Specific(Op1))) &&
+      cast<PossiblyExactOperator>(Op0)->isExact())
+    return X;
   return 0;
 }
 
-Value *llvm::SimplifyShlInst(Value *Op0, Value *Op1, const TargetData *TD,
-                             const DominatorTree *DT) {
-  return ::SimplifyShlInst(Op0, Op1, TD, DT, RecursionLimit);
+Value *llvm::SimplifyShlInst(Value *Op0, Value *Op1, bool isNSW, bool isNUW,
+                             const TargetData *TD, const DominatorTree *DT) {
+  return ::SimplifyShlInst(Op0, Op1, isNSW, isNUW, TD, DT, RecursionLimit);
 }
 
 /// SimplifyLShrInst - Given operands for an LShr, see if we can
 /// fold the result.  If not, this returns null.
-static Value *SimplifyLShrInst(Value *Op0, Value *Op1, const TargetData *TD,
-                               const DominatorTree *DT, unsigned MaxRecurse) {
+static Value *SimplifyLShrInst(Value *Op0, Value *Op1, bool isExact,
+                               const TargetData *TD, const DominatorTree *DT,
+                               unsigned MaxRecurse) {
   if (Value *V = SimplifyShift(Instruction::LShr, Op0, Op1, TD, DT, MaxRecurse))
     return V;
 
   // undef >>l X -> 0
-  if (isa<UndefValue>(Op0))
+  if (match(Op0, m_Undef()))
     return Constant::getNullValue(Op0->getType());
+
+  // (X << A) >> A -> X
+  Value *X;
+  if (match(Op0, m_Shl(m_Value(X), m_Specific(Op1))) &&
+      cast<OverflowingBinaryOperator>(Op0)->hasNoUnsignedWrap())
+    return X;
 
   return 0;
 }
 
-Value *llvm::SimplifyLShrInst(Value *Op0, Value *Op1, const TargetData *TD,
-                              const DominatorTree *DT) {
-  return ::SimplifyLShrInst(Op0, Op1, TD, DT, RecursionLimit);
+Value *llvm::SimplifyLShrInst(Value *Op0, Value *Op1, bool isExact,
+                              const TargetData *TD, const DominatorTree *DT) {
+  return ::SimplifyLShrInst(Op0, Op1, isExact, TD, DT, RecursionLimit);
 }
 
 /// SimplifyAShrInst - Given operands for an AShr, see if we can
 /// fold the result.  If not, this returns null.
-static Value *SimplifyAShrInst(Value *Op0, Value *Op1, const TargetData *TD,
-                              const DominatorTree *DT, unsigned MaxRecurse) {
+static Value *SimplifyAShrInst(Value *Op0, Value *Op1, bool isExact,
+                               const TargetData *TD, const DominatorTree *DT,
+                               unsigned MaxRecurse) {
   if (Value *V = SimplifyShift(Instruction::AShr, Op0, Op1, TD, DT, MaxRecurse))
     return V;
 
@@ -841,15 +1009,21 @@ static Value *SimplifyAShrInst(Value *Op0, Value *Op1, const TargetData *TD,
     return Op0;
 
   // undef >>a X -> all ones
-  if (isa<UndefValue>(Op0))
+  if (match(Op0, m_Undef()))
     return Constant::getAllOnesValue(Op0->getType());
+
+  // (X << A) >> A -> X
+  Value *X;
+  if (match(Op0, m_Shl(m_Value(X), m_Specific(Op1))) &&
+      cast<OverflowingBinaryOperator>(Op0)->hasNoSignedWrap())
+    return X;
 
   return 0;
 }
 
-Value *llvm::SimplifyAShrInst(Value *Op0, Value *Op1, const TargetData *TD,
-                              const DominatorTree *DT) {
-  return ::SimplifyAShrInst(Op0, Op1, TD, DT, RecursionLimit);
+Value *llvm::SimplifyAShrInst(Value *Op0, Value *Op1, bool isExact,
+                              const TargetData *TD, const DominatorTree *DT) {
+  return ::SimplifyAShrInst(Op0, Op1, isExact, TD, DT, RecursionLimit);
 }
 
 /// SimplifyAndInst - Given operands for an And, see if we can
@@ -868,7 +1042,7 @@ static Value *SimplifyAndInst(Value *Op0, Value *Op1, const TargetData *TD,
   }
 
   // X & undef -> 0
-  if (isa<UndefValue>(Op1))
+  if (match(Op1, m_Undef()))
     return Constant::getNullValue(Op0->getType());
 
   // X & X = X
@@ -884,12 +1058,12 @@ static Value *SimplifyAndInst(Value *Op0, Value *Op1, const TargetData *TD,
     return Op0;
 
   // A & ~A  =  ~A & A  =  0
-  Value *A = 0, *B = 0;
-  if ((match(Op0, m_Not(m_Value(A))) && A == Op1) ||
-      (match(Op1, m_Not(m_Value(A))) && A == Op0))
+  if (match(Op0, m_Not(m_Specific(Op1))) ||
+      match(Op1, m_Not(m_Specific(Op0))))
     return Constant::getNullValue(Op0->getType());
 
   // (A | ?) & A = A
+  Value *A = 0, *B = 0;
   if (match(Op0, m_Or(m_Value(A), m_Value(B))) &&
       (A == Op1 || B == Op1))
     return Op1;
@@ -957,7 +1131,7 @@ static Value *SimplifyOrInst(Value *Op0, Value *Op1, const TargetData *TD,
   }
 
   // X | undef -> -1
-  if (isa<UndefValue>(Op1))
+  if (match(Op1, m_Undef()))
     return Constant::getAllOnesValue(Op0->getType());
 
   // X | X = X
@@ -973,12 +1147,12 @@ static Value *SimplifyOrInst(Value *Op0, Value *Op1, const TargetData *TD,
     return Op1;
 
   // A | ~A  =  ~A | A  =  -1
-  Value *A = 0, *B = 0;
-  if ((match(Op0, m_Not(m_Value(A))) && A == Op1) ||
-      (match(Op1, m_Not(m_Value(A))) && A == Op0))
+  if (match(Op0, m_Not(m_Specific(Op1))) ||
+      match(Op1, m_Not(m_Specific(Op0))))
     return Constant::getAllOnesValue(Op0->getType());
 
   // (A & ?) | A = A
+  Value *A = 0, *B = 0;
   if (match(Op0, m_And(m_Value(A), m_Value(B))) &&
       (A == Op1 || B == Op1))
     return Op1;
@@ -987,6 +1161,16 @@ static Value *SimplifyOrInst(Value *Op0, Value *Op1, const TargetData *TD,
   if (match(Op1, m_And(m_Value(A), m_Value(B))) &&
       (A == Op0 || B == Op0))
     return Op0;
+
+  // ~(A & ?) | A = -1
+  if (match(Op0, m_Not(m_And(m_Value(A), m_Value(B)))) &&
+      (A == Op1 || B == Op1))
+    return Constant::getAllOnesValue(Op1->getType());
+
+  // A | ~(A & ?) = -1
+  if (match(Op1, m_Not(m_And(m_Value(A), m_Value(B)))) &&
+      (A == Op0 || B == Op0))
+    return Constant::getAllOnesValue(Op0->getType());
 
   // Try some generic simplifications for associative operations.
   if (Value *V = SimplifyAssociativeBinOp(Instruction::Or, Op0, Op1, TD, DT,
@@ -1041,7 +1225,7 @@ static Value *SimplifyXorInst(Value *Op0, Value *Op1, const TargetData *TD,
   }
 
   // A ^ undef -> undef
-  if (isa<UndefValue>(Op1))
+  if (match(Op1, m_Undef()))
     return Op1;
 
   // A ^ 0 = A
@@ -1053,9 +1237,8 @@ static Value *SimplifyXorInst(Value *Op0, Value *Op1, const TargetData *TD,
     return Constant::getNullValue(Op0->getType());
 
   // A ^ ~A  =  ~A ^ A  =  -1
-  Value *A = 0;
-  if ((match(Op0, m_Not(m_Value(A))) && A == Op1) ||
-      (match(Op1, m_Not(m_Value(A))) && A == Op0))
+  if (match(Op0, m_Not(m_Specific(Op1))) ||
+      match(Op1, m_Not(m_Specific(Op0))))
     return Constant::getAllOnesValue(Op0->getType());
 
   // Try some generic simplifications for associative operations.
@@ -1153,45 +1336,6 @@ static Value *SimplifyICmpInst(unsigned Predicate, Value *LHS, Value *RHS,
     }
   }
 
-  // See if we are doing a comparison with a constant.
-  if (ConstantInt *CI = dyn_cast<ConstantInt>(RHS)) {
-    switch (Pred) {
-    default: break;
-    case ICmpInst::ICMP_UGT:
-      if (CI->isMaxValue(false))                 // A >u MAX -> FALSE
-        return ConstantInt::getFalse(CI->getContext());
-      break;
-    case ICmpInst::ICMP_UGE:
-      if (CI->isMinValue(false))                 // A >=u MIN -> TRUE
-        return ConstantInt::getTrue(CI->getContext());
-      break;
-    case ICmpInst::ICMP_ULT:
-      if (CI->isMinValue(false))                 // A <u MIN -> FALSE
-        return ConstantInt::getFalse(CI->getContext());
-      break;
-    case ICmpInst::ICMP_ULE:
-      if (CI->isMaxValue(false))                 // A <=u MAX -> TRUE
-        return ConstantInt::getTrue(CI->getContext());
-      break;
-    case ICmpInst::ICMP_SGT:
-      if (CI->isMaxValue(true))                  // A >s MAX -> FALSE
-        return ConstantInt::getFalse(CI->getContext());
-      break;
-    case ICmpInst::ICMP_SGE:
-      if (CI->isMinValue(true))                  // A >=s MIN -> TRUE
-        return ConstantInt::getTrue(CI->getContext());
-      break;
-    case ICmpInst::ICMP_SLT:
-      if (CI->isMinValue(true))                  // A <s MIN -> FALSE
-        return ConstantInt::getFalse(CI->getContext());
-      break;
-    case ICmpInst::ICMP_SLE:
-      if (CI->isMaxValue(true))                  // A <=s MAX -> TRUE
-        return ConstantInt::getTrue(CI->getContext());
-      break;
-    }
-  }
-
   // icmp <alloca*>, <global/alloca*/null> - Different stack variables have
   // different addresses, and what's more the address of a stack variable is
   // never null or equal to the address of a global.  Note that generalizing
@@ -1200,8 +1344,124 @@ static Value *SimplifyICmpInst(unsigned Predicate, Value *LHS, Value *RHS,
   // the compare, and if only one of them is then we moved it to RHS already.
   if (isa<AllocaInst>(LHS) && (isa<GlobalValue>(RHS) || isa<AllocaInst>(RHS) ||
                                isa<ConstantPointerNull>(RHS)))
-    // We already know that LHS != LHS.
+    // We already know that LHS != RHS.
     return ConstantInt::get(ITy, CmpInst::isFalseWhenEqual(Pred));
+
+  // If we are comparing with zero then try hard since this is a common case.
+  if (match(RHS, m_Zero())) {
+    bool LHSKnownNonNegative, LHSKnownNegative;
+    switch (Pred) {
+    default:
+      assert(false && "Unknown ICmp predicate!");
+    case ICmpInst::ICMP_ULT:
+      return ConstantInt::getFalse(LHS->getContext());
+    case ICmpInst::ICMP_UGE:
+      return ConstantInt::getTrue(LHS->getContext());
+    case ICmpInst::ICMP_EQ:
+    case ICmpInst::ICMP_ULE:
+      if (isKnownNonZero(LHS, TD))
+        return ConstantInt::getFalse(LHS->getContext());
+      break;
+    case ICmpInst::ICMP_NE:
+    case ICmpInst::ICMP_UGT:
+      if (isKnownNonZero(LHS, TD))
+        return ConstantInt::getTrue(LHS->getContext());
+      break;
+    case ICmpInst::ICMP_SLT:
+      ComputeSignBit(LHS, LHSKnownNonNegative, LHSKnownNegative, TD);
+      if (LHSKnownNegative)
+        return ConstantInt::getTrue(LHS->getContext());
+      if (LHSKnownNonNegative)
+        return ConstantInt::getFalse(LHS->getContext());
+      break;
+    case ICmpInst::ICMP_SLE:
+      ComputeSignBit(LHS, LHSKnownNonNegative, LHSKnownNegative, TD);
+      if (LHSKnownNegative)
+        return ConstantInt::getTrue(LHS->getContext());
+      if (LHSKnownNonNegative && isKnownNonZero(LHS, TD))
+        return ConstantInt::getFalse(LHS->getContext());
+      break;
+    case ICmpInst::ICMP_SGE:
+      ComputeSignBit(LHS, LHSKnownNonNegative, LHSKnownNegative, TD);
+      if (LHSKnownNegative)
+        return ConstantInt::getFalse(LHS->getContext());
+      if (LHSKnownNonNegative)
+        return ConstantInt::getTrue(LHS->getContext());
+      break;
+    case ICmpInst::ICMP_SGT:
+      ComputeSignBit(LHS, LHSKnownNonNegative, LHSKnownNegative, TD);
+      if (LHSKnownNegative)
+        return ConstantInt::getFalse(LHS->getContext());
+      if (LHSKnownNonNegative && isKnownNonZero(LHS, TD))
+        return ConstantInt::getTrue(LHS->getContext());
+      break;
+    }
+  }
+
+  // See if we are doing a comparison with a constant integer.
+  if (ConstantInt *CI = dyn_cast<ConstantInt>(RHS)) {
+    // Rule out tautological comparisons (eg., ult 0 or uge 0).
+    ConstantRange RHS_CR = ICmpInst::makeConstantRange(Pred, CI->getValue());
+    if (RHS_CR.isEmptySet())
+      return ConstantInt::getFalse(CI->getContext());
+    if (RHS_CR.isFullSet())
+      return ConstantInt::getTrue(CI->getContext());
+
+    // Many binary operators with constant RHS have easy to compute constant
+    // range.  Use them to check whether the comparison is a tautology.
+    uint32_t Width = CI->getBitWidth();
+    APInt Lower = APInt(Width, 0);
+    APInt Upper = APInt(Width, 0);
+    ConstantInt *CI2;
+    if (match(LHS, m_URem(m_Value(), m_ConstantInt(CI2)))) {
+      // 'urem x, CI2' produces [0, CI2).
+      Upper = CI2->getValue();
+    } else if (match(LHS, m_SRem(m_Value(), m_ConstantInt(CI2)))) {
+      // 'srem x, CI2' produces (-|CI2|, |CI2|).
+      Upper = CI2->getValue().abs();
+      Lower = (-Upper) + 1;
+    } else if (match(LHS, m_UDiv(m_Value(), m_ConstantInt(CI2)))) {
+      // 'udiv x, CI2' produces [0, UINT_MAX / CI2].
+      APInt NegOne = APInt::getAllOnesValue(Width);
+      if (!CI2->isZero())
+        Upper = NegOne.udiv(CI2->getValue()) + 1;
+    } else if (match(LHS, m_SDiv(m_Value(), m_ConstantInt(CI2)))) {
+      // 'sdiv x, CI2' produces [INT_MIN / CI2, INT_MAX / CI2].
+      APInt IntMin = APInt::getSignedMinValue(Width);
+      APInt IntMax = APInt::getSignedMaxValue(Width);
+      APInt Val = CI2->getValue().abs();
+      if (!Val.isMinValue()) {
+        Lower = IntMin.sdiv(Val);
+        Upper = IntMax.sdiv(Val) + 1;
+      }
+    } else if (match(LHS, m_LShr(m_Value(), m_ConstantInt(CI2)))) {
+      // 'lshr x, CI2' produces [0, UINT_MAX >> CI2].
+      APInt NegOne = APInt::getAllOnesValue(Width);
+      if (CI2->getValue().ult(Width))
+        Upper = NegOne.lshr(CI2->getValue()) + 1;
+    } else if (match(LHS, m_AShr(m_Value(), m_ConstantInt(CI2)))) {
+      // 'ashr x, CI2' produces [INT_MIN >> CI2, INT_MAX >> CI2].
+      APInt IntMin = APInt::getSignedMinValue(Width);
+      APInt IntMax = APInt::getSignedMaxValue(Width);
+      if (CI2->getValue().ult(Width)) {
+        Lower = IntMin.ashr(CI2->getValue());
+        Upper = IntMax.ashr(CI2->getValue()) + 1;
+      }
+    } else if (match(LHS, m_Or(m_Value(), m_ConstantInt(CI2)))) {
+      // 'or x, CI2' produces [CI2, UINT_MAX].
+      Lower = CI2->getValue();
+    } else if (match(LHS, m_And(m_Value(), m_ConstantInt(CI2)))) {
+      // 'and x, CI2' produces [0, CI2].
+      Upper = CI2->getValue() + 1;
+    }
+    if (Lower != Upper) {
+      ConstantRange LHS_CR = ConstantRange(Lower, Upper);
+      if (RHS_CR.contains(LHS_CR))
+        return ConstantInt::getTrue(RHS->getContext());
+      if (RHS_CR.inverse().contains(LHS_CR))
+        return ConstantInt::getFalse(RHS->getContext());
+    }
+  }
 
   // Compare of cast, for example (zext X) != 0 -> X != 0
   if (isa<CastInst>(LHS) && (isa<Constant>(RHS) || isa<CastInst>(RHS))) {
@@ -1362,6 +1622,139 @@ static Value *SimplifyICmpInst(unsigned Predicate, Value *LHS, Value *RHS,
           }
         }
       }
+    }
+  }
+
+  // Special logic for binary operators.
+  BinaryOperator *LBO = dyn_cast<BinaryOperator>(LHS);
+  BinaryOperator *RBO = dyn_cast<BinaryOperator>(RHS);
+  if (MaxRecurse && (LBO || RBO)) {
+    // Analyze the case when either LHS or RHS is an add instruction.
+    Value *A = 0, *B = 0, *C = 0, *D = 0;
+    // LHS = A + B (or A and B are null); RHS = C + D (or C and D are null).
+    bool NoLHSWrapProblem = false, NoRHSWrapProblem = false;
+    if (LBO && LBO->getOpcode() == Instruction::Add) {
+      A = LBO->getOperand(0); B = LBO->getOperand(1);
+      NoLHSWrapProblem = ICmpInst::isEquality(Pred) ||
+        (CmpInst::isUnsigned(Pred) && LBO->hasNoUnsignedWrap()) ||
+        (CmpInst::isSigned(Pred) && LBO->hasNoSignedWrap());
+    }
+    if (RBO && RBO->getOpcode() == Instruction::Add) {
+      C = RBO->getOperand(0); D = RBO->getOperand(1);
+      NoRHSWrapProblem = ICmpInst::isEquality(Pred) ||
+        (CmpInst::isUnsigned(Pred) && RBO->hasNoUnsignedWrap()) ||
+        (CmpInst::isSigned(Pred) && RBO->hasNoSignedWrap());
+    }
+
+    // icmp (X+Y), X -> icmp Y, 0 for equalities or if there is no overflow.
+    if ((A == RHS || B == RHS) && NoLHSWrapProblem)
+      if (Value *V = SimplifyICmpInst(Pred, A == RHS ? B : A,
+                                      Constant::getNullValue(RHS->getType()),
+                                      TD, DT, MaxRecurse-1))
+        return V;
+
+    // icmp X, (X+Y) -> icmp 0, Y for equalities or if there is no overflow.
+    if ((C == LHS || D == LHS) && NoRHSWrapProblem)
+      if (Value *V = SimplifyICmpInst(Pred,
+                                      Constant::getNullValue(LHS->getType()),
+                                      C == LHS ? D : C, TD, DT, MaxRecurse-1))
+        return V;
+
+    // icmp (X+Y), (X+Z) -> icmp Y,Z for equalities or if there is no overflow.
+    if (A && C && (A == C || A == D || B == C || B == D) &&
+        NoLHSWrapProblem && NoRHSWrapProblem) {
+      // Determine Y and Z in the form icmp (X+Y), (X+Z).
+      Value *Y = (A == C || A == D) ? B : A;
+      Value *Z = (C == A || C == B) ? D : C;
+      if (Value *V = SimplifyICmpInst(Pred, Y, Z, TD, DT, MaxRecurse-1))
+        return V;
+    }
+  }
+
+  if (LBO && match(LBO, m_URem(m_Value(), m_Specific(RHS)))) {
+    bool KnownNonNegative, KnownNegative;
+    switch (Pred) {
+    default:
+      break;
+    case ICmpInst::ICMP_SGT:
+    case ICmpInst::ICMP_SGE:
+      ComputeSignBit(LHS, KnownNonNegative, KnownNegative, TD);
+      if (!KnownNonNegative)
+        break;
+      // fall-through
+    case ICmpInst::ICMP_EQ:
+    case ICmpInst::ICMP_UGT:
+    case ICmpInst::ICMP_UGE:
+      return ConstantInt::getFalse(RHS->getContext());
+    case ICmpInst::ICMP_SLT:
+    case ICmpInst::ICMP_SLE:
+      ComputeSignBit(LHS, KnownNonNegative, KnownNegative, TD);
+      if (!KnownNonNegative)
+        break;
+      // fall-through
+    case ICmpInst::ICMP_NE:
+    case ICmpInst::ICMP_ULT:
+    case ICmpInst::ICMP_ULE:
+      return ConstantInt::getTrue(RHS->getContext());
+    }
+  }
+  if (RBO && match(RBO, m_URem(m_Value(), m_Specific(LHS)))) {
+    bool KnownNonNegative, KnownNegative;
+    switch (Pred) {
+    default:
+      break;
+    case ICmpInst::ICMP_SGT:
+    case ICmpInst::ICMP_SGE:
+      ComputeSignBit(RHS, KnownNonNegative, KnownNegative, TD);
+      if (!KnownNonNegative)
+        break;
+      // fall-through
+    case ICmpInst::ICMP_NE:
+    case ICmpInst::ICMP_UGT:
+    case ICmpInst::ICMP_UGE:
+      return ConstantInt::getTrue(RHS->getContext());
+    case ICmpInst::ICMP_SLT:
+    case ICmpInst::ICMP_SLE:
+      ComputeSignBit(RHS, KnownNonNegative, KnownNegative, TD);
+      if (!KnownNonNegative)
+        break;
+      // fall-through
+    case ICmpInst::ICMP_EQ:
+    case ICmpInst::ICMP_ULT:
+    case ICmpInst::ICMP_ULE:
+      return ConstantInt::getFalse(RHS->getContext());
+    }
+  }
+
+  if (MaxRecurse && LBO && RBO && LBO->getOpcode() == RBO->getOpcode() &&
+      LBO->getOperand(1) == RBO->getOperand(1)) {
+    switch (LBO->getOpcode()) {
+    default: break;
+    case Instruction::UDiv:
+    case Instruction::LShr:
+      if (ICmpInst::isSigned(Pred))
+        break;
+      // fall-through
+    case Instruction::SDiv:
+    case Instruction::AShr:
+      if (!LBO->isExact() && !RBO->isExact())
+        break;
+      if (Value *V = SimplifyICmpInst(Pred, LBO->getOperand(0),
+                                      RBO->getOperand(0), TD, DT, MaxRecurse-1))
+        return V;
+      break;
+    case Instruction::Shl: {
+      bool NUW = LBO->hasNoUnsignedWrap() && LBO->hasNoUnsignedWrap();
+      bool NSW = LBO->hasNoSignedWrap() && RBO->hasNoSignedWrap();
+      if (!NUW && !NSW)
+        break;
+      if (!NSW && ICmpInst::isSigned(Pred))
+        break;
+      if (Value *V = SimplifyICmpInst(Pred, LBO->getOperand(0),
+                                      RBO->getOperand(0), TD, DT, MaxRecurse-1))
+        return V;
+      break;
+    }
     }
   }
 
@@ -1590,18 +1983,25 @@ static Value *SimplifyBinOp(unsigned Opcode, Value *LHS, Value *RHS,
                             const TargetData *TD, const DominatorTree *DT,
                             unsigned MaxRecurse) {
   switch (Opcode) {
-  case Instruction::Add: return SimplifyAddInst(LHS, RHS, /* isNSW */ false,
-                                                /* isNUW */ false, TD, DT,
-                                                MaxRecurse);
-  case Instruction::Sub: return SimplifySubInst(LHS, RHS, /* isNSW */ false,
-                                                /* isNUW */ false, TD, DT,
-                                                MaxRecurse);
-  case Instruction::Mul: return SimplifyMulInst(LHS, RHS, TD, DT, MaxRecurse);
-  case Instruction::Shl: return SimplifyShlInst(LHS, RHS, TD, DT, MaxRecurse);
-  case Instruction::LShr: return SimplifyLShrInst(LHS, RHS, TD, DT, MaxRecurse);
-  case Instruction::AShr: return SimplifyAShrInst(LHS, RHS, TD, DT, MaxRecurse);
+  case Instruction::Add:
+    return SimplifyAddInst(LHS, RHS, /*isNSW*/false, /*isNUW*/false,
+                           TD, DT, MaxRecurse);
+  case Instruction::Sub:
+    return SimplifySubInst(LHS, RHS, /*isNSW*/false, /*isNUW*/false,
+                           TD, DT, MaxRecurse);
+  case Instruction::Mul:  return SimplifyMulInst (LHS, RHS, TD, DT, MaxRecurse);
+  case Instruction::SDiv: return SimplifySDivInst(LHS, RHS, TD, DT, MaxRecurse);
+  case Instruction::UDiv: return SimplifyUDivInst(LHS, RHS, TD, DT, MaxRecurse);
+  case Instruction::FDiv: return SimplifyFDivInst(LHS, RHS, TD, DT, MaxRecurse);
+  case Instruction::Shl:
+    return SimplifyShlInst(LHS, RHS, /*isNSW*/false, /*isNUW*/false,
+                           TD, DT, MaxRecurse);
+  case Instruction::LShr:
+    return SimplifyLShrInst(LHS, RHS, /*isExact*/false, TD, DT, MaxRecurse);
+  case Instruction::AShr:
+    return SimplifyAShrInst(LHS, RHS, /*isExact*/false, TD, DT, MaxRecurse);
   case Instruction::And: return SimplifyAndInst(LHS, RHS, TD, DT, MaxRecurse);
-  case Instruction::Or:  return SimplifyOrInst(LHS, RHS, TD, DT, MaxRecurse);
+  case Instruction::Or:  return SimplifyOrInst (LHS, RHS, TD, DT, MaxRecurse);
   case Instruction::Xor: return SimplifyXorInst(LHS, RHS, TD, DT, MaxRecurse);
   default:
     if (Constant *CLHS = dyn_cast<Constant>(LHS))
@@ -1678,14 +2078,30 @@ Value *llvm::SimplifyInstruction(Instruction *I, const TargetData *TD,
   case Instruction::Mul:
     Result = SimplifyMulInst(I->getOperand(0), I->getOperand(1), TD, DT);
     break;
+  case Instruction::SDiv:
+    Result = SimplifySDivInst(I->getOperand(0), I->getOperand(1), TD, DT);
+    break;
+  case Instruction::UDiv:
+    Result = SimplifyUDivInst(I->getOperand(0), I->getOperand(1), TD, DT);
+    break;
+  case Instruction::FDiv:
+    Result = SimplifyFDivInst(I->getOperand(0), I->getOperand(1), TD, DT);
+    break;
   case Instruction::Shl:
-    Result = SimplifyShlInst(I->getOperand(0), I->getOperand(1), TD, DT);
+    Result = SimplifyShlInst(I->getOperand(0), I->getOperand(1),
+                             cast<BinaryOperator>(I)->hasNoSignedWrap(),
+                             cast<BinaryOperator>(I)->hasNoUnsignedWrap(),
+                             TD, DT);
     break;
   case Instruction::LShr:
-    Result = SimplifyLShrInst(I->getOperand(0), I->getOperand(1), TD, DT);
+    Result = SimplifyLShrInst(I->getOperand(0), I->getOperand(1),
+                              cast<BinaryOperator>(I)->isExact(),
+                              TD, DT);
     break;
   case Instruction::AShr:
-    Result = SimplifyAShrInst(I->getOperand(0), I->getOperand(1), TD, DT);
+    Result = SimplifyAShrInst(I->getOperand(0), I->getOperand(1),
+                              cast<BinaryOperator>(I)->isExact(),
+                              TD, DT);
     break;
   case Instruction::And:
     Result = SimplifyAndInst(I->getOperand(0), I->getOperand(1), TD, DT);

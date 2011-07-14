@@ -57,7 +57,6 @@ namespace llvm {
       CMPFPw0,      // ARM VFP compare against zero instruction, sets FPSCR.
       FMSTAT,       // ARM fmstat instruction.
       CMOV,         // ARM conditional move instructions.
-      CNEG,         // ARM conditional negate instructions.
 
       BCC_i64,
 
@@ -154,6 +153,8 @@ namespace llvm {
       VZIP,         // zip (interleave)
       VUZP,         // unzip (deinterleave)
       VTRN,         // transpose
+      VTBL1,        // 1-register shuffle with mask
+      VTBL2,        // 2-register shuffle with mask
 
       // Vector multiply long:
       VMULLs,       // ...signed
@@ -181,7 +182,28 @@ namespace llvm {
       // Vector load N-element structure to all lanes:
       VLD2DUP = ISD::FIRST_TARGET_MEMORY_OPCODE,
       VLD3DUP,
-      VLD4DUP
+      VLD4DUP,
+
+      // NEON loads with post-increment base updates:
+      VLD1_UPD,
+      VLD2_UPD,
+      VLD3_UPD,
+      VLD4_UPD,
+      VLD2LN_UPD,
+      VLD3LN_UPD,
+      VLD4LN_UPD,
+      VLD2DUP_UPD,
+      VLD3DUP_UPD,
+      VLD4DUP_UPD,
+
+      // NEON stores with post-increment base updates:
+      VST1_UPD,
+      VST2_UPD,
+      VST3_UPD,
+      VST4_UPD,
+      VST2LN_UPD,
+      VST3LN_UPD,
+      VST4LN_UPD
     };
   }
 
@@ -213,13 +235,15 @@ namespace llvm {
     virtual void ReplaceNodeResults(SDNode *N, SmallVectorImpl<SDValue>&Results,
                                     SelectionDAG &DAG) const;
 
-    virtual SDValue PerformDAGCombine(SDNode *N, DAGCombinerInfo &DCI) const;
-
     virtual const char *getTargetNodeName(unsigned Opcode) const;
 
     virtual MachineBasicBlock *
       EmitInstrWithCustomInserter(MachineInstr *MI,
                                   MachineBasicBlock *MBB) const;
+
+    virtual SDValue PerformDAGCombine(SDNode *N, DAGCombinerInfo &DCI) const;
+
+    bool isDesirableToTransformToIntegerOp(unsigned Opc, EVT VT) const;
 
     /// allowsUnalignedMemoryAccesses - Returns true if the target allows
     /// unaligned memory accesses. of the specified type.
@@ -306,9 +330,6 @@ namespace llvm {
     virtual FastISel *createFastISel(FunctionLoweringInfo &funcInfo) const;
 
     Sched::Preference getSchedulingPreference(SDNode *N) const;
-
-    unsigned getRegPressureLimit(const TargetRegisterClass *RC,
-                                 MachineFunction &MF) const;
 
     bool isShuffleMaskLegal(const SmallVectorImpl<int> &M, EVT VT) const;
     bool isOffsetFoldingLegal(const GlobalAddressSDNode *GA) const;
@@ -412,6 +433,9 @@ namespace llvm {
                 DebugLoc dl, SelectionDAG &DAG,
                 SmallVectorImpl<SDValue> &InVals) const;
 
+    /// HandleByVal - Target-specific cleanup for ByVal support.
+    virtual void HandleByVal(CCState *) const;
+
     /// IsEligibleForTailCallOptimization - Check whether the call is eligible
     /// for tail call optimization. Targets which want to do tail call
     /// optimization should implement this function.
@@ -433,10 +457,13 @@ namespace llvm {
 
     virtual bool isUsedByReturnOnly(SDNode *N) const;
 
+    virtual bool mayBeEmittedAsTailCall(CallInst *CI) const;
+
     SDValue getARMCmp(SDValue LHS, SDValue RHS, ISD::CondCode CC,
                       SDValue &ARMcc, SelectionDAG &DAG, DebugLoc dl) const;
     SDValue getVFPCmp(SDValue LHS, SDValue RHS,
                       SelectionDAG &DAG, DebugLoc dl) const;
+    SDValue duplicateCmp(SDValue Cmp, SelectionDAG &DAG) const;
 
     SDValue OptimizeVFPBrcond(SDValue Op, SelectionDAG &DAG) const;
 

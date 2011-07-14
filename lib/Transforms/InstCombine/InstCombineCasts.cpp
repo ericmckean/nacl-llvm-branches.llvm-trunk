@@ -87,10 +87,8 @@ Instruction *InstCombiner::PromoteCastOfAllocation(BitCastInst &CI,
 
   // If the allocation has multiple uses, only promote it if we are strictly
   // increasing the alignment of the resultant allocation.  If we keep it the
-  // same, we open the door to infinite loops of various kinds.  (A reference
-  // from a dbg.declare doesn't count as a use for this purpose.)
-  if (!AI.hasOneUse() && !hasOneUsePlusDeclare(&AI) &&
-      CastElTyAlign == AllocElTyAlign) return 0;
+  // same, we open the door to infinite loops of various kinds.
+  if (!AI.hasOneUse() && CastElTyAlign == AllocElTyAlign) return 0;
 
   uint64_t AllocElTySize = TD->getTypeAllocSize(AllocElTy);
   uint64_t CastElTySize = TD->getTypeAllocSize(CastElTy);
@@ -128,15 +126,10 @@ Instruction *InstCombiner::PromoteCastOfAllocation(BitCastInst &CI,
   New->setAlignment(AI.getAlignment());
   New->takeName(&AI);
   
-  // If the allocation has one real use plus a dbg.declare, just remove the
-  // declare.
-  if (DbgDeclareInst *DI = hasOneUsePlusDeclare(&AI)) {
-    EraseInstFromFunction(*(Instruction*)DI);
-  }
   // If the allocation has multiple real uses, insert a cast and change all
   // things that used it to use the new cast.  This will also hack on CI, but it
   // will die soon.
-  else if (!AI.hasOneUse()) {
+  if (!AI.hasOneUse()) {
     // New is the allocation instruction, pointer typed. AI is the original
     // allocation instruction, also pointer typed. Thus, cast to use is BitCast.
     Value *NewCast = AllocaBuilder.CreateBitCast(New, AI.getType(), "tmpcast");
@@ -1037,11 +1030,8 @@ Instruction *InstCombiner::visitSExt(SExtInst &CI) {
       if (Pred == ICmpInst::ICMP_SLT && CmpLHS->getType() == DestTy) {
         const Type *EltTy = VTy->getElementType();
 
-        // splat the shift constant to a cosntant vector
-        Constant *Sh = ConstantInt::get(EltTy, EltTy->getScalarSizeInBits()-1);
-        std::vector<Constant *> Elts(VTy->getNumElements(), Sh);
-        Constant *VSh = ConstantVector::get(Elts);
-
+        // splat the shift constant to a constant vector.
+        Constant *VSh = ConstantInt::get(VTy, EltTy->getScalarSizeInBits()-1);
         Value *In = Builder->CreateAShr(CmpLHS, VSh,CmpLHS->getName()+".lobit");
         return ReplaceInstUsesWith(CI, In);
       }
@@ -1390,8 +1380,7 @@ static Instruction *OptimizeVectorResize(Value *InVal, const VectorType *DestTy,
                        ConstantInt::get(Int32Ty, SrcElts));
   }
   
-  Constant *Mask = ConstantVector::get(ShuffleMask.data(), ShuffleMask.size());
-  return new ShuffleVectorInst(InVal, V2, Mask);
+  return new ShuffleVectorInst(InVal, V2, ConstantVector::get(ShuffleMask));
 }
 
 static bool isMultipleOfTypeSize(unsigned Value, const Type *Ty) {

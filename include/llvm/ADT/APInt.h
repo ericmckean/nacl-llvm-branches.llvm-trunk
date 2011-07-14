@@ -431,6 +431,13 @@ public:
   /// @returns the low "numBits" bits of this APInt.
   APInt getLoBits(unsigned numBits) const;
 
+  /// getOneBitSet - Return an APInt with exactly one bit set in the result.
+  static APInt getOneBitSet(unsigned numBits, unsigned BitNo) {
+    APInt Res(numBits, 0);
+    Res.setBit(BitNo);
+    return Res;
+  }
+  
   /// Constructs an APInt value that has a contiguous range of bits set. The
   /// bits from loBit (inclusive) to hiBit (exclusive) will be set. All other
   /// bits will be zero. For example, with parameters(32, 0, 16) you would get
@@ -1186,6 +1193,12 @@ public:
   /// @brief Count the number of leading one bits.
   unsigned countLeadingOnes() const;
 
+  /// Computes the number of leading bits of this APInt that are equal to its
+  /// sign bit.
+  unsigned getNumSignBits() const {
+    return isNegative() ? countLeadingOnes() : countLeadingZeros();
+  }
+
   /// countTrailingZeros - This function is an APInt version of the
   /// countTrailingZeros_{32,64} functions in MathExtras.h. It counts
   /// the number of zeros from the least significant bit to the first set bit.
@@ -1359,7 +1372,7 @@ public:
 
   /// Calculate the magic number for unsigned division by a constant.
   struct mu;
-  mu magicu() const;
+  mu magicu(unsigned LeadingZeros = 0) const;
 
   /// @}
   /// @name Building-block Operations for APInt and APFloat

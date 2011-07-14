@@ -166,16 +166,14 @@ void VirtRegAuxInfo::CalculateWeightAndHint(LiveInterval &li) {
   // FIXME: this gets much more complicated once we support non-trivial
   // re-materialization.
   bool isLoad = false;
-  SmallVector<LiveInterval*, 4> spillIs;
-  if (lis_.isReMaterializable(li, spillIs, isLoad)) {
+  if (lis_.isReMaterializable(li, 0, isLoad)) {
     if (isLoad)
       totalWeight *= 0.9F;
     else
       totalWeight *= 0.5F;
   }
 
-  li.weight = totalWeight;
-  lis_.normalizeSpillWeight(li);
+  li.weight = normalizeSpillWeight(totalWeight, li.getSize());
 }
 
 void VirtRegAuxInfo::CalculateRegClass(unsigned reg) {

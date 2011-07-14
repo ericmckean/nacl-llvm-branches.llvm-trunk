@@ -155,10 +155,11 @@ namespace ARMII {
     //===------------------------------------------------------------------===//
     // Code domain.
     DomainShift   = 18,
-    DomainMask    = 3 << DomainShift,
+    DomainMask    = 7 << DomainShift,
     DomainGeneral = 0 << DomainShift,
     DomainVFP     = 1 << DomainShift,
     DomainNEON    = 2 << DomainShift,
+    DomainNEONA8  = 4 << DomainShift,
 
     //===------------------------------------------------------------------===//
     // Field shifts - such shifts are used to set field while generating
@@ -495,19 +496,19 @@ void emitARMRegPlusImmediate(MachineBasicBlock &MBB,
                              MachineBasicBlock::iterator &MBBI, DebugLoc dl,
                              unsigned DestReg, unsigned BaseReg, int NumBytes,
                              ARMCC::CondCodes Pred, unsigned PredReg,
-                             const ARMBaseInstrInfo &TII);
+                             const ARMBaseInstrInfo &TII, unsigned MIFlags = 0);
 
 void emitT2RegPlusImmediate(MachineBasicBlock &MBB,
                             MachineBasicBlock::iterator &MBBI, DebugLoc dl,
                             unsigned DestReg, unsigned BaseReg, int NumBytes,
                             ARMCC::CondCodes Pred, unsigned PredReg,
-                            const ARMBaseInstrInfo &TII);
+                            const ARMBaseInstrInfo &TII, unsigned MIFlags = 0);
 void emitThumbRegPlusImmediate(MachineBasicBlock &MBB,
-                               MachineBasicBlock::iterator &MBBI,
+                               MachineBasicBlock::iterator &MBBI, DebugLoc dl,
                                unsigned DestReg, unsigned BaseReg,
                                int NumBytes, const TargetInstrInfo &TII,
                                const ARMBaseRegisterInfo& MRI,
-                               DebugLoc dl);
+                               unsigned MIFlags = 0);
 
 
 /// rewriteARMFrameIndex / rewriteT2FrameIndex -

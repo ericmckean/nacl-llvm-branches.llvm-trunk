@@ -24,8 +24,10 @@ class PTXTargetMachine;
 namespace PTXISD {
   enum NodeType {
     FIRST_NUMBER = ISD::BUILTIN_OP_END,
+    READ_PARAM,
     EXIT,
-    RET
+    RET,
+    COPY_ADDRESS
   };
 } // namespace PTXISD
 

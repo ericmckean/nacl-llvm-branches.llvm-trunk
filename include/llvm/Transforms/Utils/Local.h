@@ -19,14 +19,19 @@ namespace llvm {
 
 class User;
 class BasicBlock;
+class Function;
 class BranchInst;
 class Instruction;
+class DbgDeclareInst;
+class StoreInst;
+class LoadInst;
 class Value;
 class Pass;
 class PHINode;
 class AllocaInst;
 class ConstantExpr;
 class TargetData;
+class DIBuilder;
 
 template<typename T> class SmallVectorImpl;
   
@@ -60,7 +65,7 @@ bool RecursivelyDeleteTriviallyDeadInstructions(Value *V);
 /// dead PHI node, due to being a def-use chain of single-use nodes that
 /// either forms a cycle or is terminated by a trivially dead instruction,
 /// delete it.  If that makes any of its operands trivially dead, delete them
-/// too, recursively.  Return true if the PHI node is actually deleted.
+/// too, recursively.  Return true if a change was made.
 bool RecursivelyDeleteDeadPHINode(PHINode *PN);
 
   
@@ -156,6 +161,24 @@ unsigned getOrEnforceKnownAlignment(Value *V, unsigned PrefAlign,
 static inline unsigned getKnownAlignment(Value *V, const TargetData *TD = 0) {
   return getOrEnforceKnownAlignment(V, 0, TD);
 }
+
+///===---------------------------------------------------------------------===//
+///  Dbg Intrinsic utilities
+///
+
+/// Inserts a llvm.dbg.value instrinsic before the stores to an alloca'd value
+/// that has an associated llvm.dbg.decl intrinsic.
+bool ConvertDebugDeclareToDebugValue(DbgDeclareInst *DDI,
+                                     StoreInst *SI, DIBuilder &Builder);
+
+/// Inserts a llvm.dbg.value instrinsic before the stores to an alloca'd value
+/// that has an associated llvm.dbg.decl intrinsic.
+bool ConvertDebugDeclareToDebugValue(DbgDeclareInst *DDI,
+                                     LoadInst *LI, DIBuilder &Builder);
+
+/// LowerDbgDeclare - Lowers llvm.dbg.declare intrinsics into appropriate set
+/// of llvm.dbg.value intrinsics.
+bool LowerDbgDeclare(Function &F);
 
 } // End llvm namespace
 

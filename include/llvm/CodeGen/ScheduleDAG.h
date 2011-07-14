@@ -248,6 +248,7 @@ namespace llvm {
     unsigned NumSuccs;                  // # of SDep::Data sucss.
     unsigned NumPredsLeft;              // # of preds not scheduled.
     unsigned NumSuccsLeft;              // # of succs not scheduled.
+    unsigned short NumRegDefsLeft;      // # of reg defs with no scheduled use.
     unsigned short Latency;             // Node latency.
     bool isCall           : 1;          // Is a function call.
     bool isTwoAddress     : 1;          // Is a two-address instruction.
@@ -276,7 +277,7 @@ namespace llvm {
     SUnit(SDNode *node, unsigned nodenum)
       : Node(node), Instr(0), OrigNode(0), NodeNum(nodenum),
         NodeQueueId(0), NumPreds(0), NumSuccs(0), NumPredsLeft(0),
-        NumSuccsLeft(0), Latency(0),
+        NumSuccsLeft(0), NumRegDefsLeft(0), Latency(0),
         isCall(false), isTwoAddress(false), isCommutable(false),
         hasPhysRegDefs(false), hasPhysRegClobbers(false),
         isPending(false), isAvailable(false), isScheduled(false),
@@ -290,7 +291,7 @@ namespace llvm {
     SUnit(MachineInstr *instr, unsigned nodenum)
       : Node(0), Instr(instr), OrigNode(0), NodeNum(nodenum),
         NodeQueueId(0), NumPreds(0), NumSuccs(0), NumPredsLeft(0),
-        NumSuccsLeft(0), Latency(0),
+        NumSuccsLeft(0), NumRegDefsLeft(0), Latency(0),
         isCall(false), isTwoAddress(false), isCommutable(false),
         hasPhysRegDefs(false), hasPhysRegClobbers(false),
         isPending(false), isAvailable(false), isScheduled(false),
@@ -303,7 +304,7 @@ namespace llvm {
     SUnit()
       : Node(0), Instr(0), OrigNode(0), NodeNum(~0u),
         NodeQueueId(0), NumPreds(0), NumSuccs(0), NumPredsLeft(0),
-        NumSuccsLeft(0), Latency(0),
+        NumSuccsLeft(0), NumRegDefsLeft(0), Latency(0),
         isCall(false), isTwoAddress(false), isCommutable(false),
         hasPhysRegDefs(false), hasPhysRegClobbers(false),
         isPending(false), isAvailable(false), isScheduled(false),
@@ -347,7 +348,7 @@ namespace llvm {
     /// addPred - This adds the specified edge as a pred of the current node if
     /// not already.  It also adds the current node as a successor of the
     /// specified node.
-    void addPred(const SDep &D);
+    bool addPred(const SDep &D);
 
     /// removePred - This removes the specified edge as a pred of the current
     /// node if it exists.  It also removes the current node as a successor of
@@ -355,7 +356,7 @@ namespace llvm {
     void removePred(const SDep &D);
 
     /// getDepth - Return the depth of this node, which is the length of the
-    /// maximum path up to any node with has no predecessors.
+    /// maximum path up to any node which has no predecessors.
     unsigned getDepth() const {
       if (!isDepthCurrent)
         const_cast<SUnit *>(this)->ComputeDepth();
@@ -363,7 +364,7 @@ namespace llvm {
     }
 
     /// getHeight - Return the height of this node, which is the length of the
-    /// maximum path down to any node with has no successors.
+    /// maximum path down to any node which has no successors.
     unsigned getHeight() const {
       if (!isHeightCurrent)
         const_cast<SUnit *>(this)->ComputeHeight();
@@ -441,6 +442,8 @@ namespace llvm {
     virtual bool empty() const = 0;
 
     bool hasReadyFilter() const { return HasReadyFilter; }
+
+    virtual bool tracksRegPressure() const { return false; }
 
     virtual bool isReady(SUnit *) const {
       assert(!HasReadyFilter && "The ready filter must override isReady()");

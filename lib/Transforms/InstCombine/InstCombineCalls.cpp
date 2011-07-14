@@ -475,7 +475,35 @@ Instruction *InstCombiner::visitCallInst(CallInst &CI) {
       }
     }
     break;
-  case Intrinsic::umul_with_overflow:
+  case Intrinsic::umul_with_overflow: {
+    Value *LHS = II->getArgOperand(0), *RHS = II->getArgOperand(1);
+    unsigned BitWidth = cast<IntegerType>(LHS->getType())->getBitWidth();
+    APInt Mask = APInt::getAllOnesValue(BitWidth);
+
+    APInt LHSKnownZero(BitWidth, 0);
+    APInt LHSKnownOne(BitWidth, 0);
+    ComputeMaskedBits(LHS, Mask, LHSKnownZero, LHSKnownOne);
+    APInt RHSKnownZero(BitWidth, 0);
+    APInt RHSKnownOne(BitWidth, 0);
+    ComputeMaskedBits(RHS, Mask, RHSKnownZero, RHSKnownOne);
+
+    // Get the largest possible values for each operand, extended to be large
+    // enough so that every possible product of two BitWidth-sized ints fits.
+    APInt LHSMax = (~LHSKnownZero).zext(BitWidth*2);
+    APInt RHSMax = (~RHSKnownZero).zext(BitWidth*2);
+
+    // If multiplying the maximum values does not overflow then we can turn
+    // this into a plain NUW mul.
+    if ((LHSMax * RHSMax).getActiveBits() <= BitWidth) {
+      Value *Mul = Builder->CreateNUWMul(LHS, RHS, "umul_with_overflow");
+      Constant *V[] = {
+        UndefValue::get(LHS->getType()),
+        Builder->getFalse()
+      };
+      Constant *Struct = ConstantStruct::get(II->getContext(), V, 2, false);
+      return InsertValueInst::Create(Struct, Mul, 0);
+    }
+  } // FALL THROUGH
   case Intrinsic::smul_with_overflow:
     // Canonicalize constants into the RHS.
     if (isa<Constant>(II->getArgOperand(0)) &&
@@ -731,9 +759,13 @@ protected:
                            dyn_cast<ConstantInt>(CI->getArgOperand(SizeCIOp))) {
       if (SizeCI->isAllOnesValue())
         return true;
-      if (isString)
-        return SizeCI->getZExtValue() >=
-               GetStringLength(CI->getArgOperand(SizeArgOp));
+      if (isString) {
+        uint64_t Len = GetStringLength(CI->getArgOperand(SizeArgOp));
+        // If the length is 0 we don't know how long it is and so we can't
+        // remove the check.
+        if (Len == 0) return false;
+        return SizeCI->getZExtValue() >= Len;
+      }
       if (ConstantInt *Arg = dyn_cast<ConstantInt>(
                                                   CI->getArgOperand(SizeArgOp)))
         return SizeCI->getZExtValue() >= Arg->getZExtValue();
@@ -953,10 +985,19 @@ bool InstCombiner::transformConstExprCastCall(CallSite CS) {
     if (Callee->isDeclaration() && !isConvertible) return false;
   }
 
-  if (FT->getNumParams() < NumActualArgs && !FT->isVarArg() &&
-      Callee->isDeclaration())
-    return false;   // Do not delete arguments unless we have a function body.
+  if (Callee->isDeclaration()) {
+    // Do not delete arguments unless we have a function body.
+    if (FT->getNumParams() < NumActualArgs && !FT->isVarArg())
+      return false;
 
+    // If the callee is just a declaration, don't change the varargsness of the
+    // call.  We don't want to introduce a varargs call where one doesn't
+    // already exist.
+    const PointerType *APTy = cast<PointerType>(CS.getCalledValue()->getType());
+    if (FT->isVarArg()!=cast<FunctionType>(APTy->getElementType())->isVarArg())
+      return false;
+  }
+      
   if (FT->getNumParams() < NumActualArgs && FT->isVarArg() &&
       !CallerPAL.isEmpty())
     // In this case we have more arguments than the new function type, but we
@@ -970,8 +1011,9 @@ bool InstCombiner::transformConstExprCastCall(CallSite CS) {
         return false;
     }
 
+  
   // Okay, we decided that this is a safe thing to do: go ahead and start
-  // inserting cast instructions as necessary...
+  // inserting cast instructions as necessary.
   std::vector<Value*> Args;
   Args.reserve(NumActualArgs);
   SmallVector<AttributeWithIndex, 8> attrVec;

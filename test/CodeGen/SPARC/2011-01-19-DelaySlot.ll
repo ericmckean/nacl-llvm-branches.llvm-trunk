@@ -1,4 +1,5 @@
 ;RUN: llc -march=sparc < %s | FileCheck %s
+;RUN: llc -march=sparc -O0 < %s | FileCheck %s -check-prefix=UNOPT
 
 
 define i32 @test(i32 %a) nounwind {
@@ -6,7 +7,7 @@ entry:
 ; CHECK: test
 ; CHECK: call bar
 ; CHECK-NOT: nop
-; CHECK: ret
+; CHECK: jmp
 ; CHECK-NEXT: restore
   %0 = tail call i32 @bar(i32 %a) nounwind
   ret i32 %0
@@ -17,7 +18,7 @@ entry:
 ; CHECK:      test_jmpl
 ; CHECK:      call
 ; CHECK-NOT:  nop
-; CHECK:      ret
+; CHECK:      jmp
 ; CHECK-NEXT: restore
   %0 = tail call i32 %f(i32 %a, i32 %b) nounwind
   ret i32 %0
@@ -46,7 +47,7 @@ bb:                                               ; preds = %entry, %bb
 
 bb5:                                              ; preds = %bb, %entry
   %a_addr.1.lcssa = phi i32 [ %a, %entry ], [ %a_addr.0, %bb ]
-;CHECK:      ret
+;CHECK:      jmp
 ;CHECK-NEXT: restore
   ret i32 %a_addr.1.lcssa
 }
@@ -75,3 +76,15 @@ bb1:                                              ; preds = %entry
 declare i32 @foo(...)
 
 declare i32 @bar(i32)
+
+
+define i32 @test_implicit_def() nounwind {
+entry:
+;UNOPT:       test_implicit_def
+;UNOPT:       call func
+;UNOPT-NEXT:  nop
+  %0 = tail call i32 @func(i32* undef) nounwind
+  ret i32 0
+}
+
+declare i32 @func(i32*)
